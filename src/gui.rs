@@ -10,15 +10,8 @@ pub struct Ui {
     proxy: UiProxy,
 }
 
-fn init() {
-    gtk4::init().unwrap();
-    glib::set_prgname(Some("xdg-desktop-portal-gtk4"));
-}
-
 impl Ui {
     pub fn new() -> Self {
-        init();
-
         let main_loop = MainLoop::new(None, false);
         Self {
             proxy: UiProxy {
@@ -26,6 +19,11 @@ impl Ui {
             },
             main_loop,
         }
+    }
+
+    pub fn init_gtk(&self) {
+        gtk4::init().unwrap();
+        glib::set_prgname(Some("xdg-desktop-portal-gtk4"));
     }
 
     pub fn run(&self) {

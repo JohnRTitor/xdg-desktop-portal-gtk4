@@ -22,5 +22,6 @@ pub fn main() {
             std::process::exit(1);
         }
     };
+    ui.init_gtk();
     ui.run();
 }
