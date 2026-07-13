@@ -81,9 +81,9 @@ impl Print {
         .await;
 
         match res {
-            Ok(_) => Response::success(PreparePrintResults {
-                settings: HashMap::new(),
-                page_setup: HashMap::new(),
+            Ok(result) => Response::success(PreparePrintResults {
+                settings: result.settings,
+                page_setup: result.page_setup,
                 token: 0,
             }),
             Err(e) => {
