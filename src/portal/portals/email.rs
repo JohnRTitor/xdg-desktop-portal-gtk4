@@ -1,7 +1,7 @@
 use {
     crate::portal::{request::run_request, response::Response},
     error_reporter::Report,
-    gtk4::gio::AppInfo,
+    gtk4::{glib, gio::AppInfo},
     zbus::{
         interface,
         zvariant::{DeserializeDict, OwnedObjectPath, SerializeDict, Type},
@@ -49,23 +49,23 @@ impl Email {
         
         if let Some(cc) = options.cc {
             for addr in cc {
-                url.push_str(&format!("cc={}&", glib::uri_escape_string(&addr, None, true)));
+                url.push_str(&format!("cc={}&", glib::uri_escape_string(&addr, None::<&str>, true)));
             }
         }
         if let Some(bcc) = options.bcc {
             for addr in bcc {
-                url.push_str(&format!("bcc={}&", glib::uri_escape_string(&addr, None, true)));
+                url.push_str(&format!("bcc={}&", glib::uri_escape_string(&addr, None::<&str>, true)));
             }
         }
         if let Some(subject) = options.subject {
-            url.push_str(&format!("subject={}&", glib::uri_escape_string(&subject, None, true)));
+            url.push_str(&format!("subject={}&", glib::uri_escape_string(&subject, None::<&str>, true)));
         }
         if let Some(body) = options.body {
-            url.push_str(&format!("body={}&", glib::uri_escape_string(&body, None, true)));
+            url.push_str(&format!("body={}&", glib::uri_escape_string(&body, None::<&str>, true)));
         }
         if let Some(attachments) = options.attachments {
             for att in attachments {
-                url.push_str(&format!("attachment={}&", glib::uri_escape_string(&att, None, true)));
+                url.push_str(&format!("attachment={}&", glib::uri_escape_string(&att, None::<&str>, true)));
             }
         }
         

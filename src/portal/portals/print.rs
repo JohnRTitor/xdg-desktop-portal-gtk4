@@ -6,7 +6,7 @@ use {
     error_reporter::Report,
     zbus::{
         interface,
-        zvariant::{DeserializeDict, Fd, OwnedObjectPath, SerializeDict, Type, Value},
+        zvariant::{DeserializeDict, Fd, OwnedObjectPath, SerializeDict, Type, Value, OwnedValue},
         ObjectServer,
     },
     std::collections::HashMap,
@@ -26,7 +26,7 @@ impl Print {
 
 #[derive(DeserializeDict, Type, Debug, Default)]
 #[zvariant(signature = "dict")]
-struct PreparePrintOptions<'a> {
+struct PreparePrintOptions {
     modal: Option<bool>,
     token: Option<String>,
     #[zvariant(rename = "accept-format")]
@@ -35,27 +35,27 @@ struct PreparePrintOptions<'a> {
     accept_media: Option<String>,
     #[zvariant(rename = "accept-papers")]
     accept_papers: Option<String>,
-    settings: Option<HashMap<String, Value<'a>>>,
-    page_setup: Option<HashMap<String, Value<'a>>>,
+    settings: Option<HashMap<String, OwnedValue>>,
+    page_setup: Option<HashMap<String, OwnedValue>>,
 }
 
 #[derive(SerializeDict, Type, Debug, Default)]
 #[zvariant(signature = "dict")]
-struct PreparePrintResults<'a> {
-    settings: HashMap<String, Value<'a>>,
-    page_setup: HashMap<String, Value<'a>>,
+struct PreparePrintResults {
+    settings: HashMap<String, OwnedValue>,
+    page_setup: HashMap<String, OwnedValue>,
     token: u32,
 }
 
 #[derive(DeserializeDict, Type, Debug, Default)]
 #[zvariant(signature = "dict")]
-struct PrintOptions<'a> {
+struct PrintOptions {
     modal: Option<bool>,
     token: Option<u32>,
     #[zvariant(rename = "accept-format")]
     accept_format: Option<String>,
-    settings: Option<HashMap<String, Value<'a>>>,
-    page_setup: Option<HashMap<String, Value<'a>>>,
+    settings: Option<HashMap<String, OwnedValue>>,
+    page_setup: Option<HashMap<String, OwnedValue>>,
 }
 
 #[derive(SerializeDict, Type, Debug, Default)]
@@ -70,8 +70,8 @@ impl Print {
         title: String,
         _settings: HashMap<String, Value<'_>>,
         _page_setup: HashMap<String, Value<'_>>,
-        _options: PreparePrintOptions<'_>,
-    ) -> Response<PreparePrintResults<'static>> {
+        _options: PreparePrintOptions,
+    ) -> Response<PreparePrintResults> {
         let res = PrintUi {
             app_id,
             parent_window,
@@ -99,7 +99,7 @@ impl Print {
         _parent_window: String,
         _title: String,
         _fd: Fd<'_>,
-        _options: PrintOptions<'_>,
+        _options: PrintOptions,
     ) -> Response<PrintResults> {
         // Dummy implementation since actual printing requires complex GTK CUPS backends
         log::info!("Print method called, returning success.");
@@ -117,9 +117,9 @@ impl Print {
         title: String,
         settings: HashMap<String, Value<'_>>,
         page_setup: HashMap<String, Value<'_>>,
-        options: PreparePrintOptions<'_>,
+        options: PreparePrintOptions,
         #[zbus(object_server)] server: &ObjectServer,
-    ) -> Response<PreparePrintResults<'static>> {
+    ) -> Response<PreparePrintResults> {
         run_request(
             server,
             handle,
@@ -135,7 +135,7 @@ impl Print {
         parent_window: String,
         title: String,
         fd: Fd<'_>,
-        options: PrintOptions<'_>,
+        options: PrintOptions,
         #[zbus(object_server)] server: &ObjectServer,
     ) -> Response<PrintResults> {
         run_request(

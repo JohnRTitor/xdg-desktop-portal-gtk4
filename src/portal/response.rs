@@ -4,7 +4,7 @@ const PORTAL_SUCCESS: u32 = 0;
 const PORTAL_CANCELLED: u32 = 1;
 
 #[derive(Serialize, Type)]
-pub struct Response<T: Type>(u32, T);
+pub struct Response<T: Type>(pub u32, pub T);
 
 impl<T: Type> Response<T> {
     pub fn success(t: T) -> Self {

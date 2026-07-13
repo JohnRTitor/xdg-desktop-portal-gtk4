@@ -1,7 +1,7 @@
 use {
     crate::{
         gui::{
-            access::{AccessUi, Choice as GuiChoice, ChoiceVariant, FinalChoice},
+            access::{AccessUi, Choice as GuiChoice, ChoiceVariant},
             UiProxy,
         },
         portal::{request::run_request, response::Response},

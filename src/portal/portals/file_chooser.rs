@@ -11,12 +11,11 @@ use {
     },
     bstr::{ByteSlice, ByteVec},
     error_reporter::Report,
-    serde::Deserializer,
+    serde::{Deserialize, Deserializer},
     std::{ffi::CString, path::Path, str::FromStr},
     thiserror::Error,
     url::Url,
     zbus::{
-        export::serde::Deserialize,
         interface,
         zvariant::{DeserializeDict, OwnedObjectPath, SerializeDict, Type},
         ObjectServer,
@@ -256,7 +255,11 @@ impl FileChooser {
         if res.uris.len() != 1 {
             return Err(SaveFilesError::NotExactlyOnePath);
         }
-        let base = Url::from_str(&res.uris.pop().unwrap())
+        let uri = match res.uris.pop() {
+            Some(u) => u,
+            None => return Err(SaveFilesError::NotExactlyOnePath),
+        };
+        let base = Url::from_str(&uri)
             .map_err(SaveFilesError::SelectedNotValidUrl)?
             .to_file_path()
             .map_err(|_| SaveFilesError::SelectedNotValidPath)?;

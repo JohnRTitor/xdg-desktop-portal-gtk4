@@ -61,11 +61,18 @@ impl Account {
     ) -> Response<UserInformation> {
         let (mut user_name, mut real_name, mut icon_file) = (String::new(), String::new(), String::new());
 
+        let uid = unsafe { libc::getuid() };
+        let path = format!("/org/freedesktop/Accounts/User{}", uid);
+        let obj_path = match zbus::zvariant::ObjectPath::try_from(path) {
+            Ok(p) => p,
+            Err(e) => {
+                log::error!("Failed to parse object path in account portal: {}", e);
+                return Response::cancelled();
+            }
+        };
+        
         if let Ok(system_bus) = Connection::system().await {
-            let uid = unsafe { libc::getuid() };
-            let path = format!("/org/freedesktop/Accounts/User{}", uid);
-            
-            if let Ok(user_proxy) = UserProxy::builder(&system_bus).path(path).unwrap().build().await {
+            if let Ok(user_proxy) = UserProxy::builder(&system_bus).path(obj_path).unwrap_or_else(|_| unreachable!("Valid path was provided")).build().await {
                 if let Ok(u) = user_proxy.user_name().await { user_name = u; }
                 if let Ok(r) = user_proxy.real_name().await { real_name = r; }
                 if let Ok(i) = user_proxy.icon_file().await { icon_file = i; }

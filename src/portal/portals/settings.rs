@@ -1,81 +1,77 @@
 use {
-    crate::portal::{request::run_request, response::Response},
     std::collections::HashMap,
     zbus::{
         interface,
         zvariant::{OwnedValue, Value},
-        ObjectServer,
     },
-    gtk4::gio::{Settings, SettingsSchemaSource},
+    gtk4::gio::{prelude::SettingsExt, Settings, SettingsSchemaSource},
+    zbus::object_server::SignalEmitter,
 };
 
-pub struct SettingsPortal {
-    gnome_interface: Option<Settings>,
-}
+pub struct SettingsPortal {}
 
 impl SettingsPortal {
     pub fn new() -> Self {
-        let source = SettingsSchemaSource::default();
-        let gnome_interface = if let Some(source) = source {
-            if source.lookup("org.gnome.desktop.interface", true).is_some() {
-                Some(Settings::new("org.gnome.desktop.interface"))
-            } else {
-                None
-            }
+        Self {}
+    }
+
+    fn get_gnome_interface(&self) -> Option<Settings> {
+        let source = SettingsSchemaSource::default()?;
+        if source.lookup("org.gnome.desktop.interface", true).is_some() {
+            Some(Settings::new("org.gnome.desktop.interface"))
         } else {
             None
-        };
-
-        Self { gnome_interface }
+        }
     }
 
     fn read_setting(&self, namespace: &str, key: &str) -> Option<OwnedValue> {
         if namespace == "org.freedesktop.appearance" {
             if key == "color-scheme" {
-                if let Some(ref settings) = self.gnome_interface {
+                if let Some(settings) = self.get_gnome_interface() {
                     let val: String = settings.string("color-scheme").into();
                     let scheme = match val.as_str() {
                         "prefer-dark" => 1u32,
                         "prefer-light" => 2u32,
                         _ => 0u32,
                     };
-                    return Some(Value::U32(scheme).into());
+                    return OwnedValue::try_from(Value::U32(scheme)).ok();
                 }
             } else if key == "contrast" {
-                if let Some(ref settings) = self.gnome_interface {
-                    if settings.has_key("high-contrast") {
-                        let high_contrast = settings.boolean("high-contrast");
-                        let contrast = if high_contrast { 1u32 } else { 0u32 };
-                        return Some(Value::U32(contrast).into());
+                if let Some(settings) = self.get_gnome_interface() {
+                    if let Some(schema) = settings.settings_schema() {
+                        if schema.has_key("high-contrast") {
+                            let high_contrast = settings.boolean("high-contrast");
+                            let contrast = if high_contrast { 1u32 } else { 0u32 };
+                            return OwnedValue::try_from(Value::U32(contrast)).ok();
+                        }
                     }
                 }
             }
         } else if namespace == "org.gnome.desktop.interface" {
-            if let Some(ref settings) = self.gnome_interface {
-                if settings.has_key(key) {
-                    if let Some(val) = settings.value(key) {
-                        // convert glib::Variant to zbus::zvariant::OwnedValue
-                        // Since this is complex to do generically, we'll implement a few common ones
+            if let Some(settings) = self.get_gnome_interface() {
+                if let Some(schema) = settings.settings_schema() {
+                    if schema.has_key(key) {
+                        let val = settings.value(key);
                         let type_string = val.type_().as_str();
                         if type_string == "s" {
                             if let Some(s) = val.get::<String>() {
-                                return Some(Value::Str(s.into()).into());
+                                return OwnedValue::try_from(Value::Str(s.into())).ok();
                             }
                         } else if type_string == "b" {
                             if let Some(b) = val.get::<bool>() {
-                                return Some(Value::Bool(b).into());
+                                return OwnedValue::try_from(Value::Bool(b)).ok();
                             }
                         } else if type_string == "u" {
                             if let Some(u) = val.get::<u32>() {
-                                return Some(Value::U32(u).into());
+                                return OwnedValue::try_from(Value::U32(u)).ok();
                             }
                         } else if type_string == "i" {
                             if let Some(i) = val.get::<i32>() {
-                                return Some(Value::I32(i).into());
+                                return OwnedValue::try_from(Value::I32(i)).ok();
                             }
                         } else if type_string == "d" {
                             if let Some(d) = val.get::<f64>() {
-                                return Some(Value::F64(d).into());
+                                return OwnedValue::try_from(Value::F64(d)).ok();
                             }
                         }
                     }
@@ -88,18 +84,18 @@ impl SettingsPortal {
 
 #[interface(name = "org.freedesktop.impl.portal.Settings")]
 impl SettingsPortal {
-    async fn read(&self, namespace: String, key: String) -> zbus::Result<OwnedValue> {
+    async fn read(&self, namespace: String, key: String) -> Result<OwnedValue, zbus::fdo::Error> {
         if let Some(val) = self.read_setting(&namespace, &key) {
             Ok(val)
         } else {
-            Err(zbus::Error::Failure("Setting not found".to_string()))
+            Err(zbus::fdo::Error::Failed("Setting not found".to_string()))
         }
     }
 
     async fn read_all(
         &self,
         namespaces: Vec<String>,
-    ) -> zbus::Result<HashMap<String, HashMap<String, OwnedValue>>> {
+    ) -> Result<HashMap<String, HashMap<String, OwnedValue>>, zbus::fdo::Error> {
         let mut result = HashMap::new();
         
         let all_namespaces = if namespaces.is_empty() {
@@ -118,10 +114,13 @@ impl SettingsPortal {
                     ns_map.insert("contrast".to_string(), val);
                 }
             } else if ns == "org.gnome.desktop.interface" {
-                if let Some(ref settings) = self.gnome_interface {
-                    for key in settings.list_keys() {
-                        if let Some(val) = self.read_setting(&ns, &key) {
-                            ns_map.insert(key.to_string(), val);
+                if let Some(settings) = self.get_gnome_interface() {
+                    if let Some(schema) = settings.settings_schema() {
+                        for key in schema.list_keys() {
+                            let key_str = key.as_str();
+                            if let Some(val) = self.read_setting(&ns, key_str) {
+                                ns_map.insert(key_str.to_string(), val);
+                            }
                         }
                     }
                 }
@@ -136,7 +135,7 @@ impl SettingsPortal {
 
     #[zbus(signal)]
     async fn setting_changed(
-        ctx: &zbus::SignalContext<'_>,
+        ctx: &SignalEmitter<'_>,
         namespace: &str,
         key: &str,
         value: &Value<'_>,

@@ -9,7 +9,7 @@ use {
         glib::MainContext,
         prelude::{
             Cast, DialogExt, FileChooserExt, FileChooserExtManual, FileExt, GtkWindowExt,
-            NativeExt, RecentManagerExt, WidgetExt,
+            RecentManagerExt, WidgetExt,
         },
         FileChooserAction, FileChooserDialog, FileFilter, RecentData, RecentManager, ResponseType,
         Widget, Window,
@@ -122,7 +122,8 @@ impl FileChooserUi {
                     let files: Vec<_> = dialog
                         .files()
                         .into_iter()
-                        .map(|f| f.unwrap().downcast::<File>().unwrap().uri().into())
+                        .filter_map(|f| f.ok().and_then(|f| f.downcast::<gtk4::gio::File>().ok()))
+                        .map(|f| f.uri().into())
                         .collect();
                     add_recent(&self.app_id, &files);
                     let filter = cf.take().and_then(|f| filters.get(&f).cloned());

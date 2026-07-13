@@ -1,11 +1,11 @@
 use {
     crate::portal::{request::run_request, response::Response, session::Session},
-    error_reporter::Report,
     std::collections::HashMap,
     zbus::{
         interface,
         zvariant::{DeserializeDict, OwnedObjectPath, SerializeDict, Type, Value},
         Connection, ObjectServer,
+        object_server::SignalEmitter,
     },
 };
 
@@ -136,7 +136,7 @@ impl Inhibit {
 
     #[zbus(signal)]
     async fn state_changed(
-        ctx: &zbus::SignalContext<'_>,
+        ctx: &SignalEmitter<'_>,
         session_handle: OwnedObjectPath,
         state: u32,
     ) -> zbus::Result<()>;

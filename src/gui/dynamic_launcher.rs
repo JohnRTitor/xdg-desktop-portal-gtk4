@@ -3,7 +3,7 @@ use {
     async_channel::{Receiver, Sender},
     gtk4::{
         glib::MainContext,
-        prelude::{BoxExt, ButtonExt, DialogExt, EditableExt, GtkWindowExt, WidgetExt},
+        prelude::{BoxExt, Cast, DialogExt, EditableExt, GtkWindowExt, WidgetExt},
         DialogFlags, Entry, Image, Label, MessageDialog, MessageType, ResponseType, Widget,
     },
     rust_i18n::t,
@@ -55,7 +55,7 @@ impl DynamicLauncherUi {
             DialogFlags::MODAL,
             MessageType::Question,
             gtk4::ButtonsType::None,
-            &title,
+            &*title,
         );
 
         dialog.format_secondary_text(Some(&subtitle));
@@ -63,47 +63,50 @@ impl DynamicLauncherUi {
         dialog.add_button(&t!("_Cancel"), ResponseType::Cancel);
         dialog.add_button(&t!("_Create"), ResponseType::Ok);
 
-        let area = dialog.message_area().downcast::<gtk4::Box>().unwrap();
+        if let Ok(area) = dialog.message_area().downcast::<gtk4::Box>() {
+            let hbox = gtk4::Box::new(gtk4::Orientation::Horizontal, 12);
+            hbox.set_margin_top(10);
+            area.append(&hbox);
 
-        let hbox = gtk4::Box::new(gtk4::Orientation::Horizontal, 12);
-        hbox.set_margin_top(10);
-        area.append(&hbox);
+            if let Some(icon) = &self.icon_name {
+                let image = Image::from_icon_name(icon);
+                image.set_pixel_size(64);
+                hbox.append(&image);
+            } else {
+                let image = Image::from_icon_name("application-x-executable");
+                image.set_pixel_size(64);
+                hbox.append(&image);
+            }
 
-        if let Some(icon) = &self.icon_name {
-            let image = Image::from_icon_name(icon);
-            image.set_pixel_size(64);
-            hbox.append(&image);
+            let vbox = gtk4::Box::new(gtk4::Orientation::Vertical, 6);
+            hbox.append(&vbox);
+
+            let name_label = Label::new(Some(&t!("Name")));
+            name_label.set_halign(gtk4::Align::Start);
+            vbox.append(&name_label);
+
+            let name_entry = Entry::new();
+            name_entry.set_text(&self.name);
+            name_entry.set_editable(self.editable_name);
+            vbox.append(&name_entry);
+
+            dialog.connect_response(move |d, r| {
+                let res = match r {
+                    ResponseType::Ok => Ok(DynamicLauncherResult {
+                        name: name_entry.text().to_string(),
+                    }),
+                    _ => Err(DynamicLauncherError::Rejected),
+                };
+                let _ = send.send_blocking(res);
+                d.close();
+            });
         } else {
-            let image = Image::from_icon_name("application-x-executable");
-            image.set_pixel_size(64);
-            hbox.append(&image);
+            log::error!("Failed to downcast message_area to Box in DynamicLauncherDialog");
+            let _ = send.send_blocking(Err(DynamicLauncherError::Rejected));
         }
-
-        let vbox = gtk4::Box::new(gtk4::Orientation::Vertical, 6);
-        hbox.append(&vbox);
-
-        let name_label = Label::new(Some(&t!("Name")));
-        name_label.set_halign(gtk4::Align::Start);
-        vbox.append(&name_label);
-
-        let name_entry = Entry::new();
-        name_entry.set_text(&self.name);
-        name_entry.set_editable(self.editable_name);
-        vbox.append(&name_entry);
 
         dialog.upcast_ref::<Widget>().realize();
         set_wayland_parent(dialog.upcast_ref::<Widget>(), &self.parent_window);
-
-        dialog.connect_response(move |d, r| {
-            let res = match r {
-                ResponseType::Ok => Ok(DynamicLauncherResult {
-                    name: name_entry.text().to_string(),
-                }),
-                _ => Err(DynamicLauncherError::Rejected),
-            };
-            let _ = send.send_blocking(res);
-            d.close();
-        });
 
         dialog.show();
         context.spawn_local(async move {

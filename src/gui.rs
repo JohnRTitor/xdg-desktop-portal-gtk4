@@ -26,7 +26,10 @@ impl Ui {
     }
 
     pub fn init_gtk(&self) {
-        gtk4::init().unwrap();
+        if let Err(e) = gtk4::init() {
+            log::error!("Failed to initialize GTK: {}", e);
+            std::process::exit(1);
+        }
         glib::set_prgname(Some("xdg-desktop-portal-gtk4"));
     }
 

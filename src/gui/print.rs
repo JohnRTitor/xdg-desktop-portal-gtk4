@@ -3,7 +3,7 @@ use {
     async_channel::{Receiver, Sender},
     gtk4::{
         glib::MainContext,
-        prelude::{DialogExt, GtkWindowExt, WidgetExt},
+        prelude::{Cast, DialogExt, GtkWindowExt, WidgetExt},
         DialogFlags, MessageDialog, MessageType, ResponseType, Widget,
     },
     rust_i18n::t,
@@ -52,7 +52,7 @@ impl PrintUi {
             DialogFlags::MODAL,
             MessageType::Info,
             gtk4::ButtonsType::OkCancel,
-            &t!("Prepare Print"),
+            &*t!("Prepare Print"),
         );
 
         let subtitle = format!("{} wants to print: {}", self.app_id, self.title);

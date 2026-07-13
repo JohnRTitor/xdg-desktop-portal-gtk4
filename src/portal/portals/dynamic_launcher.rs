@@ -7,7 +7,7 @@ use {
     uuid::Uuid,
     zbus::{
         interface,
-        zvariant::{DeserializeDict, OwnedObjectPath, SerializeDict, Type, Value},
+        zvariant::{DeserializeDict, OwnedObjectPath, SerializeDict, Type, Value, OwnedValue},
         ObjectServer,
     },
 };
@@ -34,12 +34,22 @@ struct PrepareInstallOptions {
     editable_icon: Option<bool>,
 }
 
-#[derive(SerializeDict, Type, Debug, Default)]
+#[derive(SerializeDict, Type, Debug)]
 #[zvariant(signature = "dict")]
-struct PrepareInstallResults<'a> {
+struct PrepareInstallResults {
     name: String,
-    icon_v: Value<'a>,
+    icon_v: OwnedValue,
     token: String,
+}
+
+impl Default for PrepareInstallResults {
+    fn default() -> Self {
+        Self {
+            name: String::new(),
+            icon_v: OwnedValue::try_from(Value::Str("".into())).unwrap_or_else(|_| unreachable!("OOM")),
+            token: String::new(),
+        }
+    }
 }
 
 #[derive(DeserializeDict, Type, Debug, Default)]
@@ -54,15 +64,15 @@ struct RequestInstallTokenResults {
 }
 
 impl DynamicLauncher {
-    async fn prepare_install_impl<'a>(
+    async fn prepare_install_impl(
         &self,
         app_id: String,
         parent_window: String,
         name: String,
-        icon_v: Value<'a>,
+        icon_v: OwnedValue,
         options: PrepareInstallOptions,
-    ) -> Response<PrepareInstallResults<'a>> {
-        let icon_name = if let Ok(s) = icon_v.downcast_ref::<str>() {
+    ) -> Response<PrepareInstallResults> {
+        let icon_name = if let Ok(s) = <&str>::try_from(&*icon_v) {
             Some(s.to_string())
         } else {
             None
@@ -115,25 +125,15 @@ impl DynamicLauncher {
         icon_v: Value<'_>,
         options: PrepareInstallOptions,
         #[zbus(object_server)] server: &ObjectServer,
-    ) -> Response<PrepareInstallResults<'static>> {
-        // zbus currently requires static lifetime for return types from async functions if they own data
-        // For simplicity we will just clone the icon_v into a static or return a static empty value if complex.
-        // Actually, Response<T> where T has lifetime 'a is tricky.
-        // Let's just create an owned Value.
-        let icon_owned = icon_v.to_owned();
-        
-        let res = self.prepare_install_impl(app_id, parent_window, name, icon_owned.clone(), options).await;
-        
-        match res {
-            Response(code, Some(results)) => {
-                Response(code, Some(PrepareInstallResults {
-                    name: results.name,
-                    icon_v: icon_owned,
-                    token: results.token,
-                }))
-            },
-            Response(code, None) => Response(code, None),
-        }
+    ) -> Response<PrepareInstallResults> {
+        let icon_owned = match OwnedValue::try_from(icon_v) {
+            Ok(v) => v,
+            Err(e) => {
+                log::error!("Failed to allocate OwnedValue: {}", e);
+                return Response::cancelled();
+            }
+        };
+        self.prepare_install_impl(app_id, parent_window, name, icon_owned, options).await
     }
 
     async fn request_install_token(
