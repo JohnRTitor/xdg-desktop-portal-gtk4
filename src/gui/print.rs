@@ -7,10 +7,23 @@ use {
         PrintUnixDialog, ResponseType, Widget,
     },
     rust_i18n::t,
+    std::cell::RefCell,
     std::collections::HashMap,
     thiserror::Error,
     zbus::zvariant::OwnedValue,
 };
+
+pub struct CachedPrintJob {
+    pub app_id: String,
+    pub title: String,
+    pub printer: gtk4::Printer,
+    pub settings: gtk4::PrintSettings,
+    pub page_setup: gtk4::PageSetup,
+}
+
+thread_local! {
+    pub static PRINT_JOBS: RefCell<HashMap<u32, CachedPrintJob>> = RefCell::new(HashMap::new());
+}
 
 #[derive(Debug, Error)]
 pub enum PrintError {
@@ -27,6 +40,7 @@ pub struct PrintUi {
 }
 
 pub struct PrintResult {
+    pub token: u32,
     pub settings: HashMap<String, OwnedValue>,
     pub page_setup: HashMap<String, OwnedValue>,
 }
@@ -80,10 +94,30 @@ impl PrintUi {
                         }
                     }
 
-                    Ok(PrintResult {
-                        settings: settings_map,
-                        page_setup: page_setup_map,
-                    })
+                    let printer = d.selected_printer();
+                    if let Some(printer) = printer {
+                        let settings_obj = d.settings();
+                        let page_setup_obj = d.page_setup();
+                        let token: u32 = rand::random();
+                        PRINT_JOBS.with(|jobs| {
+                            jobs.borrow_mut().insert(token, CachedPrintJob {
+                                app_id: self.app_id.clone(),
+                                title: self.title.clone(),
+                                printer,
+                                settings: settings_obj,
+                                page_setup: page_setup_obj,
+                            });
+                        });
+                        
+                        Ok(PrintResult {
+                            token,
+                            settings: settings_map,
+                            page_setup: page_setup_map,
+                        })
+                    } else {
+                        // Dialog was confirmed but no printer was selected
+                        Err(PrintError::Rejected)
+                    }
                 },
                 _ => Err(PrintError::Rejected),
             };
@@ -96,5 +130,45 @@ impl PrintUi {
             let _ = close_on_close.recv().await;
             dialog.close();
         });
+    }
+}
+
+pub struct ExecutePrintUi {
+    pub token: u32,
+    pub fd: i32,
+}
+
+impl ExecutePrintUi {
+    pub async fn run(self, proxy: &UiProxy) -> Result<(), PrintError> {
+        let (send, recv) = async_channel::bounded(1);
+        proxy
+            .context
+            .invoke(move || self.run_impl(send));
+        recv.recv().await.map_err(|_| PrintError::Closed)?
+    }
+
+    fn run_impl(self, send: Sender<Result<(), PrintError>>) {
+        let job = PRINT_JOBS.with(|jobs| jobs.borrow_mut().remove(&self.token));
+
+        if let Some(cached) = job {
+            let print_job = gtk4::PrintJob::new(&cached.title, &cached.printer, &cached.settings, &cached.page_setup);
+            if let Err(e) = print_job.set_source_fd(self.fd) {
+                log::error!("Failed to set source fd for print job: {}", e);
+                let _ = send.send_blocking(Err(PrintError::Rejected));
+                return;
+            }
+            
+            print_job.send(move |_, err| {
+                if let Err(e) = err {
+                    log::error!("Failed to send print job: {}", e);
+                } else {
+                    log::info!("Print job successfully sent to CUPS");
+                }
+            });
+            let _ = send.send_blocking(Ok(()));
+        } else {
+            log::warn!("Received print request for unknown token: {}", self.token);
+            let _ = send.send_blocking(Err(PrintError::Rejected));
+        }
     }
 }

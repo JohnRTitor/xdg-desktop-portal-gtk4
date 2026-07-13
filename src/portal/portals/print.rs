@@ -1,6 +1,6 @@
 use {
     crate::{
-        gui::{print::PrintUi, UiProxy},
+        gui::{print::{PrintUi, ExecutePrintUi}, UiProxy},
         portal::{request::run_request, response::Response},
     },
     error_reporter::Report,
@@ -84,7 +84,7 @@ impl Print {
             Ok(result) => Response::success(PreparePrintResults {
                 settings: result.settings,
                 page_setup: result.page_setup,
-                token: 0,
+                token: result.token,
             }),
             Err(e) => {
                 log::error!("PreparePrint failed: {}", Report::new(e));
@@ -98,12 +98,31 @@ impl Print {
         _app_id: String,
         _parent_window: String,
         _title: String,
-        _fd: Fd<'_>,
-        _options: PrintOptions,
+        fd: Fd<'_>,
+        options: PrintOptions,
     ) -> Response<PrintResults> {
-        // Dummy implementation since actual printing requires complex GTK CUPS backends
-        log::info!("Print method called, returning success.");
-        Response::success(PrintResults::default())
+        use std::os::fd::AsRawFd;
+        let token = options.token.unwrap_or(0);
+        
+        // The fd needs to be duplicated if the portal daemon closes it,
+        // but since we await the GTK thread synchronously, the raw_fd is valid.
+        // Actually, GTK internally dups the FD according to C docs!
+        let raw_fd = fd.as_raw_fd();
+
+        let res = ExecutePrintUi {
+            token,
+            fd: raw_fd,
+        }
+        .run(&self.proxy)
+        .await;
+
+        match res {
+            Ok(_) => Response::success(PrintResults::default()),
+            Err(e) => {
+                log::error!("Print dispatch failed: {}", Report::new(e));
+                Response::cancelled()
+            }
+        }
     }
 }
 
