@@ -9,6 +9,7 @@ pub mod dynamic_launcher;
 pub mod print;
 pub mod file_chooser;
 pub mod app_chooser;
+pub mod usb;
 
 pub struct Ui {
     main_loop: MainLoop,

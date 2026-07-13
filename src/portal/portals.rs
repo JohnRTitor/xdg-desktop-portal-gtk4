@@ -9,3 +9,4 @@ pub mod email;
 pub mod file_chooser;
 pub mod lockdown;
 pub mod app_chooser;
+pub mod usb;
