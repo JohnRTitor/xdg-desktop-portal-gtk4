@@ -1,6 +1,6 @@
 use {
     crate::gui::UiProxy,
-    portals::file_chooser::FileChooser,
+    portals::{access::Access, account::Account, dynamic_launcher::DynamicLauncher, email::Email, file_chooser::FileChooser, inhibit::Inhibit, notification::Notification, print::Print, settings::SettingsPortal},
     std::thread,
     thiserror::Error,
     zbus::{
@@ -12,6 +12,7 @@ use {
 mod portals;
 mod request;
 mod response;
+pub mod session;
 
 const NAME: &str = "org.freedesktop.impl.portal.desktop.gtk4";
 const PATH: &str = "/org/freedesktop/portal/desktop";
@@ -47,6 +48,14 @@ impl Portal {
             };
         }
         add!(FileChooser::new(proxy));
+        add!(Email::new());
+        add!(Access::new(proxy));
+        add!(Account::new(proxy));
+        add!(Notification::new());
+        add!(DynamicLauncher::new(proxy));
+        add!(Print::new(proxy));
+        add!(Inhibit::new());
+        add!(SettingsPortal::new());
 
         let mut name_lost_iterator = DBusProxyBlocking::new(&session)
             .map_err(PortalError::CreateDbusProxy)?

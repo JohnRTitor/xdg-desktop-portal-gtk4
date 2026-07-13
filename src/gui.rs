@@ -3,6 +3,10 @@ use gtk4::{
     glib::{MainContext, MainLoop},
 };
 
+pub mod access;
+pub mod account;
+pub mod dynamic_launcher;
+pub mod print;
 pub mod file_chooser;
 
 pub struct Ui {

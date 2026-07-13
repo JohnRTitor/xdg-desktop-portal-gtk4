@@ -1,7 +1,9 @@
 use {
-    crate::{gui::UiProxy, utils::file_chooser_ext::FileChooserExtManualFixed},
+    crate::{
+        gui::UiProxy,
+        utils::{external_window::set_wayland_parent, file_chooser_ext::FileChooserExtManualFixed},
+    },
     async_channel::{Receiver, Sender},
-    gdk4_wayland::WaylandToplevel,
     gtk4::{
         gio::File,
         glib::MainContext,
@@ -229,13 +231,7 @@ impl FileChooserUi {
             }
         }
         dialog.upcast_ref::<Widget>().realize();
-        if let Some(parent) = self.parent_window.strip_prefix("wayland:") {
-            if let Some(surface) = dialog.surface() {
-                if let Some(toplevel) = surface.downcast_ref::<WaylandToplevel>() {
-                    toplevel.set_transient_for_exported(parent);
-                }
-            }
-        }
+        set_wayland_parent(dialog.upcast_ref::<Widget>(), &self.parent_window);
         DialogData {
             dialog,
             read_only_choice: read_only_id,

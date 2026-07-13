@@ -22,6 +22,7 @@ rust-i18n = "3.1.2"
 serde = "1.0.210"
 thiserror = "1.0.63"
 url = { version = "2.5.2", features = ["serde"] }
+uuid = { version = "1.10.0", features = ["v4"] }
 zbus = { version = "4.4.0", features = ["blocking"] }
 
 [package.metadata.i18n]
