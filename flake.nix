@@ -31,7 +31,8 @@
           ...
         }:
         {
-          packages.default = pkgs.callPackage ./build.nix { };
+          packages.xdg-desktop-portal-gtk4 = pkgs.callPackage ./contrib/build.nix { };
+          packages.default = config.packages.xdg-desktop-portal-gtk4;
 
           devShells.default = pkgs.mkShell {
             inputsFrom = [ config.packages.default ];
@@ -40,6 +41,7 @@
               rustc
               rustfmt
               clippy
+              dbus
             ];
           };
         };

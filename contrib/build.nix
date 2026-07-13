@@ -11,11 +11,17 @@ rustPlatform.buildRustPackage rec {
   pname = "xdg-desktop-portal-gtk4";
   version = "unstable";
 
-  src = lib.cleanSource ./.;
+  src = lib.fileset.toSource {
+    root = ../.;
+    fileset = lib.fileset.fileFilter ({ hasExt, ... }: !hasExt "nix") ../.;
+  };
 
   cargoLock = {
-    lockFile = ./Cargo.lock;
+    lockFile = ../Cargo.lock;
   };
+
+  strictDeps = true;
+  __structuredAttrs = true;
 
   nativeBuildInputs = [
     pkg-config
@@ -49,7 +55,7 @@ rustPlatform.buildRustPackage rec {
   '';
 
   meta = {
-    description = "A Gtk4 backend for xdg-desktop-portal";
+    description = "A portal backend for xdg-desktop-portal using GTK4";
     homepage = "https://github.com/JohnRTitor/xdg-desktop-portal-gtk4";
     license = lib.licenses.lgpl21Plus;
     maintainers = [ lib.maintainers.johnrtitor ];
