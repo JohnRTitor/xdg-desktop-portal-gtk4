@@ -1,6 +1,6 @@
 use {
     crate::gui::UiProxy,
-    portals::{access::Access, account::Account, dynamic_launcher::DynamicLauncher, email::Email, file_chooser::FileChooser, inhibit::Inhibit, notification::Notification, print::Print, settings::SettingsPortal},
+    portals::{access::Access, account::Account, dynamic_launcher::DynamicLauncher, email::Email, file_chooser::FileChooser, inhibit::Inhibit, notification::Notification, print::Print, settings::SettingsPortal, lockdown::LockdownPortal, app_chooser::AppChooser},
     std::thread,
     thiserror::Error,
     zbus::{
@@ -56,6 +56,8 @@ impl Portal {
         add!(Print::new(proxy));
         add!(Inhibit::new());
         add!(SettingsPortal::new());
+        add!(LockdownPortal::new());
+        add!(AppChooser::new(proxy));
 
         let mut name_lost_iterator = DBusProxyBlocking::new(&session)
             .map_err(PortalError::CreateDbusProxy)?
