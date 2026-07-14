@@ -1,6 +1,6 @@
 [package]
 name = "xdg-desktop-portal-gtk4"
-version = "1.0.0"
+version = "1.1.0"
 edition = "2024"
 publish = false
 
@@ -63,5 +63,4 @@ uuid = { version = "1.23.5", features = ["v4"] }
 zbus = { version = "5.17.0", features = ["blocking"] }
 
 [dev-dependencies]
-tokio = { version = "1", features = ["rt", "macros"] }
-
+tokio = { version = "1", features = ["macros", "rt"] }
