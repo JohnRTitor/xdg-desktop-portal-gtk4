@@ -8,14 +8,56 @@ use {
     zbus::object_server::SignalEmitter,
 };
 
+use std::str::FromStr;
+
 pub struct SettingsPortal {}
 
 impl SettingsPortal {
-    pub fn new() -> Self {
+    pub fn new(server: zbus::ObjectServer) -> Self {
+        let settings = Self::get_gnome_interface_static();
+        
+        if let Some(s) = settings {
+            let s_clone = s.clone();
+            s.connect_changed(None, move |_, key| {
+                let key_str = key;
+                let server_clone = server.clone();
+                let key_string = key_str.to_string();
+                
+                if let Some(val) = Self::read_setting_static("org.gnome.desktop.interface", key_str) {
+                    let sc1 = server_clone.clone();
+                    let k1 = key_string.clone();
+                    let v1 = val.clone();
+                    gtk4::glib::MainContext::default().spawn_local(async move {
+                        if let Ok(iface_ref) = sc1.interface::<_, SettingsPortal>("/org/freedesktop/portal/desktop").await {
+                            let _ = Self::setting_changed(iface_ref.signal_emitter(), "org.gnome.desktop.interface", &k1, &v1).await;
+                        }
+                    });
+                }
+
+                if key_str == "color-scheme" || key_str == "high-contrast" {
+                    let mapped_key = if key_str == "high-contrast" { "contrast" } else { key_str };
+                    if let Some(val) = Self::read_setting_static("org.freedesktop.appearance", mapped_key) {
+                        let sc2 = server_clone.clone();
+                        let k2 = mapped_key.to_string();
+                        gtk4::glib::MainContext::default().spawn_local(async move {
+                            if let Ok(iface_ref) = sc2.interface::<_, SettingsPortal>("/org/freedesktop/portal/desktop").await {
+                                let _ = Self::setting_changed(iface_ref.signal_emitter(), "org.freedesktop.appearance", &k2, &val).await;
+                            }
+                        });
+                    }
+                }
+            });
+            
+            gtk4::glib::MainContext::default().spawn_local(async move {
+                let _keep_alive = s_clone;
+                std::future::pending::<()>().await;
+            });
+        }
+
         Self {}
     }
 
-    fn get_gnome_interface(&self) -> Option<Settings> {
+    fn get_gnome_interface_static() -> Option<Settings> {
         let source = SettingsSchemaSource::default()?;
         if source.lookup("org.gnome.desktop.interface", true).is_some() {
             Some(Settings::new("org.gnome.desktop.interface"))
@@ -25,15 +67,19 @@ impl SettingsPortal {
     }
 
     fn read_setting(&self, namespace: &str, key: &str) -> Option<OwnedValue> {
+        Self::read_setting_static(namespace, key)
+    }
+
+    fn read_setting_static(namespace: &str, key: &str) -> Option<OwnedValue> {
         if namespace == "org.freedesktop.appearance" {
             if key == "color-scheme" {
-                if let Some(settings) = self.get_gnome_interface() {
+                if let Some(settings) = Self::get_gnome_interface_static() {
                     let val: String = settings.string("color-scheme").into();
                     let scheme = map_color_scheme(val.as_str());
                     return OwnedValue::try_from(Value::U32(scheme)).ok();
                 }
             } else if key == "contrast" {
-                if let Some(settings) = self.get_gnome_interface() {
+                if let Some(settings) = Self::get_gnome_interface_static() {
                     if let Some(schema) = settings.settings_schema() {
                         if schema.has_key("high-contrast") {
                             let high_contrast = settings.boolean("high-contrast");
@@ -44,7 +90,7 @@ impl SettingsPortal {
                 }
             }
         } else if namespace == "org.gnome.desktop.interface" {
-            if let Some(settings) = self.get_gnome_interface() {
+            if let Some(settings) = Self::get_gnome_interface_static() {
                 if let Some(schema) = settings.settings_schema() {
                     if schema.has_key(key) {
                         let val = settings.value(key);
@@ -102,13 +148,32 @@ impl SettingsPortal {
     ) -> Result<HashMap<String, HashMap<String, OwnedValue>>, zbus::fdo::Error> {
         let mut result = HashMap::new();
         
-        let all_namespaces = if namespaces.is_empty() {
-            vec!["org.freedesktop.appearance".to_string(), "org.gnome.desktop.interface".to_string()]
-        } else {
-            namespaces
-        };
+        let supported_namespaces = vec![
+            "org.freedesktop.appearance".to_string(),
+            "org.gnome.desktop.interface".to_string(),
+        ];
 
-        for ns in all_namespaces {
+        let mut active_namespaces = Vec::new();
+        if namespaces.is_empty() || namespaces.contains(&"".to_string()) {
+            active_namespaces = supported_namespaces;
+        } else {
+            for requested_ns in namespaces {
+                if requested_ns.ends_with('*') {
+                    let prefix = requested_ns.trim_end_matches('*');
+                    for available_ns in &supported_namespaces {
+                        if available_ns.starts_with(prefix) && !active_namespaces.contains(available_ns) {
+                            active_namespaces.push(available_ns.clone());
+                        }
+                    }
+                } else if supported_namespaces.contains(&requested_ns) {
+                    if !active_namespaces.contains(&requested_ns) {
+                        active_namespaces.push(requested_ns);
+                    }
+                }
+            }
+        }
+
+        for ns in active_namespaces {
             let mut ns_map = HashMap::new();
             if ns == "org.freedesktop.appearance" {
                 if let Some(val) = self.read_setting(&ns, "color-scheme") {
@@ -118,7 +183,7 @@ impl SettingsPortal {
                     ns_map.insert("contrast".to_string(), val);
                 }
             } else if ns == "org.gnome.desktop.interface" {
-                if let Some(settings) = self.get_gnome_interface() {
+                if let Some(settings) = Self::get_gnome_interface_static() {
                     if let Some(schema) = settings.settings_schema() {
                         for key in schema.list_keys() {
                             let key_str = key.as_str();

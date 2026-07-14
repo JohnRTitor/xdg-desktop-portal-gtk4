@@ -61,7 +61,7 @@ impl Portal {
         add!(DynamicLauncher::new(proxy));
         add!(Print::new(proxy));
         add!(Inhibit::new());
-        add!(SettingsPortal::new());
+        add!(SettingsPortal::new(session.inner().object_server().clone()));
         add!(LockdownPortal::new());
         add!(AppChooser::new(proxy));
         add!(UsbPortal::new(proxy));

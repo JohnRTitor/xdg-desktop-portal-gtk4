@@ -35,6 +35,7 @@ struct PreparePrintOptions {
 #[zvariant(signature = "dict")]
 struct PreparePrintResults {
     settings: HashMap<String, OwnedValue>,
+    #[zvariant(rename = "page-setup")]
     page_setup: HashMap<String, OwnedValue>,
     token: u32,
 }

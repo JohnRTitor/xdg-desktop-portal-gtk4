@@ -38,8 +38,8 @@ struct PrepareInstallOptions {
 #[zvariant(signature = "dict")]
 struct PrepareInstallResults {
     name: String,
+    #[zvariant(rename = "icon")]
     icon_v: OwnedValue,
-    token: String,
 }
 
 impl Default for PrepareInstallResults {
@@ -47,7 +47,6 @@ impl Default for PrepareInstallResults {
         Self {
             name: String::new(),
             icon_v: OwnedValue::try_from(Value::Str("".into())).unwrap_or_else(|_| unreachable!("OOM")),
-            token: String::new(),
         }
     }
 }
@@ -84,11 +83,9 @@ impl DynamicLauncher {
 
         match res {
             Ok(res) => {
-                let token = Uuid::new_v4().to_string();
                 Response::success(PrepareInstallResults {
                     name: res.name,
                     icon_v, // pass through
-                    token,
                 })
             }
             Err(e) => {

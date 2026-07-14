@@ -1,9 +1,11 @@
 use {
     std::{collections::HashMap, sync::Mutex},
+    futures_util::stream::StreamExt,
+    std::str::FromStr,
     zbus::{
         interface,
-        zvariant::{DeserializeDict, Value, OwnedValue, Type},
-        Connection,
+        zvariant::{DeserializeDict, Value, OwnedValue, Type, ObjectPath},
+        Connection, ObjectServer,
         object_server::SignalEmitter,
     },
 };
@@ -27,6 +29,12 @@ trait Notifications {
     ) -> zbus::Result<u32>;
 
     fn close_notification(&self, id: u32) -> zbus::Result<()>;
+    
+    #[zbus(signal)]
+    fn action_invoked(&self, id: u32, action_key: &str) -> zbus::Result<()>;
+    
+    #[zbus(signal)]
+    fn notification_closed(&self, id: u32, reason: u32) -> zbus::Result<()>;
 }
 
 #[derive(DeserializeDict, Type, Default, Debug)]
@@ -40,17 +48,20 @@ struct PortalNotification {
     default_action: Option<String>,
     #[zvariant(rename = "default-action-target")]
     default_action_target: Option<OwnedValue>,
-    // buttons is a(sa{sv}) where s is label, a{sv} is action/target etc.
 }
 
 pub struct Notification {
-    active_notifications: Mutex<HashMap<String, u32>>,
+    active_notifications: std::sync::Arc<Mutex<HashMap<String, u32>>>,
+    reverse_map: std::sync::Arc<Mutex<HashMap<u32, (String, String)>>>,
+    init_once: std::sync::Once,
 }
 
 impl Notification {
     pub fn new() -> Self {
         Self {
-            active_notifications: Mutex::new(HashMap::new()),
+            active_notifications: std::sync::Arc::new(Mutex::new(HashMap::new())),
+            reverse_map: std::sync::Arc::new(Mutex::new(HashMap::new())),
+            init_once: std::sync::Once::new(),
         }
     }
 
@@ -66,6 +77,7 @@ impl Notification {
         app_id: String,
         id: String,
         notification: HashMap<String, Value<'_>>,
+        #[zbus(object_server)] server: &ObjectServer,
     ) {
         let title = notification
             .get("title")
@@ -88,15 +100,27 @@ impl Notification {
             ""
         };
 
-        let mut actions = Vec::new();
+        let mut parsed_actions: Vec<String> = Vec::new();
         if let Some(default_action) = notification.get("default-action") {
             if let Ok(action) = <&str>::try_from(default_action) {
-                actions.push("default");
-                actions.push(action);
+                parsed_actions.push("default".to_string());
+                parsed_actions.push(action.to_string());
             }
         }
 
-        // Basic implementation, button mapping can be complex
+        if let Some(buttons_val) = notification.get("buttons") {
+            if let Ok(buttons) = <Vec<(String, HashMap<String, Value<'_>>)>>::try_from(buttons_val.clone()) {
+                for (label, options) in buttons {
+                    let action = options.get("action").and_then(|v| <&str>::try_from(v).ok()).unwrap_or("");
+                    if !action.is_empty() && !label.is_empty() {
+                        parsed_actions.push(action.to_string());
+                        parsed_actions.push(label.clone());
+                    }
+                }
+            }
+        }
+
+        let actions: Vec<&str> = parsed_actions.iter().map(|s| s.as_str()).collect();
 
         if let Ok(system_bus) = Connection::session().await {
             if let Ok(proxy) = NotificationsProxy::new(&system_bus).await {
@@ -125,12 +149,68 @@ impl Notification {
                 {
                     if let Ok(mut lock) = self.active_notifications.lock() {
                         lock.insert(key, new_id);
-                    } else {
-                        log::error!("Failed to lock active_notifications mutex in add_notification");
+                    }
+                    if let Ok(mut lock) = self.reverse_map.lock() {
+                        lock.insert(new_id, (app_id.clone(), id.clone()));
                     }
                 }
             }
         }
+        
+        let reverse_map_clone = self.reverse_map.clone();
+        let server_clone = server.clone();
+        
+        self.init_once.call_once(move || {
+            let rm1 = reverse_map_clone.clone();
+            let s1 = server_clone.clone();
+            std::thread::spawn(move || {
+                zbus::block_on(async move {
+                    if let Ok(session_bus) = Connection::session().await {
+                        if let Ok(proxy) = NotificationsProxy::new(&session_bus).await {
+                            if let Ok(mut stream) = proxy.receive_action_invoked().await {
+                                while let Some(signal) = stream.next().await {
+                                    if let Ok(args) = signal.args() {
+                                        let id = args.id;
+                                        let action_key = args.action_key;
+                                        
+                                        let target = if let Ok(lock) = rm1.lock() {
+                                            lock.get(&id).cloned()
+                                        } else { None };
+                                        
+                                        if let Some((app_id, portal_id)) = target {
+                                            if let Ok(iface_ref) = s1.interface::<_, Notification>("/org/freedesktop/portal/desktop").await {
+                                                let empty_params: Vec<Value<'_>> = vec![];
+                                                let _ = Notification::action_invoked(iface_ref.signal_emitter(), &app_id, &portal_id, &action_key, &empty_params).await;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                });
+            });
+
+            let rm2 = reverse_map_clone.clone();
+            std::thread::spawn(move || {
+                zbus::block_on(async move {
+                    if let Ok(session_bus) = Connection::session().await {
+                        if let Ok(proxy) = NotificationsProxy::new(&session_bus).await {
+                            if let Ok(mut stream) = proxy.receive_notification_closed().await {
+                                while let Some(signal) = stream.next().await {
+                                    if let Ok(args) = signal.args() {
+                                        let id = args.id;
+                                        if let Ok(mut lock) = rm2.lock() {
+                                            lock.remove(&id);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                });
+            });
+        });
     }
 
     async fn remove_notification(&self, app_id: String, id: String) {

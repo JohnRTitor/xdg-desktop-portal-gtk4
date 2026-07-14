@@ -1,9 +1,12 @@
 use {
     crate::core::session::Session,
     std::collections::HashMap,
+    std::sync::Mutex,
+    futures_util::stream::StreamExt,
+    std::str::FromStr,
     zbus::{
         interface,
-        zvariant::{DeserializeDict, OwnedObjectPath, Type, Value},
+        zvariant::{DeserializeDict, OwnedObjectPath, Type, Value, ObjectPath},
         Connection, ObjectServer,
         object_server::SignalEmitter,
     },
@@ -25,6 +28,9 @@ struct InhibitOptions {
 trait ScreenSaver {
     fn inhibit(&self, application_name: &str, reason_for_inhibit: &str) -> zbus::Result<u32>;
     fn un_inhibit(&self, cookie: u32) -> zbus::Result<()>;
+    
+    #[zbus(signal)]
+    fn active_changed(&self, active: bool) -> zbus::Result<()>;
 }
 
 #[zbus::proxy(
@@ -53,11 +59,17 @@ impl InhibitRequest {
     }
 }
 
-pub struct Inhibit {}
+pub struct Inhibit {
+    active_monitors: std::sync::Arc<Mutex<HashMap<String, OwnedObjectPath>>>,
+    init_once: std::sync::Once,
+}
 
 impl Inhibit {
     pub fn new() -> Self {
-        Self {}
+        Self { 
+            active_monitors: std::sync::Arc::new(Mutex::new(HashMap::new())),
+            init_once: std::sync::Once::new(),
+        }
     }
 }
 
@@ -167,17 +179,57 @@ impl Inhibit {
 
     async fn create_monitor(
         &self,
-        _handle: OwnedObjectPath,
+        handle: OwnedObjectPath,
         session_handle: OwnedObjectPath,
         _app_id: String,
         _window: String,
         #[zbus(object_server)] server: &ObjectServer,
     ) -> zbus::fdo::Result<u32> {
         let session = Session::new(session_handle.as_str().to_string());
-        if let Err(e) = server.at(session_handle, session).await {
+        if let Err(e) = server.at(session_handle.clone(), session).await {
             log::error!("Failed to export monitor session: {}", e);
             return Ok(2); // Returning 2 as general error for create_monitor according to xdp-gtk
         }
+        
+        let handle_str = handle.as_str().to_string();
+        if let Ok(mut lock) = self.active_monitors.lock() {
+            lock.insert(handle_str, session_handle.clone());
+        }
+
+        let server_clone = server.clone();
+        let monitors_clone = self.active_monitors.clone();
+        
+        self.init_once.call_once(move || {
+            std::thread::spawn(move || {
+                zbus::block_on(async move {
+                    if let Ok(session_bus) = Connection::session().await {
+                        if let Ok(proxy) = ScreenSaverProxy::new(&session_bus).await {
+                            if let Ok(mut stream) = proxy.receive_active_changed().await {
+                                while let Some(signal) = stream.next().await {
+                                    if let Ok(args) = signal.args() {
+                                        let active = args.active;
+                                        if let Ok(iface_ref) = server_clone.interface::<_, Inhibit>("/org/freedesktop/portal/desktop").await {
+                                            let mut state = HashMap::new();
+                                            state.insert("screensaver-active".to_string(), Value::Bool(active));
+                                            
+                                            let sessions: Vec<OwnedObjectPath> = if let Ok(lock) = monitors_clone.lock() {
+                                                lock.values().cloned().collect()
+                                            } else {
+                                                Vec::new()
+                                            };
+                                            
+                                            for session_h in sessions {
+                                                let _ = Self::state_changed(iface_ref.signal_emitter(), session_h, state.clone()).await;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                });
+            });
+        });
         
         Ok(0) // 0 == success
     }
