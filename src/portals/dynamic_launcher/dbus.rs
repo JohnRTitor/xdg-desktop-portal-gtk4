@@ -1,8 +1,9 @@
 use {
     crate::{
-        gui::{dynamic_launcher::DynamicLauncherUi, UiProxy},
-        portal::{request::run_request, response::Response},
+        gui::UiProxy,
+        core::{request::run_request, response::Response},
     },
+    super::gui::DynamicLauncherUi,
     uuid::Uuid,
     zbus::{
         interface,

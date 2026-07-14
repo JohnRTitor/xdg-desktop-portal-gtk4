@@ -9,10 +9,10 @@ macro_rules! skip_if_dbus_tests_disabled {
     };
 }
 
-use xdg_desktop_portal_gtk4::portal::portals::{
-    lockdown::LockdownPortal,
-    settings::SettingsPortal,
-    inhibit::Inhibit,
+use xdg_desktop_portal_gtk4::portals::{
+    lockdown::dbus::LockdownPortal,
+    settings::dbus::SettingsPortal,
+    inhibit::dbus::Inhibit,
 };
 
 // Proxies for the tests

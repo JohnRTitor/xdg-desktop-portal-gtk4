@@ -1,9 +1,10 @@
 use zbus::zvariant::{DeserializeDict, SerializeDict, Type, OwnedObjectPath};
 use zbus::interface;
 use crate::{
-    gui::{UiProxy, app_chooser::{AppChooserUi, AppChooserError}},
-    portal::{request::run_request, response::Response},
+    gui::UiProxy,
+    core::{request::run_request, response::Response},
 };
+use super::gui::{AppChooserUi, AppChooserError};
 
 #[derive(DeserializeDict, Type, Debug)]
 #[zvariant(signature = "dict")]

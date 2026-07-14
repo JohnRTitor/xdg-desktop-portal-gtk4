@@ -1,8 +1,9 @@
 use {
     crate::{
-        gui::{account::AccountUi, UiProxy},
-        portal::{request::run_request, response::Response},
+        gui::UiProxy,
+        core::{request::run_request, response::Response},
     },
+    super::gui::AccountUi,
     zbus::{
         interface,
         zvariant::{DeserializeDict, OwnedObjectPath, SerializeDict, Type},

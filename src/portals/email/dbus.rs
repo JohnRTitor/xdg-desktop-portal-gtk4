@@ -1,5 +1,5 @@
 use {
-    crate::portal::{request::run_request, response::Response},
+    crate::core::{request::run_request, response::Response},
     gtk4::{glib, gio::AppInfo},
     zbus::{
         interface,

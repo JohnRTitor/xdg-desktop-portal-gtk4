@@ -1,8 +1,9 @@
 use {
     crate::{
-        gui::{print::{PrintUi, ExecutePrintUi}, UiProxy},
-        portal::{request::run_request, response::Response},
+        gui::UiProxy,
+        core::{request::run_request, response::Response},
     },
+    super::gui::{PrintUi, ExecutePrintUi},
     zbus::{
         interface,
         zvariant::{DeserializeDict, Fd, OwnedObjectPath, SerializeDict, Type, Value, OwnedValue},

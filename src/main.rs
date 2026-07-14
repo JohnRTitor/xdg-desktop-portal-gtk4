@@ -1,9 +1,29 @@
-use xdg_desktop_portal_gtk4::{cli, logging};
+use clap::Parser;
+use xdg_desktop_portal_gtk4::{gui::Ui, logging, core::Portal};
+
+/// The xdg-desktop-portal-gtk4 portal.
+#[derive(Parser, Debug)]
+struct Cli {
+    /// Replace the portal if it is already running.
+    #[clap(long)]
+    pub replace: bool,
+}
 
 fn main() {
     logging::init();
     init_i18n();
-    cli::main();
+
+    let args = Cli::parse();
+    let ui = Ui::new();
+    let _portal = match Portal::create(ui.proxy(), args.replace) {
+        Ok(p) => p,
+        Err(e) => {
+            log::error!("Could not create the portal: {}", anyhow::Error::new(e));
+            std::process::exit(1);
+        }
+    };
+    ui.init_gtk();
+    ui.run();
 }
 
 fn init_i18n() {

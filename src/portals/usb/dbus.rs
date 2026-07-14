@@ -2,9 +2,10 @@ use std::collections::HashMap;
 use zbus::zvariant::{SerializeDict, Type, OwnedObjectPath, OwnedValue};
 use zbus::interface;
 use crate::{
-    gui::{UiProxy, usb::{UsbUi, UsbError, UsbDevice}},
-    portal::{request::run_request, response::Response},
+    gui::UiProxy,
+    core::{request::run_request, response::Response},
 };
+use super::gui::{UsbUi, UsbError, UsbDevice};
 
 #[derive(SerializeDict, Type, Debug, Default)]
 #[zvariant(signature = "dict")]

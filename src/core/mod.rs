@@ -1,6 +1,13 @@
 use {
-    crate::gui::UiProxy,
-    portals::{access::Access, account::Account, dynamic_launcher::DynamicLauncher, email::Email, file_chooser::FileChooser, inhibit::Inhibit, notification::Notification, print::Print, settings::SettingsPortal, lockdown::LockdownPortal, app_chooser::AppChooser, usb::UsbPortal},
+    crate::{
+        gui::UiProxy,
+        portals::{
+            access::dbus::Access, account::dbus::Account, dynamic_launcher::dbus::DynamicLauncher,
+            email::dbus::Email, file_chooser::dbus::FileChooser, inhibit::dbus::Inhibit,
+            notification::dbus::Notification, print::dbus::Print, settings::dbus::SettingsPortal,
+            lockdown::dbus::LockdownPortal, app_chooser::dbus::AppChooser, usb::dbus::UsbPortal,
+        },
+    },
     std::thread,
     thiserror::Error,
     zbus::{
@@ -9,9 +16,8 @@ use {
     },
 };
 
-pub mod portals;
-mod request;
-mod response;
+pub mod request;
+pub mod response;
 pub mod session;
 
 const NAME: &str = "org.freedesktop.impl.portal.desktop.gtk4";

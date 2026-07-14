@@ -1,13 +1,11 @@
 use {
     crate::{
-        gui::{
-            file_chooser,
-            file_chooser::{
-                ChoiceVariant, FileChooserError, FileChooserUi, Filter, FilterKind, FinalChoice,
-            },
-            UiProxy,
-        },
-        portal::{request::run_request, response::Response},
+        gui::UiProxy,
+        core::{request::run_request, response::Response},
+    },
+    super::gui as file_chooser,
+    super::gui::{
+        ChoiceVariant, FileChooserError, FileChooserUi, Filter, FilterKind, FinalChoice,
     },
     bstr::{ByteSlice, ByteVec},
     serde::{Deserialize, Deserializer},

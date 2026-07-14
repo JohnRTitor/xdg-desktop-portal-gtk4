@@ -1,11 +1,9 @@
 use {
     crate::{
-        gui::{
-            access::{AccessUi, Choice as GuiChoice, ChoiceVariant},
-            UiProxy,
-        },
-        portal::{request::run_request, response::Response},
+        gui::UiProxy,
+        core::{request::run_request, response::Response},
     },
+    super::gui::{AccessUi, Choice as GuiChoice, ChoiceVariant},
     serde::Deserialize,
     zbus::{
         interface,

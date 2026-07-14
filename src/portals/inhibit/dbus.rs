@@ -1,5 +1,5 @@
 use {
-    crate::portal::session::Session,
+    crate::core::session::Session,
     std::collections::HashMap,
     zbus::{
         interface,
