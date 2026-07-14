@@ -1,12 +1,11 @@
 use {
     crate::core::response::Response,
     async_channel::Sender,
-    futures_util::{select, FutureExt},
+    futures_util::{FutureExt, select},
     std::future::Future,
     zbus::{
-        interface,
+        ObjectServer, interface,
         zvariant::{OwnedObjectPath, Type},
-        ObjectServer,
     },
 };
 

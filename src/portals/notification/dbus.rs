@@ -1,12 +1,11 @@
 use {
-    std::{collections::HashMap, sync::Mutex},
     futures_util::stream::StreamExt,
     std::str::FromStr,
+    std::{collections::HashMap, sync::Mutex},
     zbus::{
-        interface,
-        zvariant::{DeserializeDict, Value, OwnedValue, Type, ObjectPath},
-        Connection, ObjectServer,
+        Connection, ObjectServer, interface,
         object_server::SignalEmitter,
+        zvariant::{DeserializeDict, ObjectPath, OwnedValue, Type, Value},
     },
 };
 
@@ -29,10 +28,10 @@ trait Notifications {
     ) -> zbus::Result<u32>;
 
     fn close_notification(&self, id: u32) -> zbus::Result<()>;
-    
+
     #[zbus(signal)]
     fn action_invoked(&self, id: u32, action_key: &str) -> zbus::Result<()>;
-    
+
     #[zbus(signal)]
     fn notification_closed(&self, id: u32, reason: u32) -> zbus::Result<()>;
 }
@@ -115,9 +114,14 @@ impl Notification {
         }
 
         if let Some(buttons_val) = notification.get("buttons") {
-            if let Ok(buttons) = <Vec<(String, HashMap<String, Value<'_>>)>>::try_from(buttons_val.clone()) {
+            if let Ok(buttons) =
+                <Vec<(String, HashMap<String, Value<'_>>)>>::try_from(buttons_val.clone())
+            {
                 for (label, options) in buttons {
-                    let action = options.get("action").and_then(|v| <&str>::try_from(v).ok()).unwrap_or("");
+                    let action = options
+                        .get("action")
+                        .and_then(|v| <&str>::try_from(v).ok())
+                        .unwrap_or("");
                     if !action.is_empty() && !label.is_empty() {
                         parsed_actions.push(action.to_string());
                         parsed_actions.push(label.clone());
@@ -137,10 +141,11 @@ impl Notification {
             if let Ok(proxy) = NotificationsProxy::new(&system_bus).await {
                 let key = Self::get_key(&app_id, &id);
                 let replaces_id = {
-                    let mut lock = self.active_notifications.lock().unwrap_or_else(|e| e.into_inner());
-                    *lock
-                        .entry(key.clone())
-                        .or_insert(0)
+                    let mut lock = self
+                        .active_notifications
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner());
+                    *lock.entry(key.clone()).or_insert(0)
                 };
 
                 let hints = HashMap::new(); // desktop-entry could be added
@@ -167,10 +172,10 @@ impl Notification {
                 }
             }
         }
-        
+
         let reverse_map_clone = self.reverse_map.clone();
         let server_clone = server.clone();
-        
+
         self.init_once.call_once(move || {
             let rm1 = reverse_map_clone.clone();
             let s1 = server_clone.clone();
@@ -186,7 +191,10 @@ impl Notification {
             std::thread::spawn(move || {
                 zbus::block_on(async move {
                     if let Err(e) = listen_for_notification_closed(rm2).await {
-                        log::error!("Notification closed listener failed: {}", anyhow::Error::new(e));
+                        log::error!(
+                            "Notification closed listener failed: {}",
+                            anyhow::Error::new(e)
+                        );
                     }
                 });
             });

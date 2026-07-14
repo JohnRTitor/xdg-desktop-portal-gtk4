@@ -2,9 +2,9 @@ use {
     crate::{gui::UiProxy, utils::external_window::set_wayland_parent},
     async_channel::{Receiver, Sender},
     gtk4::{
+        CheckButton, DialogFlags, Image, Label, MessageDialog, MessageType, ResponseType, Widget,
         glib::MainContext,
         prelude::{BoxExt, Cast, CheckButtonExt, DialogExt, GtkWindowExt, WidgetExt},
-        CheckButton, DialogFlags, Image, Label, MessageDialog, MessageType, ResponseType, Widget,
     },
     rust_i18n::t,
     thiserror::Error,
@@ -84,8 +84,12 @@ impl AccessUi {
 
         dialog.format_secondary_text(Some(&self.subtitle));
 
-        let deny_label = self.deny_label.unwrap_or_else(|| t!("_Deny Access").to_string());
-        let grant_label = self.grant_label.unwrap_or_else(|| t!("_Grant Access").to_string());
+        let deny_label = self
+            .deny_label
+            .unwrap_or_else(|| t!("_Deny Access").to_string());
+        let grant_label = self
+            .grant_label
+            .unwrap_or_else(|| t!("_Grant Access").to_string());
 
         dialog.add_button(&deny_label, ResponseType::Cancel);
         dialog.add_button(&grant_label, ResponseType::Ok);
@@ -125,7 +129,10 @@ impl AccessUi {
 
                         for variant in &choice.variants {
                             let radio = if let Some(ref g) = group {
-                                CheckButton::builder().label(&variant.label).group(g).build()
+                                CheckButton::builder()
+                                    .label(&variant.label)
+                                    .group(g)
+                                    .build()
                             } else {
                                 CheckButton::builder().label(&variant.label).build()
                             };
@@ -137,7 +144,7 @@ impl AccessUi {
                             if choice.default == variant.id {
                                 radio.set_active(true);
                             }
-                            
+
                             area.append(&radio);
                             variants_for_choice.push((variant.id.clone(), radio));
                         }
@@ -150,7 +157,7 @@ impl AccessUi {
                 let image = Image::from_icon_name(icon);
                 area.prepend(&image);
             }
-            
+
             let choices_cfg = self.choices.is_some();
 
             dialog.connect_response(move |d, r| {
@@ -162,11 +169,17 @@ impl AccessUi {
                             for (id, button) in &boolean_choices {
                                 fc.push(FinalChoice {
                                     id: id.clone(),
-                                    variant_id: if button.is_active() { "true".to_string() } else { "false".to_string() },
+                                    variant_id: if button.is_active() {
+                                        "true".to_string()
+                                    } else {
+                                        "false".to_string()
+                                    },
                                 });
                             }
                             for (id, variants) in &radio_choices {
-                                if let Some((v_id, _)) = variants.iter().find(|(_, r)| r.is_active()) {
+                                if let Some((v_id, _)) =
+                                    variants.iter().find(|(_, r)| r.is_active())
+                                {
                                     fc.push(FinalChoice {
                                         id: id.clone(),
                                         variant_id: v_id.clone(),

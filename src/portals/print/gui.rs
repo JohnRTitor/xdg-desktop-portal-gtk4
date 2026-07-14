@@ -2,9 +2,9 @@ use {
     crate::{gui::UiProxy, utils::external_window::set_wayland_parent},
     async_channel::{Receiver, Sender},
     gtk4::{
+        PrintUnixDialog, ResponseType, Widget,
         glib::MainContext,
         prelude::{Cast, DialogExt, GtkWindowExt, WidgetExt},
-        PrintUnixDialog, ResponseType, Widget,
     },
     std::cell::RefCell,
     std::collections::HashMap,
@@ -64,7 +64,7 @@ impl PrintUi {
         let dummy_parent = gtk4::Window::new();
         let dialog = PrintUnixDialog::new(Some(&self.title), Some(&dummy_parent));
         dialog.set_modal(true);
-        
+
         dialog.upcast_ref::<Widget>().realize();
         set_wayland_parent(dialog.upcast_ref::<Widget>(), &self.parent_window);
 
@@ -77,7 +77,9 @@ impl PrintUi {
 
                     let settings = d.settings();
                     settings.foreach(|k, v| {
-                        if let Ok(owned) = zbus::zvariant::OwnedValue::try_from(zbus::zvariant::Value::from(v)) {
+                        if let Ok(owned) =
+                            zbus::zvariant::OwnedValue::try_from(zbus::zvariant::Value::from(v))
+                        {
                             settings_map.insert(k.to_string(), owned);
                         }
                     });
@@ -88,7 +90,9 @@ impl PrintUi {
                     if let Ok(keys) = key_file.keys("Page Setup") {
                         for key in keys {
                             if let Ok(val) = key_file.value("Page Setup", &key) {
-                                if let Ok(owned) = zbus::zvariant::OwnedValue::try_from(zbus::zvariant::Value::from(val.as_str())) {
+                                if let Ok(owned) = zbus::zvariant::OwnedValue::try_from(
+                                    zbus::zvariant::Value::from(val.as_str()),
+                                ) {
                                     page_setup_map.insert(key.to_string(), owned);
                                 }
                             }
@@ -101,15 +105,18 @@ impl PrintUi {
                         let page_setup_obj = d.page_setup();
                         let token: u32 = rand::random();
                         PRINT_JOBS.with(|jobs| {
-                            jobs.borrow_mut().insert(token, CachedPrintJob {
-                                app_id: self.app_id.clone(),
-                                title: self.title.clone(),
-                                printer,
-                                settings: settings_obj,
-                                page_setup: page_setup_obj,
-                            });
+                            jobs.borrow_mut().insert(
+                                token,
+                                CachedPrintJob {
+                                    app_id: self.app_id.clone(),
+                                    title: self.title.clone(),
+                                    printer,
+                                    settings: settings_obj,
+                                    page_setup: page_setup_obj,
+                                },
+                            );
                         });
-                        
+
                         Ok(PrintResult {
                             token,
                             settings: settings_map,
@@ -119,7 +126,7 @@ impl PrintUi {
                         // Dialog was confirmed but no printer was selected
                         Err(PrintError::Rejected)
                     }
-                },
+                }
                 _ => Err(PrintError::Rejected),
             };
             let _ = send.send_blocking(res);
@@ -143,9 +150,7 @@ pub struct ExecutePrintUi {
 impl ExecutePrintUi {
     pub async fn run(self, proxy: &UiProxy) -> Result<(), PrintError> {
         let (send, recv) = async_channel::bounded(1);
-        proxy
-            .context
-            .invoke(move || self.run_impl(send));
+        proxy.context.invoke(move || self.run_impl(send));
         recv.recv().await.map_err(|_| PrintError::Closed)?
     }
 
@@ -153,13 +158,18 @@ impl ExecutePrintUi {
         let job = PRINT_JOBS.with(|jobs| jobs.borrow_mut().remove(&self.token));
 
         if let Some(cached) = job {
-            let print_job = gtk4::PrintJob::new(&cached.title, &cached.printer, &cached.settings, &cached.page_setup);
+            let print_job = gtk4::PrintJob::new(
+                &cached.title,
+                &cached.printer,
+                &cached.settings,
+                &cached.page_setup,
+            );
             if let Err(e) = print_job.set_source_fd(self.fd) {
                 log::error!("Failed to set source fd for print job: {}", e);
                 let _ = send.send_blocking(Err(PrintError::Rejected));
                 return;
             }
-            
+
             print_job.send(move |_, err| {
                 if let Err(e) = err {
                     log::error!("Failed to send print job: {}", e);

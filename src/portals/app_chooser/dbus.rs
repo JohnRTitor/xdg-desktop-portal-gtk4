@@ -1,13 +1,13 @@
-use zbus::zvariant::{DeserializeDict, SerializeDict, Type, OwnedObjectPath};
-use zbus::interface;
+use super::gui::{AppChooserError, AppChooserUi};
+use crate::{
+    core::{request::run_request, response::Response},
+    gui::UiProxy,
+};
+use async_channel::Sender;
 use std::collections::HashMap;
 use std::sync::Mutex;
-use async_channel::Sender;
-use crate::{
-    gui::UiProxy,
-    core::{request::run_request, response::Response},
-};
-use super::gui::{AppChooserUi, AppChooserError};
+use zbus::interface;
+use zbus::zvariant::{DeserializeDict, OwnedObjectPath, SerializeDict, Type};
 
 #[derive(DeserializeDict, Type, Debug)]
 #[zvariant(signature = "dict")]
@@ -34,7 +34,7 @@ pub struct AppChooser {
 
 impl AppChooser {
     pub fn new(proxy: &UiProxy) -> Self {
-        Self { 
+        Self {
             proxy: proxy.clone(),
             active_dialogs: Mutex::new(HashMap::new()),
         }
@@ -49,7 +49,7 @@ impl AppChooser {
         options: ChooseApplicationOptions,
     ) -> Response<ChooseApplicationResults> {
         let (update_sender, update_receiver) = async_channel::bounded(10);
-        
+
         if let Ok(mut lock) = self.active_dialogs.lock() {
             lock.insert(handle_str.clone(), update_sender);
         }
@@ -62,7 +62,7 @@ impl AppChooser {
             filename: options.filename,
             content_type: options.content_type,
         };
-        
+
         let res = ui.run(&self.proxy, update_receiver).await;
 
         if let Ok(mut lock) = self.active_dialogs.lock() {
@@ -77,9 +77,7 @@ impl AppChooser {
                 };
                 Response::success(res)
             }
-            Err(AppChooserError::Closed) | Err(AppChooserError::Rejected) => {
-                Response::cancelled()
-            }
+            Err(AppChooserError::Closed) | Err(AppChooserError::Rejected) => Response::cancelled(),
         }
     }
 }
@@ -100,7 +98,7 @@ impl AppChooser {
         run_request(
             server,
             handle,
-            self.choose_application_impl(handle_str, app_id, parent_window, choices, options)
+            self.choose_application_impl(handle_str, app_id, parent_window, choices, options),
         )
         .await
     }

@@ -1,10 +1,8 @@
 use crate::{gui::UiProxy, utils::external_window::set_wayland_parent};
 use async_channel::{Receiver, Sender};
 use gtk4::{
-    glib::MainContext,
-    prelude::*,
-    ResponseType, Widget,
-    ListBox, ListBoxRow, Label, Box as GtkBox, Orientation, ScrolledWindow, CheckButton,
+    Box as GtkBox, CheckButton, Label, ListBox, ListBoxRow, Orientation, ResponseType,
+    ScrolledWindow, Widget, glib::MainContext, prelude::*,
 };
 use rust_i18n::t;
 use std::collections::HashMap;
@@ -73,8 +71,12 @@ impl UsbUi {
         content_area.set_margin_start(12);
         content_area.set_margin_end(12);
         content_area.set_spacing(12);
-        
-        let label_text = format!("{} {}", self.app_id, t!("wants to access the following USB devices"));
+
+        let label_text = format!(
+            "{} {}",
+            self.app_id,
+            t!("wants to access the following USB devices")
+        );
         let label = Label::builder().label(&label_text).wrap(true).build();
         content_area.append(&label);
 
@@ -89,9 +91,8 @@ impl UsbUi {
         list_box.set_selection_mode(gtk4::SelectionMode::None);
         scrolled_window.set_child(Some(&list_box));
 
-        let checks: Rc<Vec<CheckButton>> = Rc::new(
-            self.devices.iter().map(|_| CheckButton::new()).collect()
-        );
+        let checks: Rc<Vec<CheckButton>> =
+            Rc::new(self.devices.iter().map(|_| CheckButton::new()).collect());
 
         for (i, device) in self.devices.iter().enumerate() {
             let row = ListBoxRow::new();
@@ -100,28 +101,37 @@ impl UsbUi {
             hbox.set_margin_bottom(6);
             hbox.set_margin_start(6);
             hbox.set_margin_end(6);
-            
+
             let check = &checks[i];
             hbox.append(check);
-            
+
             let vbox = GtkBox::new(Orientation::Vertical, 4);
-            let title_label = Label::builder().label(&device.title).halign(gtk4::Align::Start).build();
-            let subtitle_label = Label::builder().label(&device.subtitle).halign(gtk4::Align::Start).build();
+            let title_label = Label::builder()
+                .label(&device.title)
+                .halign(gtk4::Align::Start)
+                .build();
+            let subtitle_label = Label::builder()
+                .label(&device.subtitle)
+                .halign(gtk4::Align::Start)
+                .build();
             subtitle_label.add_css_class("dim-label");
-            
+
             vbox.append(&title_label);
             vbox.append(&subtitle_label);
-            
+
             if let Some(serial) = &device.serial {
-                let serial_label = Label::builder().label(&format!("SN: {}", serial)).halign(gtk4::Align::Start).build();
+                let serial_label = Label::builder()
+                    .label(&format!("SN: {}", serial))
+                    .halign(gtk4::Align::Start)
+                    .build();
                 serial_label.add_css_class("dim-label");
                 vbox.append(&serial_label);
             }
-            
+
             hbox.append(&vbox);
             row.set_child(Some(&hbox));
             list_box.append(&row);
-            
+
             let ok_button_clone = ok_button.clone();
             let checks_clone = checks.clone();
             check.connect_toggled(move |_| {
@@ -138,7 +148,8 @@ impl UsbUi {
                     let mut selected = Vec::new();
                     for (i, check) in checks_final.iter().enumerate() {
                         if check.is_active() {
-                            selected.push((devices[i].id.clone(), devices[i].access_options.clone()));
+                            selected
+                                .push((devices[i].id.clone(), devices[i].access_options.clone()));
                         }
                     }
                     if selected.is_empty() {

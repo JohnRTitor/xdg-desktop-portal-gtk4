@@ -1,11 +1,9 @@
 use {
-    crate::{
-        gui::UiProxy,
-        core::{request::run_request, response::Response},
-    },
     super::gui as file_chooser,
-    super::gui::{
-        ChoiceVariant, FileChooserError, FileChooserUi, Filter, FilterKind, FinalChoice,
+    super::gui::{ChoiceVariant, FileChooserError, FileChooserUi, Filter, FilterKind, FinalChoice},
+    crate::{
+        core::{request::run_request, response::Response},
+        gui::UiProxy,
     },
     bstr::{ByteSlice, ByteVec},
     serde::{Deserialize, Deserializer},
@@ -13,9 +11,8 @@ use {
     thiserror::Error,
     url::Url,
     zbus::{
-        interface,
+        ObjectServer, interface,
         zvariant::{DeserializeDict, OwnedObjectPath, SerializeDict, Type},
-        ObjectServer,
     },
 };
 
@@ -449,14 +446,20 @@ mod tests {
 
     #[test]
     fn test_map_filter_unknown_kind_skipped() {
-        let f = map_filter(("Mixed".to_string(), vec![(0, "*.png".to_string()), (99, "unknown".to_string())]));
+        let f = map_filter((
+            "Mixed".to_string(),
+            vec![(0, "*.png".to_string()), (99, "unknown".to_string())],
+        ));
         assert_eq!(f.elements.len(), 1);
         assert!(matches!(f.elements[0], FilterKind::Glob(ref v) if v == "*.png"));
     }
 
     #[test]
     fn test_unmap_filter_roundtrip() {
-        let original: FileFilter = ("Images".to_string(), vec![(0, "*.png".to_string()), (1, "image/png".to_string())]);
+        let original: FileFilter = (
+            "Images".to_string(),
+            vec![(0, "*.png".to_string()), (1, "image/png".to_string())],
+        );
         let mapped = map_filter(original.clone());
         let unmapped = unmap_filter(mapped);
         assert_eq!(original, unmapped);
@@ -488,7 +491,10 @@ mod tests {
 
     #[test]
     fn test_map_final_choices() {
-        let c = FinalChoice { id: "encoding".to_string(), variant_id: "utf8".to_string() };
+        let c = FinalChoice {
+            id: "encoding".to_string(),
+            variant_id: "utf8".to_string(),
+        };
         let mapped = map_final_choices(vec![c]);
         assert_eq!(mapped, vec![("encoding".to_string(), "utf8".to_string())]);
     }

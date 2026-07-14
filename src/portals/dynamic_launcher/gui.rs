@@ -2,9 +2,9 @@ use {
     crate::{gui::UiProxy, utils::external_window::set_wayland_parent},
     async_channel::{Receiver, Sender},
     gtk4::{
+        DialogFlags, Entry, Image, Label, MessageDialog, MessageType, ResponseType, Widget,
         glib::MainContext,
         prelude::{BoxExt, Cast, DialogExt, EditableExt, GtkWindowExt, WidgetExt},
-        DialogFlags, Entry, Image, Label, MessageDialog, MessageType, ResponseType, Widget,
     },
     rust_i18n::t,
     thiserror::Error,
@@ -39,7 +39,9 @@ impl DynamicLauncherUi {
         proxy
             .context
             .invoke(move || self.run_impl(send, context, close_on_close));
-        recv.recv().await.map_err(|_| DynamicLauncherError::Closed)?
+        recv.recv()
+            .await
+            .map_err(|_| DynamicLauncherError::Closed)?
     }
 
     fn run_impl(

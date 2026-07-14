@@ -1,11 +1,8 @@
 use crate::{gui::UiProxy, utils::external_window::set_wayland_parent};
 use async_channel::{Receiver, Sender};
 use gtk4::{
-    glib::MainContext,
-    prelude::*,
-    ResponseType, Widget,
-    gio::AppInfo,
-    ListBox, ListBoxRow, Label, Image, Box as GtkBox, Orientation, ScrolledWindow
+    Box as GtkBox, Image, Label, ListBox, ListBoxRow, Orientation, ResponseType, ScrolledWindow,
+    Widget, gio::AppInfo, glib::MainContext, prelude::*,
 };
 use rust_i18n::t;
 use thiserror::Error;
@@ -33,7 +30,11 @@ pub struct AppChooserResult {
 }
 
 impl AppChooserUi {
-    pub async fn run(self, proxy: &UiProxy, update_receiver: Receiver<Vec<String>>) -> Result<AppChooserResult, AppChooserError> {
+    pub async fn run(
+        self,
+        proxy: &UiProxy,
+        update_receiver: Receiver<Vec<String>>,
+    ) -> Result<AppChooserResult, AppChooserError> {
         let (send, recv) = async_channel::bounded(1);
         let (_send, close_on_close) = async_channel::bounded(1);
         let context = proxy.context.clone();
@@ -69,7 +70,7 @@ impl AppChooserUi {
         content_area.set_margin_start(12);
         content_area.set_margin_end(12);
         content_area.set_spacing(12);
-        
+
         let label_text = if let Some(ref filename) = self.filename {
             format!("{} {}", t!("Select an application to open"), filename)
         } else {
@@ -88,7 +89,7 @@ impl AppChooserUi {
         let list_box = ListBox::new();
         list_box.set_selection_mode(gtk4::SelectionMode::Single);
         scrolled_window.set_child(Some(&list_box));
-        
+
         populate_list_box(&list_box, &self.choices, self.content_type.as_deref());
 
         let list_box_clone2 = list_box.clone();
@@ -98,7 +99,7 @@ impl AppChooserUi {
                 populate_list_box(&list_box_clone2, &new_choices, content_type.as_deref());
             }
         });
-        
+
         let ok_button_clone = ok_button.clone();
         list_box.connect_row_selected(move |_, row| {
             ok_button_clone.set_sensitive(row.is_some());
@@ -111,7 +112,9 @@ impl AppChooserUi {
                 ResponseType::Ok => {
                     if let Some(row) = list_box_clone.selected_row() {
                         let launch_context = gtk4::gio::AppLaunchContext::new();
-                        let token = launch_context.startup_notify_id(None::<&gtk4::gio::AppInfo>, &[]).map(|s| s.to_string());
+                        let token = launch_context
+                            .startup_notify_id(None::<&gtk4::gio::AppInfo>, &[])
+                            .map(|s| s.to_string());
                         Ok(AppChooserResult {
                             choice: row.widget_name().to_string(),
                             activation_token: token,
@@ -143,7 +146,7 @@ fn populate_list_box(list_box: &ListBox, choices: &[String], content_type: Optio
     while let Some(child) = list_box.first_child() {
         list_box.remove(&child);
     }
-    
+
     let all_apps = AppInfo::all();
     let mut apps_to_show = Vec::new();
 
@@ -174,19 +177,19 @@ fn populate_list_box(list_box: &ListBox, choices: &[String], content_type: Optio
         hbox.set_margin_bottom(6);
         hbox.set_margin_start(6);
         hbox.set_margin_end(6);
-        
+
         if let Some(icon) = app.icon() {
             let image = Image::from_gicon(&icon);
             image.set_pixel_size(32);
             hbox.append(&image);
         }
-        
+
         let name_label = Label::new(Some(&app.name()));
         name_label.set_halign(gtk4::Align::Start);
         hbox.append(&name_label);
-        
+
         row.set_child(Some(&hbox));
-        
+
         if let Some(id) = app.id() {
             row.set_widget_name(&id.to_string());
             list_box.append(&row);

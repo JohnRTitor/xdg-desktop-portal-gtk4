@@ -1,14 +1,13 @@
 use {
-    crate::{
-        gui::UiProxy,
-        core::{request::run_request, response::Response},
-    },
     super::gui::DynamicLauncherUi,
+    crate::{
+        core::{request::run_request, response::Response},
+        gui::UiProxy,
+    },
     uuid::Uuid,
     zbus::{
-        interface,
-        zvariant::{DeserializeDict, OwnedObjectPath, SerializeDict, Type, Value, OwnedValue},
-        ObjectServer,
+        ObjectServer, interface,
+        zvariant::{DeserializeDict, OwnedObjectPath, OwnedValue, SerializeDict, Type, Value},
     },
 };
 
@@ -46,15 +45,15 @@ impl Default for PrepareInstallResults {
     fn default() -> Self {
         Self {
             name: String::new(),
-            icon_v: OwnedValue::try_from(Value::Str("".into())).unwrap_or_else(|_| unreachable!("OOM")),
+            icon_v: OwnedValue::try_from(Value::Str("".into()))
+                .unwrap_or_else(|_| unreachable!("OOM")),
         }
     }
 }
 
 #[derive(DeserializeDict, Type, Debug, Default)]
 #[zvariant(signature = "dict")]
-struct RequestInstallTokenOptions {
-}
+struct RequestInstallTokenOptions {}
 
 impl DynamicLauncher {
     async fn prepare_install_impl(
@@ -115,7 +114,7 @@ impl DynamicLauncher {
         run_request(
             server,
             handle,
-            self.prepare_install_impl(app_id, parent_window, name, icon_owned, options)
+            self.prepare_install_impl(app_id, parent_window, name, icon_owned, options),
         )
         .await
     }
@@ -171,13 +170,21 @@ fn parse_icon(icon_v: &OwnedValue) -> (Option<String>, Option<Vec<u8>>) {
 
     match type_str {
         "bytes" => {
-            let Ok(v) = <zbus::zvariant::Value>::try_from(&fields[1]) else { return (None, None) };
-            let Ok(bytes) = <Vec<u8>>::try_from(v) else { return (None, None) };
+            let Ok(v) = <zbus::zvariant::Value>::try_from(&fields[1]) else {
+                return (None, None);
+            };
+            let Ok(bytes) = <Vec<u8>>::try_from(v) else {
+                return (None, None);
+            };
             (None, Some(bytes))
         }
         "themed" => {
-            let Ok(v) = <zbus::zvariant::Value>::try_from(&fields[1]) else { return (None, None) };
-            let Ok(names) = <Vec<String>>::try_from(v) else { return (None, None) };
+            let Ok(v) = <zbus::zvariant::Value>::try_from(&fields[1]) else {
+                return (None, None);
+            };
+            let Ok(names) = <Vec<String>>::try_from(v) else {
+                return (None, None);
+            };
             if !names.is_empty() {
                 (Some(names[0].clone()), None)
             } else {

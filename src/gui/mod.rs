@@ -3,8 +3,6 @@ use gtk4::{
     glib::{MainContext, MainLoop},
 };
 
-
-
 pub struct Ui {
     main_loop: MainLoop,
     proxy: UiProxy,

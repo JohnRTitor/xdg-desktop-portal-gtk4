@@ -17,7 +17,9 @@ impl LockdownPortal {
 
     #[zbus(property, name = "disable-printing")]
     async fn set_disable_printing(&self, _value: bool) -> zbus::fdo::Result<()> {
-        Err(zbus::fdo::Error::NotSupported("Lockdown portal is read-only".into()))
+        Err(zbus::fdo::Error::NotSupported(
+            "Lockdown portal is read-only".into(),
+        ))
     }
 
     #[zbus(property, name = "disable-save-to-disk")]
@@ -27,7 +29,9 @@ impl LockdownPortal {
 
     #[zbus(property, name = "disable-save-to-disk")]
     async fn set_disable_save_to_disk(&self, _value: bool) -> zbus::fdo::Result<()> {
-        Err(zbus::fdo::Error::NotSupported("Lockdown portal is read-only".into()))
+        Err(zbus::fdo::Error::NotSupported(
+            "Lockdown portal is read-only".into(),
+        ))
     }
 
     #[zbus(property, name = "disable-application-handlers")]
@@ -37,7 +41,9 @@ impl LockdownPortal {
 
     #[zbus(property, name = "disable-application-handlers")]
     async fn set_disable_application_handlers(&self, _value: bool) -> zbus::fdo::Result<()> {
-        Err(zbus::fdo::Error::NotSupported("Lockdown portal is read-only".into()))
+        Err(zbus::fdo::Error::NotSupported(
+            "Lockdown portal is read-only".into(),
+        ))
     }
 
     #[zbus(property, name = "disable-location")]
@@ -47,7 +53,9 @@ impl LockdownPortal {
 
     #[zbus(property, name = "disable-location")]
     async fn set_disable_location(&self, _value: bool) -> zbus::fdo::Result<()> {
-        Err(zbus::fdo::Error::NotSupported("Lockdown portal is read-only".into()))
+        Err(zbus::fdo::Error::NotSupported(
+            "Lockdown portal is read-only".into(),
+        ))
     }
 
     #[zbus(property, name = "disable-camera")]
@@ -57,7 +65,9 @@ impl LockdownPortal {
 
     #[zbus(property, name = "disable-camera")]
     async fn set_disable_camera(&self, _value: bool) -> zbus::fdo::Result<()> {
-        Err(zbus::fdo::Error::NotSupported("Lockdown portal is read-only".into()))
+        Err(zbus::fdo::Error::NotSupported(
+            "Lockdown portal is read-only".into(),
+        ))
     }
 
     #[zbus(property, name = "disable-microphone")]
@@ -67,7 +77,9 @@ impl LockdownPortal {
 
     #[zbus(property, name = "disable-microphone")]
     async fn set_disable_microphone(&self, _value: bool) -> zbus::fdo::Result<()> {
-        Err(zbus::fdo::Error::NotSupported("Lockdown portal is read-only".into()))
+        Err(zbus::fdo::Error::NotSupported(
+            "Lockdown portal is read-only".into(),
+        ))
     }
 
     #[zbus(property, name = "disable-sound-output")]
@@ -77,6 +89,8 @@ impl LockdownPortal {
 
     #[zbus(property, name = "disable-sound-output")]
     async fn set_disable_sound_output(&self, _value: bool) -> zbus::fdo::Result<()> {
-        Err(zbus::fdo::Error::NotSupported("Lockdown portal is read-only".into()))
+        Err(zbus::fdo::Error::NotSupported(
+            "Lockdown portal is read-only".into(),
+        ))
     }
 }

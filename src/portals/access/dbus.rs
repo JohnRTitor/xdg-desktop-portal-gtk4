@@ -1,14 +1,13 @@
 use {
-    crate::{
-        gui::UiProxy,
-        core::{request::run_request, response::Response},
-    },
     super::gui::{AccessUi, Choice as GuiChoice, ChoiceVariant},
+    crate::{
+        core::{request::run_request, response::Response},
+        gui::UiProxy,
+    },
     serde::Deserialize,
     zbus::{
-        interface,
+        ObjectServer, interface,
         zvariant::{DeserializeDict, OwnedObjectPath, SerializeDict, Type},
-        ObjectServer,
     },
 };
 
@@ -62,7 +61,10 @@ impl Access {
                     variants: ch
                         .2
                         .into_iter()
-                        .map(|v| ChoiceVariant { id: v.0, label: v.1 })
+                        .map(|v| ChoiceVariant {
+                            id: v.0,
+                            label: v.1,
+                        })
                         .collect(),
                     default: ch.3,
                 })
@@ -86,9 +88,9 @@ impl Access {
 
         match res {
             Ok(res) => Response::success(AccessResults {
-                choices: res.final_choices.map(|c| {
-                    c.into_iter().map(|fc| (fc.id, fc.variant_id)).collect()
-                }),
+                choices: res
+                    .final_choices
+                    .map(|c| c.into_iter().map(|fc| (fc.id, fc.variant_id)).collect()),
             }),
             Err(e) => {
                 log::error!("AccessDialog failed: {}", anyhow::Error::new(e));

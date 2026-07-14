@@ -1,12 +1,12 @@
 pub mod access;
 pub mod account;
+pub mod app_chooser;
 pub mod dynamic_launcher;
-pub mod inhibit;
-pub mod settings;
-pub mod print;
-pub mod notification;
 pub mod email;
 pub mod file_chooser;
+pub mod inhibit;
 pub mod lockdown;
-pub mod app_chooser;
+pub mod notification;
+pub mod print;
+pub mod settings;
 pub mod usb;

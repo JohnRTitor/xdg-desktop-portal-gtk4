@@ -1,13 +1,12 @@
 use {
-    crate::{
-        gui::UiProxy,
-        core::{request::run_request, response::Response},
-    },
     super::gui::AccountUi,
+    crate::{
+        core::{request::run_request, response::Response},
+        gui::UiProxy,
+    },
     zbus::{
-        interface,
+        Connection, ObjectServer, interface,
         zvariant::{DeserializeDict, OwnedObjectPath, SerializeDict, Type},
-        Connection, ObjectServer,
     },
 };
 

@@ -1,15 +1,14 @@
 use {
+    super::gui::{ExecutePrintUi, PrintUi},
     crate::{
-        gui::UiProxy,
         core::{request::run_request, response::Response},
-    },
-    super::gui::{PrintUi, ExecutePrintUi},
-    zbus::{
-        interface,
-        zvariant::{DeserializeDict, Fd, OwnedObjectPath, SerializeDict, Type, Value, OwnedValue},
-        ObjectServer,
+        gui::UiProxy,
     },
     std::collections::HashMap,
+    zbus::{
+        ObjectServer, interface,
+        zvariant::{DeserializeDict, Fd, OwnedObjectPath, OwnedValue, SerializeDict, Type, Value},
+    },
 };
 
 pub struct Print {
@@ -78,7 +77,11 @@ impl Print {
                 settings: result.settings,
                 page_setup: result.page_setup,
                 token: result.token,
-                supported_output_file_formats: Some(vec!["pdf".to_string(), "ps".to_string(), "svg".to_string()]),
+                supported_output_file_formats: Some(vec![
+                    "pdf".to_string(),
+                    "ps".to_string(),
+                    "svg".to_string(),
+                ]),
                 has_current_page: Some(true),
                 has_selected_pages: Some(true),
             }),
@@ -99,18 +102,13 @@ impl Print {
     ) -> Response<PrintResults> {
         use std::os::fd::AsRawFd;
         let token = options.token.unwrap_or(0);
-        
+
         // The fd needs to be duplicated if the portal daemon closes it,
         // but since we await the GTK thread synchronously, the raw_fd is valid.
         // Actually, GTK internally dups the FD according to C docs!
         let raw_fd = fd.as_raw_fd();
 
-        let res = ExecutePrintUi {
-            token,
-            fd: raw_fd,
-        }
-        .run(&self.proxy)
-        .await;
+        let res = ExecutePrintUi { token, fd: raw_fd }.run(&self.proxy).await;
 
         match res {
             Ok(_) => Response::success(PrintResults::default()),

@@ -1,11 +1,11 @@
-use std::collections::HashMap;
-use zbus::zvariant::{SerializeDict, Type, OwnedObjectPath, OwnedValue};
-use zbus::interface;
+use super::gui::{UsbDevice, UsbError, UsbUi};
 use crate::{
-    gui::UiProxy,
     core::{request::run_request, response::Response},
+    gui::UiProxy,
 };
-use super::gui::{UsbUi, UsbError, UsbDevice};
+use std::collections::HashMap;
+use zbus::interface;
+use zbus::zvariant::{OwnedObjectPath, OwnedValue, SerializeDict, Type};
 
 #[derive(SerializeDict, Type, Debug, Default)]
 #[zvariant(signature = "dict")]
@@ -19,7 +19,9 @@ pub struct UsbPortal {
 
 impl UsbPortal {
     pub fn new(proxy: &UiProxy) -> Self {
-        Self { proxy: proxy.clone() }
+        Self {
+            proxy: proxy.clone(),
+        }
     }
 
     fn parse_udev_string(s: &str) -> String {
@@ -28,9 +30,9 @@ impl UsbPortal {
 
     fn extract_property(properties: &HashMap<String, OwnedValue>, keys: &[&str]) -> Option<String> {
         keys.iter().find_map(|&k| {
-            properties.get(k).and_then(|val| {
-                <&str>::try_from(val).ok().map(Self::parse_udev_string)
-            })
+            properties
+                .get(k)
+                .and_then(|val| <&str>::try_from(val).ok().map(Self::parse_udev_string))
         })
     }
 
@@ -38,7 +40,11 @@ impl UsbPortal {
         &self,
         app_id: String,
         parent_window: String,
-        devices_in: Vec<(String, HashMap<String, OwnedValue>, HashMap<String, OwnedValue>)>,
+        devices_in: Vec<(
+            String,
+            HashMap<String, OwnedValue>,
+            HashMap<String, OwnedValue>,
+        )>,
     ) -> Response<UsbResults> {
         let mut parsed_devices = Vec::new();
         for (id, props, access_options) in devices_in {
@@ -52,8 +58,14 @@ impl UsbPortal {
                 properties = props.clone();
             }
 
-            let vendor = Self::extract_property(&properties, &["ID_VENDOR_FROM_DATABASE", "ID_VENDOR_ENC", "ID_VENDOR_ID"]);
-            let model = Self::extract_property(&properties, &["ID_MODEL_FROM_DATABASE", "ID_MODEL_ENC", "ID_MODEL_ID"]);
+            let vendor = Self::extract_property(
+                &properties,
+                &["ID_VENDOR_FROM_DATABASE", "ID_VENDOR_ENC", "ID_VENDOR_ID"],
+            );
+            let model = Self::extract_property(
+                &properties,
+                &["ID_MODEL_FROM_DATABASE", "ID_MODEL_ENC", "ID_MODEL_ID"],
+            );
 
             let mut serial = None;
             if let Some(val) = properties.get("ID_SERIAL_SHORT") {
@@ -78,7 +90,7 @@ impl UsbPortal {
             parent_window,
             devices: parsed_devices,
         };
-        
+
         match ui.run(&self.proxy).await {
             Ok(result) => {
                 let res = UsbResults {
@@ -86,9 +98,7 @@ impl UsbPortal {
                 };
                 Response::success(res)
             }
-            Err(UsbError::Closed) | Err(UsbError::Rejected) => {
-                Response::cancelled()
-            }
+            Err(UsbError::Closed) | Err(UsbError::Rejected) => Response::cancelled(),
         }
     }
 }
@@ -101,14 +111,18 @@ impl UsbPortal {
         handle: OwnedObjectPath,
         parent_window: String,
         app_id: String,
-        devices: Vec<(String, HashMap<String, OwnedValue>, HashMap<String, OwnedValue>)>,
+        devices: Vec<(
+            String,
+            HashMap<String, OwnedValue>,
+            HashMap<String, OwnedValue>,
+        )>,
         _options: HashMap<String, OwnedValue>,
         #[zbus(object_server)] server: &zbus::ObjectServer,
     ) -> Response<UsbResults> {
         run_request(
             server,
             handle,
-            self.acquire_devices_impl(app_id, parent_window, devices)
+            self.acquire_devices_impl(app_id, parent_window, devices),
         )
         .await
     }
@@ -126,7 +140,10 @@ mod tests {
 
     #[test]
     fn test_parse_udev_basic() {
-        assert_eq!(UsbPortal::parse_udev_string("Logitech\\x20Mouse"), "Logitech Mouse");
+        assert_eq!(
+            UsbPortal::parse_udev_string("Logitech\\x20Mouse"),
+            "Logitech Mouse"
+        );
     }
 
     #[test]

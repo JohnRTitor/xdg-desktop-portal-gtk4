@@ -1,14 +1,13 @@
 use {
     crate::core::session::Session,
-    std::collections::HashMap,
-    std::sync::Mutex,
     futures_util::stream::StreamExt,
+    std::collections::HashMap,
     std::str::FromStr,
+    std::sync::Mutex,
     zbus::{
-        interface,
-        zvariant::{DeserializeDict, OwnedObjectPath, Type, Value, ObjectPath},
-        Connection, ObjectServer,
+        Connection, ObjectServer, interface,
         object_server::SignalEmitter,
+        zvariant::{DeserializeDict, ObjectPath, OwnedObjectPath, Type, Value},
     },
 };
 
@@ -18,8 +17,6 @@ struct InhibitOptions {
     reason: Option<String>,
 }
 
-
-
 #[zbus::proxy(
     interface = "org.freedesktop.ScreenSaver",
     default_service = "org.freedesktop.ScreenSaver",
@@ -28,7 +25,7 @@ struct InhibitOptions {
 trait ScreenSaver {
     fn inhibit(&self, application_name: &str, reason_for_inhibit: &str) -> zbus::Result<u32>;
     fn un_inhibit(&self, cookie: u32) -> zbus::Result<()>;
-    
+
     #[zbus(signal)]
     fn active_changed(&self, active: bool) -> zbus::Result<()>;
 }
@@ -66,7 +63,7 @@ pub struct Inhibit {
 
 impl Inhibit {
     pub fn new() -> Self {
-        Self { 
+        Self {
             active_monitors: std::sync::Arc::new(Mutex::new(HashMap::new())),
             init_once: std::sync::Once::new(),
         }
@@ -93,13 +90,13 @@ impl Inhibit {
         }
 
         let server_clone = server.clone();
-        
+
         std::thread::spawn(move || {
             zbus::block_on(async move {
                 let session_bus_res = Connection::session().await;
                 let mut screen_saver_cookie = None;
                 let mut logind_fd = None;
-                
+
                 let system_bus_res = Connection::system().await;
 
                 let mut inhibit_what = Vec::new();
@@ -118,7 +115,7 @@ impl Inhibit {
                 if reason & 8 != 0 {
                     inhibit_what.push("idle");
                 }
-                
+
                 let reason_str = options.reason.as_deref().unwrap_or("Portal inhibit");
 
                 // Try logind first for sleep/shutdown/idle
@@ -126,11 +123,14 @@ impl Inhibit {
                     if let Ok(system_bus) = &system_bus_res {
                         if let Ok(logind_proxy) = Login1ManagerProxy::new(system_bus).await {
                             let what_str = inhibit_what.join(":");
-                            match logind_proxy.inhibit(&what_str, &app_id, reason_str, "block").await {
+                            match logind_proxy
+                                .inhibit(&what_str, &app_id, reason_str, "block")
+                                .await
+                            {
                                 Ok(fd) => {
                                     logind_fd = Some(fd);
                                     log::debug!("Acquired logind inhibit lock for {}", what_str);
-                                },
+                                }
                                 Err(e) => {
                                     log::warn!("Failed to inhibit via logind: {}", e);
                                 }
@@ -147,7 +147,7 @@ impl Inhibit {
                                 Ok(cookie) => {
                                     screen_saver_cookie = Some((ss_proxy, cookie));
                                     log::debug!("Acquired ScreenSaver inhibit cookie {}", cookie);
-                                },
+                                }
                                 Err(e) => {
                                     log::warn!("Failed to inhibit via ScreenSaver: {}", e);
                                 }
@@ -160,15 +160,15 @@ impl Inhibit {
                 let _ = recv.recv().await;
 
                 log::debug!("Inhibit Request {} closed, releasing locks", handle);
-                
+
                 // Release ScreenSaver cookie
                 if let Some((proxy, cookie)) = screen_saver_cookie {
                     let _ = proxy.un_inhibit(cookie).await;
                 }
-                
+
                 // logind_fd is automatically released when dropped
                 drop(logind_fd);
-                
+
                 // Unexport the Request
                 let _ = server_clone.remove::<InhibitRequest, _>(handle).await;
             });
@@ -190,7 +190,7 @@ impl Inhibit {
             log::error!("Failed to export monitor session: {}", e);
             return Ok(2); // Returning 2 as general error for create_monitor according to xdp-gtk
         }
-        
+
         let handle_str = handle.as_str().to_string();
         if let Ok(mut lock) = self.active_monitors.lock() {
             lock.insert(handle_str, session_handle.clone());
@@ -198,7 +198,7 @@ impl Inhibit {
 
         let server_clone = server.clone();
         let monitors_clone = self.active_monitors.clone();
-        
+
         self.init_once.call_once(move || {
             std::thread::spawn(move || {
                 zbus::block_on(async move {
@@ -208,18 +208,32 @@ impl Inhibit {
                                 while let Some(signal) = stream.next().await {
                                     if let Ok(args) = signal.args() {
                                         let active = args.active;
-                                        if let Ok(iface_ref) = server_clone.interface::<_, Inhibit>("/org/freedesktop/portal/desktop").await {
+                                        if let Ok(iface_ref) = server_clone
+                                            .interface::<_, Inhibit>(
+                                                "/org/freedesktop/portal/desktop",
+                                            )
+                                            .await
+                                        {
                                             let mut state = HashMap::new();
-                                            state.insert("screensaver-active".to_string(), Value::Bool(active));
-                                            
-                                            let sessions: Vec<OwnedObjectPath> = if let Ok(lock) = monitors_clone.lock() {
-                                                lock.values().cloned().collect()
-                                            } else {
-                                                Vec::new()
-                                            };
-                                            
+                                            state.insert(
+                                                "screensaver-active".to_string(),
+                                                Value::Bool(active),
+                                            );
+
+                                            let sessions: Vec<OwnedObjectPath> =
+                                                if let Ok(lock) = monitors_clone.lock() {
+                                                    lock.values().cloned().collect()
+                                                } else {
+                                                    Vec::new()
+                                                };
+
                                             for session_h in sessions {
-                                                let _ = Self::state_changed(iface_ref.signal_emitter(), session_h, state.clone()).await;
+                                                let _ = Self::state_changed(
+                                                    iface_ref.signal_emitter(),
+                                                    session_h,
+                                                    state.clone(),
+                                                )
+                                                .await;
                                             }
                                         }
                                     }
@@ -230,14 +244,11 @@ impl Inhibit {
                 });
             });
         });
-        
+
         Ok(0) // 0 == success
     }
 
-    async fn query_end_response(
-        &self,
-        _session_handle: OwnedObjectPath,
-    ) {
+    async fn query_end_response(&self, _session_handle: OwnedObjectPath) {
         log::debug!("query_end_response called");
     }
 

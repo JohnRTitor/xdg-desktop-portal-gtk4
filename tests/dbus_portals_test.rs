@@ -1,5 +1,9 @@
 use std::collections::HashMap;
-use zbus::{connection::Builder, proxy, zvariant::{OwnedValue, Value, OwnedObjectPath}};
+use zbus::{
+    connection::Builder,
+    proxy,
+    zvariant::{OwnedObjectPath, OwnedValue, Value},
+};
 macro_rules! skip_if_dbus_tests_disabled {
     () => {
         if std::env::var("RUN_DBUS_TESTS").is_err() {
@@ -10,9 +14,7 @@ macro_rules! skip_if_dbus_tests_disabled {
 }
 
 use xdg_desktop_portal_gtk4::portals::{
-    lockdown::dbus::LockdownPortal,
-    settings::dbus::SettingsPortal,
-    inhibit::dbus::Inhibit,
+    inhibit::dbus::Inhibit, lockdown::dbus::LockdownPortal, settings::dbus::SettingsPortal,
 };
 
 // Proxies for the tests
@@ -37,7 +39,10 @@ trait Lockdown {
 )]
 trait Settings {
     fn read(&self, namespace: &str, key: &str) -> zbus::Result<OwnedValue>;
-    fn read_all(&self, namespaces: &[&str]) -> zbus::Result<HashMap<String, HashMap<String, OwnedValue>>>;
+    fn read_all(
+        &self,
+        namespaces: &[&str],
+    ) -> zbus::Result<HashMap<String, HashMap<String, OwnedValue>>>;
 }
 
 #[proxy(
@@ -81,7 +86,12 @@ async fn test_settings_read_unknown_namespace() -> Result<(), Box<dyn std::error
     skip_if_dbus_tests_disabled!();
     let _conn = zbus::Connection::session().await?;
     let server = _conn.object_server();
-    server.at("/org/freedesktop/portal/desktop", SettingsPortal::new(server.clone())).await?;
+    server
+        .at(
+            "/org/freedesktop/portal/desktop",
+            SettingsPortal::new(server.clone()),
+        )
+        .await?;
 
     let client_conn = zbus::Connection::session().await?;
     let proxy = SettingsProxy::builder(&client_conn)
@@ -100,7 +110,12 @@ async fn test_settings_read_all_empty_namespaces() -> Result<(), Box<dyn std::er
     skip_if_dbus_tests_disabled!();
     let _conn = zbus::Connection::session().await?;
     let server = _conn.object_server();
-    server.at("/org/freedesktop/portal/desktop", SettingsPortal::new(server.clone())).await?;
+    server
+        .at(
+            "/org/freedesktop/portal/desktop",
+            SettingsPortal::new(server.clone()),
+        )
+        .await?;
 
     let client_conn = zbus::Connection::session().await?;
     let proxy = SettingsProxy::builder(&client_conn)
@@ -111,7 +126,7 @@ async fn test_settings_read_all_empty_namespaces() -> Result<(), Box<dyn std::er
     let res = proxy.read_all(&[]).await?;
     // It shouldn't crash. It might be empty if schemas are not installed.
     // Just asserting it successfully returns a HashMap.
-    assert!(res.is_empty() || !res.is_empty()); 
+    assert!(res.is_empty() || !res.is_empty());
 
     Ok(())
 }
@@ -131,8 +146,10 @@ async fn test_inhibit_returns_success() -> Result<(), Box<dyn std::error::Error>
         .await?;
 
     let path = OwnedObjectPath::try_from("/org/freedesktop/portal/desktop/request/1").unwrap();
-    let res = proxy.inhibit(path, "app_id", "window", 1, HashMap::new()).await?;
-    
+    let res = proxy
+        .inhibit(path, "app_id", "window", 1, HashMap::new())
+        .await?;
+
     assert_eq!(res.0, 0); // PORTAL_SUCCESS
 
     Ok(())

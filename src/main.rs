@@ -1,5 +1,5 @@
 use clap::Parser;
-use xdg_desktop_portal_gtk4::{gui::Ui, logging, core::Portal};
+use xdg_desktop_portal_gtk4::{core::Portal, gui::Ui, logging};
 
 /// The xdg-desktop-portal-gtk4 portal.
 #[derive(Parser, Debug)]
@@ -30,7 +30,10 @@ fn init_i18n() {
     let current = match current_locale::current_locale() {
         Ok(c) => c,
         Err(e) => {
-            log::error!("Could not retrieve current locale: {}", anyhow::Error::new(e));
+            log::error!(
+                "Could not retrieve current locale: {}",
+                anyhow::Error::new(e)
+            );
             return;
         }
     };

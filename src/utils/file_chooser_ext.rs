@@ -1,12 +1,11 @@
 use {
     gtk4::{
-        ffi,
+        FileChooser, ffi,
         glib::{
-            translate::{mut_override, ToGlibPtr},
             IntoGStr,
+            translate::{ToGlibPtr, mut_override},
         },
         prelude::IsA,
-        FileChooser,
     },
     std::ptr,
 };

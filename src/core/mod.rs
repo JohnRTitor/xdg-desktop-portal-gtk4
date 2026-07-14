@@ -2,16 +2,17 @@ use {
     crate::{
         gui::UiProxy,
         portals::{
-            access::dbus::Access, account::dbus::Account, dynamic_launcher::dbus::DynamicLauncher,
-            email::dbus::Email, file_chooser::dbus::FileChooser, inhibit::dbus::Inhibit,
-            notification::dbus::Notification, print::dbus::Print, settings::dbus::SettingsPortal,
-            lockdown::dbus::LockdownPortal, app_chooser::dbus::AppChooser, usb::dbus::UsbPortal,
+            access::dbus::Access, account::dbus::Account, app_chooser::dbus::AppChooser,
+            dynamic_launcher::dbus::DynamicLauncher, email::dbus::Email,
+            file_chooser::dbus::FileChooser, inhibit::dbus::Inhibit,
+            lockdown::dbus::LockdownPortal, notification::dbus::Notification, print::dbus::Print,
+            settings::dbus::SettingsPortal, usb::dbus::UsbPortal,
         },
     },
     std::thread,
     thiserror::Error,
     zbus::{
-        blocking::{fdo::DBusProxy as DBusProxyBlocking, Connection},
+        blocking::{Connection, fdo::DBusProxy as DBusProxyBlocking},
         fdo::RequestNameFlags,
     },
 };

@@ -2,9 +2,9 @@ use {
     crate::{gui::UiProxy, utils::external_window::set_wayland_parent},
     async_channel::{Receiver, Sender},
     gtk4::{
+        DialogFlags, Entry, Image, MessageDialog, MessageType, ResponseType, Widget,
         glib::{self, MainContext},
         prelude::{BoxExt, Cast, DialogExt, EditableExt, GtkWindowExt, WidgetExt},
-        DialogFlags, Entry, Image, MessageDialog, MessageType, ResponseType, Widget,
     },
     rust_i18n::t,
     std::path::Path,
@@ -53,7 +53,11 @@ impl AccountUi {
     ) {
         let title = t!("Share Information");
         let subtitle = if let Some(reason) = &self.reason {
-            format!("{} ({})", t!("An application wants to access your information"), reason)
+            format!(
+                "{} ({})",
+                t!("An application wants to access your information"),
+                reason
+            )
         } else {
             t!("An application wants to access your information").to_string()
         };

@@ -1,11 +1,11 @@
 use {
+    gtk4::gio::{Settings, SettingsSchemaSource, prelude::SettingsExt},
     std::collections::HashMap,
+    zbus::object_server::SignalEmitter,
     zbus::{
         interface,
         zvariant::{OwnedValue, Value},
     },
-    gtk4::gio::{prelude::SettingsExt, Settings, SettingsSchemaSource},
-    zbus::object_server::SignalEmitter,
 };
 
 use std::str::FromStr;
@@ -15,45 +15,69 @@ pub struct SettingsPortal {}
 impl SettingsPortal {
     pub fn new(server: zbus::ObjectServer) -> Self {
         let settings = Self::get_gnome_interface_static();
-        
+
         if let Some(s) = settings {
             let s_clone = s.clone();
             s.connect_changed(None, move |_, key| {
                 let key_str = key;
                 let server_clone = server.clone();
                 let key_string = key_str.to_string();
-                
-                if let Some(val) = Self::read_setting_static("org.gnome.desktop.interface", key_str) {
+
+                if let Some(val) = Self::read_setting_static("org.gnome.desktop.interface", key_str)
+                {
                     let sc1 = server_clone.clone();
                     let k1 = key_string.clone();
                     let v1 = val.clone();
                     gtk4::glib::MainContext::default().spawn_local(async move {
-                        if let Ok(iface_ref) = sc1.interface::<_, SettingsPortal>("/org/freedesktop/portal/desktop").await {
-                            let _ = Self::setting_changed(iface_ref.signal_emitter(), "org.gnome.desktop.interface", &k1, &v1).await;
+                        if let Ok(iface_ref) = sc1
+                            .interface::<_, SettingsPortal>("/org/freedesktop/portal/desktop")
+                            .await
+                        {
+                            let _ = Self::setting_changed(
+                                iface_ref.signal_emitter(),
+                                "org.gnome.desktop.interface",
+                                &k1,
+                                &v1,
+                            )
+                            .await;
                         }
                     });
                 }
 
-                if key_str == "color-scheme" || key_str == "high-contrast" || key_str == "gtk-enable-animations" {
-                    let mapped_key = if key_str == "high-contrast" { 
-                        "contrast" 
+                if key_str == "color-scheme"
+                    || key_str == "high-contrast"
+                    || key_str == "gtk-enable-animations"
+                {
+                    let mapped_key = if key_str == "high-contrast" {
+                        "contrast"
                     } else if key_str == "gtk-enable-animations" {
                         "reduced-motion"
-                    } else { 
-                        key_str 
+                    } else {
+                        key_str
                     };
-                    if let Some(val) = Self::read_setting_static("org.freedesktop.appearance", mapped_key) {
+                    if let Some(val) =
+                        Self::read_setting_static("org.freedesktop.appearance", mapped_key)
+                    {
                         let sc2 = server_clone.clone();
                         let k2 = mapped_key.to_string();
                         gtk4::glib::MainContext::default().spawn_local(async move {
-                            if let Ok(iface_ref) = sc2.interface::<_, SettingsPortal>("/org/freedesktop/portal/desktop").await {
-                                let _ = Self::setting_changed(iface_ref.signal_emitter(), "org.freedesktop.appearance", &k2, &val).await;
+                            if let Ok(iface_ref) = sc2
+                                .interface::<_, SettingsPortal>("/org/freedesktop/portal/desktop")
+                                .await
+                            {
+                                let _ = Self::setting_changed(
+                                    iface_ref.signal_emitter(),
+                                    "org.freedesktop.appearance",
+                                    &k2,
+                                    &val,
+                                )
+                                .await;
                             }
                         });
                     }
                 }
             });
-            
+
             gtk4::glib::MainContext::default().spawn_local(async move {
                 let _keep_alive = s_clone;
                 std::future::pending::<()>().await;
@@ -112,11 +136,21 @@ impl SettingsPortal {
                         let val = settings.value(key);
                         let type_string = val.type_().as_str();
                         return match type_string {
-                            "s" => val.get::<String>().and_then(|s| OwnedValue::try_from(Value::Str(s.into())).ok()),
-                            "b" => val.get::<bool>().and_then(|b| OwnedValue::try_from(Value::Bool(b)).ok()),
-                            "u" => val.get::<u32>().and_then(|u| OwnedValue::try_from(Value::U32(u)).ok()),
-                            "i" => val.get::<i32>().and_then(|i| OwnedValue::try_from(Value::I32(i)).ok()),
-                            "d" => val.get::<f64>().and_then(|d| OwnedValue::try_from(Value::F64(d)).ok()),
+                            "s" => val
+                                .get::<String>()
+                                .and_then(|s| OwnedValue::try_from(Value::Str(s.into())).ok()),
+                            "b" => val
+                                .get::<bool>()
+                                .and_then(|b| OwnedValue::try_from(Value::Bool(b)).ok()),
+                            "u" => val
+                                .get::<u32>()
+                                .and_then(|u| OwnedValue::try_from(Value::U32(u)).ok()),
+                            "i" => val
+                                .get::<i32>()
+                                .and_then(|i| OwnedValue::try_from(Value::I32(i)).ok()),
+                            "d" => val
+                                .get::<f64>()
+                                .and_then(|d| OwnedValue::try_from(Value::F64(d)).ok()),
                             _ => None,
                         };
                     }
@@ -150,7 +184,7 @@ impl SettingsPortal {
         namespaces: Vec<String>,
     ) -> Result<HashMap<String, HashMap<String, OwnedValue>>, zbus::fdo::Error> {
         let mut result = HashMap::new();
-        
+
         let supported_namespaces = vec![
             "org.freedesktop.appearance".to_string(),
             "org.gnome.desktop.interface".to_string(),
@@ -164,7 +198,9 @@ impl SettingsPortal {
                 if requested_ns.ends_with('*') {
                     let prefix = requested_ns.trim_end_matches('*');
                     for available_ns in &supported_namespaces {
-                        if available_ns.starts_with(prefix) && !active_namespaces.contains(available_ns) {
+                        if available_ns.starts_with(prefix)
+                            && !active_namespaces.contains(available_ns)
+                        {
                             active_namespaces.push(available_ns.clone());
                         }
                     }

@@ -1,10 +1,9 @@
 use {
     crate::core::{request::run_request, response::Response},
-    gtk4::{glib, gio::AppInfo, prelude::AppLaunchContextExt},
+    gtk4::{gio::AppInfo, glib, prelude::AppLaunchContextExt},
     zbus::{
-        interface,
+        ObjectServer, interface,
         zvariant::{DeserializeDict, OwnedObjectPath, SerializeDict, Type},
-        ObjectServer,
     },
 };
 
@@ -41,7 +40,7 @@ impl Email {
         options: ComposeEmailOptions,
     ) -> Response<EmailResults> {
         let url = build_mailto_url(&options);
-        
+
         let launch_context = gtk4::gio::AppLaunchContext::new();
         if let Some(token) = &options.activation_token {
             launch_context.setenv("DESKTOP_STARTUP_ID", token);
@@ -70,34 +69,49 @@ fn build_mailto_url(options: &ComposeEmailOptions) -> String {
     if !all_addresses.is_empty() {
         url.push_str(&all_addresses.join(","));
     }
-    
+
     url.push('?');
-    
+
     if let Some(cc) = &options.cc {
         for addr in cc {
-            url.push_str(&format!("cc={}&", glib::uri_escape_string(addr, None::<&str>, true)));
+            url.push_str(&format!(
+                "cc={}&",
+                glib::uri_escape_string(addr, None::<&str>, true)
+            ));
         }
     }
     if let Some(bcc) = &options.bcc {
         for addr in bcc {
-            url.push_str(&format!("bcc={}&", glib::uri_escape_string(addr, None::<&str>, true)));
+            url.push_str(&format!(
+                "bcc={}&",
+                glib::uri_escape_string(addr, None::<&str>, true)
+            ));
         }
     }
     if let Some(subject) = &options.subject {
-        url.push_str(&format!("subject={}&", glib::uri_escape_string(subject, None::<&str>, true)));
+        url.push_str(&format!(
+            "subject={}&",
+            glib::uri_escape_string(subject, None::<&str>, true)
+        ));
     }
     if let Some(body) = &options.body {
-        url.push_str(&format!("body={}&", glib::uri_escape_string(body, None::<&str>, true)));
+        url.push_str(&format!(
+            "body={}&",
+            glib::uri_escape_string(body, None::<&str>, true)
+        ));
     }
     if let Some(attachments) = &options.attachments {
         for att in attachments {
-            url.push_str(&format!("attachment={}&", glib::uri_escape_string(att, None::<&str>, true)));
+            url.push_str(&format!(
+                "attachment={}&",
+                glib::uri_escape_string(att, None::<&str>, true)
+            ));
         }
     }
-    
+
     // Remove trailing '?' or '&'
     url.pop();
-    
+
     url
 }
 
@@ -133,17 +147,26 @@ mod tests {
             body: Some("World".to_string()),
             ..Default::default()
         };
-        assert_eq!(build_mailto_url(&options), "mailto:user@example.com?subject=Hello&body=World");
+        assert_eq!(
+            build_mailto_url(&options),
+            "mailto:user@example.com?subject=Hello&body=World"
+        );
     }
 
     #[test]
     fn test_compose_url_multiple_addresses() {
         let options = ComposeEmailOptions {
             address: Some("single@example.com".to_string()),
-            addresses: Some(vec!["foo@example.com".to_string(), "bar@example.com".to_string()]),
+            addresses: Some(vec![
+                "foo@example.com".to_string(),
+                "bar@example.com".to_string(),
+            ]),
             ..Default::default()
         };
-        assert_eq!(build_mailto_url(&options), "mailto:single@example.com,foo@example.com,bar@example.com");
+        assert_eq!(
+            build_mailto_url(&options),
+            "mailto:single@example.com,foo@example.com,bar@example.com"
+        );
     }
 
     #[test]
@@ -153,7 +176,10 @@ mod tests {
             bcc: Some(vec!["bcc1@example.com".to_string()]),
             ..Default::default()
         };
-        assert_eq!(build_mailto_url(&options), "mailto:?cc=cc1%40example.com&bcc=bcc1%40example.com");
+        assert_eq!(
+            build_mailto_url(&options),
+            "mailto:?cc=cc1%40example.com&bcc=bcc1%40example.com"
+        );
     }
 
     #[test]
@@ -163,7 +189,10 @@ mod tests {
             body: Some("Space here".to_string()),
             ..Default::default()
         };
-        assert_eq!(build_mailto_url(&options), "mailto:?subject=Hello%20%26%20Welcome%3D&body=Space%20here");
+        assert_eq!(
+            build_mailto_url(&options),
+            "mailto:?subject=Hello%20%26%20Welcome%3D&body=Space%20here"
+        );
     }
 
     #[test]
