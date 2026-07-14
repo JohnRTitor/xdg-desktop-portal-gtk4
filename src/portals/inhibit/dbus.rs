@@ -168,17 +168,15 @@ impl Inhibit {
     async fn create_monitor(
         &self,
         _handle: OwnedObjectPath,
-        session_handle: String,
+        session_handle: OwnedObjectPath,
         _app_id: String,
         _window: String,
         #[zbus(object_server)] server: &ObjectServer,
     ) -> zbus::fdo::Result<u32> {
-        let session = Session::new(session_handle.clone());
-        if let Ok(path) = OwnedObjectPath::try_from(session_handle) {
-            if let Err(e) = server.at(path, session).await {
-                log::error!("Failed to export monitor session: {}", e);
-                return Ok(2); // Returning 2 as general error for create_monitor according to xdp-gtk
-            }
+        let session = Session::new(session_handle.as_str().to_string());
+        if let Err(e) = server.at(session_handle, session).await {
+            log::error!("Failed to export monitor session: {}", e);
+            return Ok(2); // Returning 2 as general error for create_monitor according to xdp-gtk
         }
         
         Ok(0) // 0 == success

@@ -128,10 +128,22 @@ impl DynamicLauncher {
 
     async fn request_install_token(
         &self,
-        _app_id: String,
+        app_id: String,
         _options: RequestInstallTokenOptions,
     ) -> u32 {
-        0 // 0 means allowed
+        // Blanket allow certain apps to create app entries. Ported from GTK portal.
+        let allowed_ids = [
+            "org.gnome.Software",
+            "org.gnome.SoftwareDevel",
+            "io.elementary.appcenter",
+            "org.kde.discover",
+        ];
+
+        if allowed_ids.contains(&app_id.as_str()) {
+            0 // Allowed
+        } else {
+            2 // Access denied
+        }
     }
 
     #[zbus(property, name = "SupportedLauncherTypes")]

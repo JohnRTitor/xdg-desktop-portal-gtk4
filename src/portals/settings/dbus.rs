@@ -144,6 +144,11 @@ impl SettingsPortal {
         key: &str,
         value: &Value<'_>,
     ) -> zbus::Result<()>;
+
+    #[zbus(property, name = "version")]
+    fn version(&self) -> u32 {
+        2 // Version 2 introduced ReadAll
+    }
 }
 
 #[cfg(test)]

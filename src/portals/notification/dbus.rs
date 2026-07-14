@@ -158,6 +158,22 @@ impl Notification {
         action: &str,
         parameter: &[Value<'_>],
     ) -> zbus::Result<()>;
+
+    #[zbus(property, name = "version")]
+    fn version(&self) -> u32 {
+        1
+    }
+
+    #[zbus(property, name = "SupportedOptions")]
+    fn supported_options(&self) -> HashMap<String, OwnedValue> {
+        let mut options = HashMap::new();
+        if let Ok(true_val) = OwnedValue::try_from(Value::Bool(true)) {
+            options.insert("body".to_string(), true_val.clone());
+            options.insert("icon".to_string(), true_val.clone());
+            options.insert("default-action".to_string(), true_val);
+        }
+        options
+    }
 }
 
 #[cfg(test)]
