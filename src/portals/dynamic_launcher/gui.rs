@@ -24,6 +24,7 @@ pub struct DynamicLauncherUi {
     pub name: String,
     pub editable_name: bool,
     pub icon_name: Option<String>,
+    pub icon_data: Option<Vec<u8>>,
 }
 
 pub struct DynamicLauncherResult {
@@ -68,7 +69,13 @@ impl DynamicLauncherUi {
             hbox.set_margin_top(10);
             area.append(&hbox);
 
-            if let Some(icon) = &self.icon_name {
+            if let Some(bytes) = &self.icon_data {
+                let bytes_glib = gtk4::glib::Bytes::from(bytes);
+                let icon = gtk4::gio::BytesIcon::new(&bytes_glib);
+                let image = Image::from_gicon(&icon);
+                image.set_pixel_size(64);
+                hbox.append(&image);
+            } else if let Some(icon) = &self.icon_name {
                 let image = Image::from_icon_name(icon);
                 image.set_pixel_size(64);
                 hbox.append(&image);

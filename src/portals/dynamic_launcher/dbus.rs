@@ -65,11 +65,33 @@ impl DynamicLauncher {
         icon_v: OwnedValue,
         options: PrepareInstallOptions,
     ) -> Response<PrepareInstallResults> {
-        let icon_name = if let Ok(s) = <&str>::try_from(&*icon_v) {
-            Some(s.to_string())
-        } else {
-            None
-        };
+        let mut icon_name = None;
+        let mut icon_data: Option<Vec<u8>> = None;
+
+        if let Ok(s) = <&str>::try_from(&*icon_v) {
+            icon_name = Some(s.to_string());
+        } else if let Ok(structure) = zbus::zvariant::Structure::try_from(&*icon_v) {
+            let fields = structure.fields();
+            if fields.len() == 2 {
+                if let Ok(type_str) = <&str>::try_from(&fields[0]) {
+                    if type_str == "bytes" {
+                        if let Ok(v) = <zbus::zvariant::Value>::try_from(&fields[1]) {
+                            if let Ok(bytes) = <Vec<u8>>::try_from(v) {
+                                icon_data = Some(bytes);
+                            }
+                        }
+                    } else if type_str == "themed" {
+                        if let Ok(v) = <zbus::zvariant::Value>::try_from(&fields[1]) {
+                            if let Ok(names) = <Vec<String>>::try_from(v) {
+                                if !names.is_empty() {
+                                    icon_name = Some(names[0].clone());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
 
         let res = DynamicLauncherUi {
             app_id,
@@ -77,6 +99,7 @@ impl DynamicLauncher {
             name,
             editable_name: options.editable_name.unwrap_or(false),
             icon_name,
+            icon_data,
         }
         .run(&self.proxy)
         .await;
