@@ -71,13 +71,9 @@ impl AppChooser {
 
         match res {
             Ok(result) => {
-                // TODO: The spec states that if user interaction was involved, we should generate 
-                // a *new* activation token (e.g. via xdg-activation-v1) and return it here instead
-                // of passing back the caller's token. GTK4 does not expose a straightforward Wayland 
-                // token generation API yet, so we return the original token as a fallback.
                 let res = ChooseApplicationResults {
                     choice: Some(result.choice),
-                    activation_token: options.activation_token,
+                    activation_token: result.activation_token.or(options.activation_token),
                 };
                 Response::success(res)
             }

@@ -52,7 +52,7 @@ struct PortalNotification {
 
 pub struct Notification {
     active_notifications: std::sync::Arc<Mutex<HashMap<String, u32>>>,
-    reverse_map: std::sync::Arc<Mutex<HashMap<u32, (String, String)>>>,
+    reverse_map: std::sync::Arc<Mutex<HashMap<u32, (String, String, HashMap<String, OwnedValue>)>>>,
     init_once: std::sync::Once,
 }
 
@@ -100,11 +100,17 @@ impl Notification {
             ""
         };
 
+        let mut action_targets = HashMap::new();
         let mut parsed_actions: Vec<String> = Vec::new();
         if let Some(default_action) = notification.get("default-action") {
             if let Ok(action) = <&str>::try_from(default_action) {
                 parsed_actions.push("default".to_string());
                 parsed_actions.push(action.to_string());
+                if let Some(target) = notification.get("default-action-target") {
+                    if let Ok(owned) = OwnedValue::try_from(target.clone()) {
+                        action_targets.insert("default".to_string(), owned);
+                    }
+                }
             }
         }
 
@@ -115,6 +121,11 @@ impl Notification {
                     if !action.is_empty() && !label.is_empty() {
                         parsed_actions.push(action.to_string());
                         parsed_actions.push(label.clone());
+                        if let Some(target) = options.get("action-target") {
+                            if let Ok(owned) = OwnedValue::try_from(target.clone()) {
+                                action_targets.insert(action.to_string(), owned);
+                            }
+                        }
                     }
                 }
             }
@@ -151,7 +162,7 @@ impl Notification {
                         lock.insert(key, new_id);
                     }
                     if let Ok(mut lock) = self.reverse_map.lock() {
-                        lock.insert(new_id, (app_id.clone(), id.clone()));
+                        lock.insert(new_id, (app_id.clone(), id.clone(), action_targets));
                     }
                 }
             }
@@ -173,14 +184,17 @@ impl Notification {
                                         let id = args.id;
                                         let action_key = args.action_key;
                                         
-                                        let target = if let Ok(lock) = rm1.lock() {
+                                        let target_data = if let Ok(lock) = rm1.lock() {
                                             lock.get(&id).cloned()
                                         } else { None };
                                         
-                                        if let Some((app_id, portal_id)) = target {
+                                        if let Some((app_id, portal_id, action_targets)) = target_data {
                                             if let Ok(iface_ref) = s1.interface::<_, Notification>("/org/freedesktop/portal/desktop").await {
-                                                let empty_params: Vec<Value<'_>> = vec![];
-                                                let _ = Notification::action_invoked(iface_ref.signal_emitter(), &app_id, &portal_id, &action_key, &empty_params).await;
+                                                let mut params: Vec<Value<'_>> = vec![];
+                                                if let Some(tv) = action_targets.get(&action_key) {
+                                                    params.push(Value::from(tv.clone()));
+                                                }
+                                                let _ = Notification::action_invoked(iface_ref.signal_emitter(), &app_id, &portal_id, &action_key, &params).await;
                                             }
                                         }
                                     }

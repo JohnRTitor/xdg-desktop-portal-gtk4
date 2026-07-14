@@ -34,8 +34,14 @@ impl SettingsPortal {
                     });
                 }
 
-                if key_str == "color-scheme" || key_str == "high-contrast" {
-                    let mapped_key = if key_str == "high-contrast" { "contrast" } else { key_str };
+                if key_str == "color-scheme" || key_str == "high-contrast" || key_str == "gtk-enable-animations" {
+                    let mapped_key = if key_str == "high-contrast" { 
+                        "contrast" 
+                    } else if key_str == "gtk-enable-animations" {
+                        "reduced-motion"
+                    } else { 
+                        key_str 
+                    };
                     if let Some(val) = Self::read_setting_static("org.freedesktop.appearance", mapped_key) {
                         let sc2 = server_clone.clone();
                         let k2 = mapped_key.to_string();
@@ -85,6 +91,16 @@ impl SettingsPortal {
                             let high_contrast = settings.boolean("high-contrast");
                             let contrast = if high_contrast { 1u32 } else { 0u32 };
                             return OwnedValue::try_from(Value::U32(contrast)).ok();
+                        }
+                    }
+                }
+            } else if key == "reduced-motion" {
+                if let Some(settings) = Self::get_gnome_interface_static() {
+                    if let Some(schema) = settings.settings_schema() {
+                        if schema.has_key("gtk-enable-animations") {
+                            let enable_animations = settings.boolean("gtk-enable-animations");
+                            let reduced = if enable_animations { 0u32 } else { 1u32 };
+                            return OwnedValue::try_from(Value::U32(reduced)).ok();
                         }
                     }
                 }
@@ -181,6 +197,9 @@ impl SettingsPortal {
                 }
                 if let Some(val) = self.read_setting(&ns, "contrast") {
                     ns_map.insert("contrast".to_string(), val);
+                }
+                if let Some(val) = self.read_setting(&ns, "reduced-motion") {
+                    ns_map.insert("reduced-motion".to_string(), val);
                 }
             } else if ns == "org.gnome.desktop.interface" {
                 if let Some(settings) = Self::get_gnome_interface_static() {
