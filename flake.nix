@@ -32,6 +32,10 @@
         }:
         {
           packages.xdg-desktop-portal-gtk4 = pkgs.callPackage ./contrib/build.nix { };
+          packages.xdg-desktop-portal-gtk4-test = pkgs.callPackage ./contrib/build.nix {
+            withDbusTests = true;
+          };
+
           packages.default = config.packages.xdg-desktop-portal-gtk4;
 
           devShells.default = pkgs.mkShell {
