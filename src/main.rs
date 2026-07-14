@@ -1,12 +1,5 @@
 use error_reporter::Report;
-
-mod cli;
-mod gui;
-mod logging;
-mod portal;
-mod utils;
-
-rust_i18n::i18n!();
+use xdg_desktop_portal_gtk4::{cli, logging};
 
 fn main() {
     logging::init();

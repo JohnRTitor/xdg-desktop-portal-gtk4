@@ -9,7 +9,7 @@ use {
     },
 };
 
-mod portals;
+pub mod portals;
 mod request;
 mod response;
 pub mod session;

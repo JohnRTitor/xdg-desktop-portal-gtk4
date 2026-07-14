@@ -2,7 +2,7 @@ use {
     std::{collections::HashMap, sync::Mutex},
     zbus::{
         interface,
-        zvariant::{DeserializeDict, Value, OwnedValue},
+        zvariant::{DeserializeDict, Value, OwnedValue, Type},
         Connection,
         object_server::SignalEmitter,
     },
@@ -29,7 +29,7 @@ trait Notifications {
     fn close_notification(&self, id: u32) -> zbus::Result<()>;
 }
 
-#[derive(DeserializeDict, Default, Debug)]
+#[derive(DeserializeDict, Type, Default, Debug)]
 #[zvariant(signature = "dict")]
 struct PortalNotification {
     title: Option<String>,
@@ -158,4 +158,25 @@ impl Notification {
         action: &str,
         parameter: &[Value<'_>],
     ) -> zbus::Result<()>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use zbus::zvariant::Type;
+
+    #[test]
+    fn test_get_key() {
+        assert_eq!(Notification::get_key("org.app", "123"), "org.app::123");
+    }
+
+    #[test]
+    fn test_get_key_empty() {
+        assert_eq!(Notification::get_key("", ""), "::");
+    }
+
+    #[test]
+    fn test_portal_notification_signature() {
+        assert_eq!(PortalNotification::SIGNATURE, "a{sv}");
+    }
 }

@@ -427,3 +427,81 @@ fn map_final_choices(c: Vec<FinalChoice>) -> Vec<(String, String)> {
 fn map_final_choice(c: FinalChoice) -> (String, String) {
     (c.id, c.variant_id)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use zbus::zvariant::Type;
+
+    #[test]
+    fn test_map_filter_glob() {
+        let f = map_filter(("Images".to_string(), vec![(0, "*.png".to_string())]));
+        assert_eq!(f.name, "Images");
+        assert_eq!(f.elements.len(), 1);
+        assert!(matches!(f.elements[0], FilterKind::Glob(ref v) if v == "*.png"));
+    }
+
+    #[test]
+    fn test_map_filter_mime() {
+        let f = map_filter(("Audio".to_string(), vec![(1, "audio/*".to_string())]));
+        assert_eq!(f.name, "Audio");
+        assert_eq!(f.elements.len(), 1);
+        assert!(matches!(f.elements[0], FilterKind::Mime(ref v) if v == "audio/*"));
+    }
+
+    #[test]
+    fn test_map_filter_unknown_kind_skipped() {
+        let f = map_filter(("Mixed".to_string(), vec![(0, "*.png".to_string()), (99, "unknown".to_string())]));
+        assert_eq!(f.elements.len(), 1);
+        assert!(matches!(f.elements[0], FilterKind::Glob(ref v) if v == "*.png"));
+    }
+
+    #[test]
+    fn test_unmap_filter_roundtrip() {
+        let original: FileFilter = ("Images".to_string(), vec![(0, "*.png".to_string()), (1, "image/png".to_string())]);
+        let mapped = map_filter(original.clone());
+        let unmapped = unmap_filter(mapped);
+        assert_eq!(original, unmapped);
+    }
+
+    #[test]
+    fn test_map_choices() {
+        let choice = (
+            "encoding".to_string(),
+            "Encoding".to_string(),
+            vec![("utf8".to_string(), "UTF-8".to_string())],
+            "utf8".to_string(),
+        );
+        let mapped = map_choices(vec![choice]);
+        assert_eq!(mapped.len(), 1);
+        assert_eq!(mapped[0].id, "encoding");
+        assert_eq!(mapped[0].label, "Encoding");
+        assert_eq!(mapped[0].default, "utf8");
+        assert_eq!(mapped[0].variants.len(), 1);
+        assert_eq!(mapped[0].variants[0].id, "utf8");
+        assert_eq!(mapped[0].variants[0].label, "UTF-8");
+    }
+
+    #[test]
+    fn test_map_cstr() {
+        let path = FilePath("hello".to_string());
+        assert_eq!(map_cstr(path), "hello");
+    }
+
+    #[test]
+    fn test_map_final_choices() {
+        let c = FinalChoice { id: "encoding".to_string(), variant_id: "utf8".to_string() };
+        let mapped = map_final_choices(vec![c]);
+        assert_eq!(mapped, vec![("encoding".to_string(), "utf8".to_string())]);
+    }
+
+    #[test]
+    fn test_open_file_options_signature() {
+        assert_eq!(OpenFileOptions::SIGNATURE, "a{sv}");
+    }
+
+    #[test]
+    fn test_open_file_results_signature() {
+        assert_eq!(OpenFileResults::SIGNATURE, "a{sv}");
+    }
+}

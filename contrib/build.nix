@@ -6,10 +6,12 @@
   glib,
   wrapGAppsHook4,
   meson,
+  dbus,
   ninja,
+  withDbusTests ? false,
 }:
 
-rustPlatform.buildRustPackage rec {
+rustPlatform.buildRustPackage {
   pname = "xdg-desktop-portal-gtk4";
   version = "unstable";
 
@@ -52,6 +54,18 @@ rustPlatform.buildRustPackage rec {
 
   # We don't want cargo to install the binary to $out/bin, meson will install it to libexec
   dontCargoInstall = true;
+
+  nativeCheckInputs = lib.optionals withDbusTests [ dbus ];
+
+  preCheck = lib.optionalString withDbusTests ''
+    export RUN_DBUS_TESTS=1
+    REAL_CARGO=$(command -v cargo)
+    mkdir -p bin
+    echo '#!/bin/sh' > bin/cargo
+    echo "exec dbus-run-session --config-file=${dbus}/share/dbus-1/session.conf -- $REAL_CARGO \"\$@\"" >> bin/cargo
+    chmod +x bin/cargo
+    export PATH=$(pwd)/bin:$PATH
+  '';
 
   installPhase = ''
     runHook preInstall

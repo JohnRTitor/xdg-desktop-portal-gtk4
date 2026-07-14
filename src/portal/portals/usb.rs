@@ -126,3 +126,29 @@ impl UsbPortal {
         1
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use zbus::zvariant::Type;
+
+    #[test]
+    fn test_parse_udev_basic() {
+        assert_eq!(UsbPortal::parse_udev_string("Logitech\\x20Mouse"), "Logitech Mouse");
+    }
+
+    #[test]
+    fn test_parse_udev_no_escape() {
+        assert_eq!(UsbPortal::parse_udev_string("SimpleDevice"), "SimpleDevice");
+    }
+
+    #[test]
+    fn test_parse_udev_multiple_escapes() {
+        assert_eq!(UsbPortal::parse_udev_string("A\\x20B\\x20C"), "A B C");
+    }
+
+    #[test]
+    fn test_usb_results_signature() {
+        assert_eq!(UsbResults::SIGNATURE, "a{sv}");
+    }
+}

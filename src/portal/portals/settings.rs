@@ -29,11 +29,7 @@ impl SettingsPortal {
             if key == "color-scheme" {
                 if let Some(settings) = self.get_gnome_interface() {
                     let val: String = settings.string("color-scheme").into();
-                    let scheme = match val.as_str() {
-                        "prefer-dark" => 1u32,
-                        "prefer-light" => 2u32,
-                        _ => 0u32,
-                    };
+                    let scheme = map_color_scheme(val.as_str());
                     return OwnedValue::try_from(Value::U32(scheme)).ok();
                 }
             } else if key == "contrast" {
@@ -79,6 +75,14 @@ impl SettingsPortal {
             }
         }
         None
+    }
+}
+
+pub(crate) fn map_color_scheme(val: &str) -> u32 {
+    match val {
+        "prefer-dark" => 1u32,
+        "prefer-light" => 2u32,
+        _ => 0u32,
     }
 }
 
@@ -140,4 +144,29 @@ impl SettingsPortal {
         key: &str,
         value: &Value<'_>,
     ) -> zbus::Result<()>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_color_scheme_prefer_dark() {
+        assert_eq!(map_color_scheme("prefer-dark"), 1);
+    }
+
+    #[test]
+    fn test_color_scheme_prefer_light() {
+        assert_eq!(map_color_scheme("prefer-light"), 2);
+    }
+
+    #[test]
+    fn test_color_scheme_default() {
+        assert_eq!(map_color_scheme("default"), 0);
+    }
+
+    #[test]
+    fn test_color_scheme_unknown() {
+        assert_eq!(map_color_scheme("foobar"), 0);
+    }
 }
