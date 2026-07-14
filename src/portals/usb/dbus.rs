@@ -26,6 +26,14 @@ impl UsbPortal {
         s.replace("\\x20", " ")
     }
 
+    fn extract_property(properties: &HashMap<String, OwnedValue>, keys: &[&str]) -> Option<String> {
+        keys.iter().find_map(|&k| {
+            properties.get(k).and_then(|val| {
+                <&str>::try_from(val).ok().map(Self::parse_udev_string)
+            })
+        })
+    }
+
     async fn acquire_devices_impl(
         &self,
         app_id: String,
@@ -44,25 +52,8 @@ impl UsbPortal {
                 properties = props.clone();
             }
 
-            let mut vendor = None;
-            for key in ["ID_VENDOR_FROM_DATABASE", "ID_VENDOR_ENC", "ID_VENDOR_ID"] {
-                if let Some(val) = properties.get(key) {
-                    if let Ok(s) = <&str>::try_from(val) {
-                        vendor = Some(Self::parse_udev_string(s));
-                        break;
-                    }
-                }
-            }
-
-            let mut model = None;
-            for key in ["ID_MODEL_FROM_DATABASE", "ID_MODEL_ENC", "ID_MODEL_ID"] {
-                if let Some(val) = properties.get(key) {
-                    if let Ok(s) = <&str>::try_from(val) {
-                        model = Some(Self::parse_udev_string(s));
-                        break;
-                    }
-                }
-            }
+            let vendor = Self::extract_property(&properties, &["ID_VENDOR_FROM_DATABASE", "ID_VENDOR_ENC", "ID_VENDOR_ID"]);
+            let model = Self::extract_property(&properties, &["ID_MODEL_FROM_DATABASE", "ID_MODEL_ENC", "ID_MODEL_ID"]);
 
             let mut serial = None;
             if let Some(val) = properties.get("ID_SERIAL_SHORT") {

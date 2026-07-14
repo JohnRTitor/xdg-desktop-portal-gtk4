@@ -176,31 +176,8 @@ impl Notification {
             let s1 = server_clone.clone();
             std::thread::spawn(move || {
                 zbus::block_on(async move {
-                    if let Ok(session_bus) = Connection::session().await {
-                        if let Ok(proxy) = NotificationsProxy::new(&session_bus).await {
-                            if let Ok(mut stream) = proxy.receive_action_invoked().await {
-                                while let Some(signal) = stream.next().await {
-                                    if let Ok(args) = signal.args() {
-                                        let id = args.id;
-                                        let action_key = args.action_key;
-                                        
-                                        let target_data = if let Ok(lock) = rm1.lock() {
-                                            lock.get(&id).cloned()
-                                        } else { None };
-                                        
-                                        if let Some((app_id, portal_id, action_targets)) = target_data {
-                                            if let Ok(iface_ref) = s1.interface::<_, Notification>("/org/freedesktop/portal/desktop").await {
-                                                let mut params: Vec<Value<'_>> = vec![];
-                                                if let Some(tv) = action_targets.get(&action_key) {
-                                                    params.push(Value::from(tv.clone()));
-                                                }
-                                                let _ = Notification::action_invoked(iface_ref.signal_emitter(), &app_id, &portal_id, &action_key, &params).await;
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
+                    if let Err(e) = listen_for_action_invoked(rm1, s1).await {
+                        log::error!("Action invoked listener failed: {}", anyhow::Error::new(e));
                     }
                 });
             });
@@ -208,19 +185,8 @@ impl Notification {
             let rm2 = reverse_map_clone.clone();
             std::thread::spawn(move || {
                 zbus::block_on(async move {
-                    if let Ok(session_bus) = Connection::session().await {
-                        if let Ok(proxy) = NotificationsProxy::new(&session_bus).await {
-                            if let Ok(mut stream) = proxy.receive_notification_closed().await {
-                                while let Some(signal) = stream.next().await {
-                                    if let Ok(args) = signal.args() {
-                                        let id = args.id;
-                                        if let Ok(mut lock) = rm2.lock() {
-                                            lock.remove(&id);
-                                        }
-                                    }
-                                }
-                            }
-                        }
+                    if let Err(e) = listen_for_notification_closed(rm2).await {
+                        log::error!("Notification closed listener failed: {}", anyhow::Error::new(e));
                     }
                 });
             });
@@ -268,6 +234,63 @@ impl Notification {
         }
         options
     }
+}
+
+async fn listen_for_action_invoked(
+    reverse_map: std::sync::Arc<Mutex<HashMap<u32, (String, String, HashMap<String, OwnedValue>)>>>,
+    server: ObjectServer,
+) -> zbus::Result<()> {
+    let session_bus = Connection::session().await?;
+    let proxy = NotificationsProxy::new(&session_bus).await?;
+    let mut stream = proxy.receive_action_invoked().await?;
+
+    while let Some(signal) = stream.next().await {
+        let args = signal.args()?;
+        let id = args.id;
+        let action_key = args.action_key;
+
+        let target_data = if let Ok(lock) = reverse_map.lock() {
+            lock.get(&id).cloned()
+        } else {
+            None
+        };
+
+        if let Some((app_id, portal_id, action_targets)) = target_data {
+            let iface_ref = server
+                .interface::<_, Notification>("/org/freedesktop/portal/desktop")
+                .await?;
+            let mut params: Vec<Value<'_>> = vec![];
+            if let Some(tv) = action_targets.get(action_key) {
+                params.push(Value::from(tv.clone()));
+            }
+            let _ = Notification::action_invoked(
+                iface_ref.signal_emitter(),
+                &app_id,
+                &portal_id,
+                &action_key,
+                &params,
+            )
+            .await;
+        }
+    }
+    Ok(())
+}
+
+async fn listen_for_notification_closed(
+    reverse_map: std::sync::Arc<Mutex<HashMap<u32, (String, String, HashMap<String, OwnedValue>)>>>,
+) -> zbus::Result<()> {
+    let session_bus = Connection::session().await?;
+    let proxy = NotificationsProxy::new(&session_bus).await?;
+    let mut stream = proxy.receive_notification_closed().await?;
+
+    while let Some(signal) = stream.next().await {
+        let args = signal.args()?;
+        let id = args.id;
+        if let Ok(mut lock) = reverse_map.lock() {
+            lock.remove(&id);
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]

@@ -111,7 +111,7 @@ impl AppChooserUi {
                 ResponseType::Ok => {
                     if let Some(row) = list_box_clone.selected_row() {
                         let launch_context = gtk4::gio::AppLaunchContext::new();
-                        let token = launch_context.startup_notify_id(None, &[]).map(|s| s.to_string());
+                        let token = launch_context.startup_notify_id(None::<&gtk4::gio::AppInfo>, &[]).map(|s| s.to_string());
                         Ok(AppChooserResult {
                             choice: row.widget_name().to_string(),
                             activation_token: token,

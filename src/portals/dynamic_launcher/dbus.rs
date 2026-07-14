@@ -65,33 +65,7 @@ impl DynamicLauncher {
         icon_v: OwnedValue,
         options: PrepareInstallOptions,
     ) -> Response<PrepareInstallResults> {
-        let mut icon_name = None;
-        let mut icon_data: Option<Vec<u8>> = None;
-
-        if let Ok(s) = <&str>::try_from(&*icon_v) {
-            icon_name = Some(s.to_string());
-        } else if let Ok(structure) = zbus::zvariant::Structure::try_from(&*icon_v) {
-            let fields = structure.fields();
-            if fields.len() == 2 {
-                if let Ok(type_str) = <&str>::try_from(&fields[0]) {
-                    if type_str == "bytes" {
-                        if let Ok(v) = <zbus::zvariant::Value>::try_from(&fields[1]) {
-                            if let Ok(bytes) = <Vec<u8>>::try_from(v) {
-                                icon_data = Some(bytes);
-                            }
-                        }
-                    } else if type_str == "themed" {
-                        if let Ok(v) = <zbus::zvariant::Value>::try_from(&fields[1]) {
-                            if let Ok(names) = <Vec<String>>::try_from(v) {
-                                if !names.is_empty() {
-                                    icon_name = Some(names[0].clone());
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        let (icon_name, icon_data) = parse_icon(&icon_v);
 
         let res = DynamicLauncherUi {
             app_id,
@@ -174,5 +148,42 @@ impl DynamicLauncher {
     #[zbus(property, name = "version")]
     fn version(&self) -> u32 {
         1
+    }
+}
+
+fn parse_icon(icon_v: &OwnedValue) -> (Option<String>, Option<Vec<u8>>) {
+    if let Ok(s) = <&str>::try_from(&**icon_v) {
+        return (Some(s.to_string()), None);
+    }
+
+    let Ok(structure) = zbus::zvariant::Structure::try_from(&**icon_v) else {
+        return (None, None);
+    };
+
+    let fields = structure.fields();
+    if fields.len() != 2 {
+        return (None, None);
+    }
+
+    let Ok(type_str) = <&str>::try_from(&fields[0]) else {
+        return (None, None);
+    };
+
+    match type_str {
+        "bytes" => {
+            let Ok(v) = <zbus::zvariant::Value>::try_from(&fields[1]) else { return (None, None) };
+            let Ok(bytes) = <Vec<u8>>::try_from(v) else { return (None, None) };
+            (None, Some(bytes))
+        }
+        "themed" => {
+            let Ok(v) = <zbus::zvariant::Value>::try_from(&fields[1]) else { return (None, None) };
+            let Ok(names) = <Vec<String>>::try_from(v) else { return (None, None) };
+            if !names.is_empty() {
+                (Some(names[0].clone()), None)
+            } else {
+                (None, None)
+            }
+        }
+        _ => (None, None),
     }
 }

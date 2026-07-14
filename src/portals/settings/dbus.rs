@@ -111,27 +111,14 @@ impl SettingsPortal {
                     if schema.has_key(key) {
                         let val = settings.value(key);
                         let type_string = val.type_().as_str();
-                        if type_string == "s" {
-                            if let Some(s) = val.get::<String>() {
-                                return OwnedValue::try_from(Value::Str(s.into())).ok();
-                            }
-                        } else if type_string == "b" {
-                            if let Some(b) = val.get::<bool>() {
-                                return OwnedValue::try_from(Value::Bool(b)).ok();
-                            }
-                        } else if type_string == "u" {
-                            if let Some(u) = val.get::<u32>() {
-                                return OwnedValue::try_from(Value::U32(u)).ok();
-                            }
-                        } else if type_string == "i" {
-                            if let Some(i) = val.get::<i32>() {
-                                return OwnedValue::try_from(Value::I32(i)).ok();
-                            }
-                        } else if type_string == "d" {
-                            if let Some(d) = val.get::<f64>() {
-                                return OwnedValue::try_from(Value::F64(d)).ok();
-                            }
-                        }
+                        return match type_string {
+                            "s" => val.get::<String>().and_then(|s| OwnedValue::try_from(Value::Str(s.into())).ok()),
+                            "b" => val.get::<bool>().and_then(|b| OwnedValue::try_from(Value::Bool(b)).ok()),
+                            "u" => val.get::<u32>().and_then(|u| OwnedValue::try_from(Value::U32(u)).ok()),
+                            "i" => val.get::<i32>().and_then(|i| OwnedValue::try_from(Value::I32(i)).ok()),
+                            "d" => val.get::<f64>().and_then(|d| OwnedValue::try_from(Value::F64(d)).ok()),
+                            _ => None,
+                        };
                     }
                 }
             }

@@ -59,25 +59,7 @@ impl Account {
         parent_window: String,
         options: GetUserInformationOptions,
     ) -> Response<UserInformation> {
-        let (mut user_name, mut real_name, mut icon_file) = (String::new(), String::new(), String::new());
-
-        let uid = unsafe { libc::getuid() };
-        let path = format!("/org/freedesktop/Accounts/User{}", uid);
-        let obj_path = match zbus::zvariant::ObjectPath::try_from(path) {
-            Ok(p) => p,
-            Err(e) => {
-                log::error!("Failed to parse object path in account portal: {}", e);
-                return Response::cancelled();
-            }
-        };
-        
-        if let Ok(system_bus) = Connection::system().await {
-            if let Ok(user_proxy) = UserProxy::builder(&system_bus).path(obj_path).unwrap_or_else(|_| unreachable!("Valid path was provided")).build().await {
-                if let Ok(u) = user_proxy.user_name().await { user_name = u; }
-                if let Ok(r) = user_proxy.real_name().await { real_name = r; }
-                if let Ok(i) = user_proxy.icon_file().await { icon_file = i; }
-            }
-        }
+        let (user_name, real_name, icon_file) = fetch_user_data().await.unwrap_or_default();
 
         let res = AccountUi {
             app_id,
@@ -127,4 +109,22 @@ impl Account {
         )
         .await
     }
+}
+
+async fn fetch_user_data() -> zbus::Result<(String, String, String)> {
+    let uid = unsafe { libc::getuid() };
+    let path = format!("/org/freedesktop/Accounts/User{}", uid);
+    let obj_path = zbus::zvariant::ObjectPath::try_from(path)?;
+
+    let system_bus = Connection::system().await?;
+    let user_proxy = UserProxy::builder(&system_bus)
+        .path(obj_path)?
+        .build()
+        .await?;
+
+    let user_name = user_proxy.user_name().await.unwrap_or_default();
+    let real_name = user_proxy.real_name().await.unwrap_or_default();
+    let icon_file = user_proxy.icon_file().await.unwrap_or_default();
+
+    Ok((user_name, real_name, icon_file))
 }

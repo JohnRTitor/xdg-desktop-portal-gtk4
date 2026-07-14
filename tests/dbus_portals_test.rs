@@ -79,10 +79,9 @@ async fn test_lockdown_all_properties_false() -> Result<(), Box<dyn std::error::
 #[tokio::test]
 async fn test_settings_read_unknown_namespace() -> Result<(), Box<dyn std::error::Error>> {
     skip_if_dbus_tests_disabled!();
-    let _conn = Builder::session()?
-        .serve_at("/org/freedesktop/portal/desktop", SettingsPortal::new())?
-        .build()
-        .await?;
+    let _conn = zbus::Connection::session().await?;
+    let server = _conn.object_server();
+    server.at("/org/freedesktop/portal/desktop", SettingsPortal::new(server.clone())).await?;
 
     let client_conn = zbus::Connection::session().await?;
     let proxy = SettingsProxy::builder(&client_conn)
@@ -99,10 +98,9 @@ async fn test_settings_read_unknown_namespace() -> Result<(), Box<dyn std::error
 #[tokio::test]
 async fn test_settings_read_all_empty_namespaces() -> Result<(), Box<dyn std::error::Error>> {
     skip_if_dbus_tests_disabled!();
-    let _conn = Builder::session()?
-        .serve_at("/org/freedesktop/portal/desktop", SettingsPortal::new())?
-        .build()
-        .await?;
+    let _conn = zbus::Connection::session().await?;
+    let server = _conn.object_server();
+    server.at("/org/freedesktop/portal/desktop", SettingsPortal::new(server.clone())).await?;
 
     let client_conn = zbus::Connection::session().await?;
     let proxy = SettingsProxy::builder(&client_conn)

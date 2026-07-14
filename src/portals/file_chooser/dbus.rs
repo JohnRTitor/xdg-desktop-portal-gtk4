@@ -224,7 +224,7 @@ impl FileChooser {
             if file.is_absolute() {
                 return Err(SaveFilesError::AbsolutePath);
             }
-            if file.components().count() > 1 {
+            if file.components().nth(1).is_some() {
                 return Err(SaveFilesError::MultipleComponents);
             }
             if file == Path::new(".") || file == Path::new("..") {
@@ -270,7 +270,7 @@ impl FileChooser {
                     _ => (file.0.as_str(), "", ""),
                 };
                 for i in 1u64.. {
-                    path = base.join(format!("{prefix} ({i}){dot}{suffix}"));
+                    path.set_file_name(format!("{prefix} ({i}){dot}{suffix}"));
                     if !path.exists() {
                         break;
                     }
