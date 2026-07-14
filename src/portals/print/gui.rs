@@ -61,12 +61,14 @@ impl PrintUi {
         context: MainContext,
         close_on_close: Receiver<()>,
     ) {
-        let dialog = PrintUnixDialog::new(Some(&self.title), None::<&gtk4::Window>);
+        let dummy_parent = gtk4::Window::new();
+        let dialog = PrintUnixDialog::new(Some(&self.title), Some(&dummy_parent));
         dialog.set_modal(true);
         
         dialog.upcast_ref::<Widget>().realize();
         set_wayland_parent(dialog.upcast_ref::<Widget>(), &self.parent_window);
 
+        let dummy_parent_clone = dummy_parent.clone();
         dialog.connect_response(move |d, r| {
             let res = match r {
                 ResponseType::Ok => {
@@ -122,6 +124,7 @@ impl PrintUi {
             };
             let _ = send.send_blocking(res);
             d.close();
+            dummy_parent_clone.destroy();
         });
 
         dialog.show();

@@ -49,11 +49,13 @@ impl AppChooserUi {
         close_on_close: Receiver<()>,
         update_receiver: Receiver<Vec<String>>,
     ) {
+        let dummy_parent = gtk4::Window::new();
         let dialog = gtk4::Dialog::builder()
             .title(&self.title)
             .modal(true)
             .default_width(400)
             .default_height(500)
+            .transient_for(&dummy_parent)
             .build();
 
         dialog.add_button(&t!("_Cancel"), ResponseType::Cancel);
@@ -101,6 +103,7 @@ impl AppChooserUi {
             ok_button_clone.set_sensitive(row.is_some());
         });
 
+        let dummy_parent_clone = dummy_parent.clone();
         let list_box_clone = list_box.clone();
         dialog.connect_response(move |d, r| {
             let res = match r {
@@ -117,6 +120,7 @@ impl AppChooserUi {
             };
             let _ = send.send_blocking(res);
             d.close();
+            dummy_parent_clone.destroy();
         });
 
         if let Some(w) = dialog.upcast_ref::<Widget>().downcast_ref::<gtk4::Window>() {

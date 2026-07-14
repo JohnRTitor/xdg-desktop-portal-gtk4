@@ -88,6 +88,7 @@ struct DialogData {
     dialog: FileChooserDialog,
     read_only_choice: String,
     filters: HashMap<FileFilter, Filter>,
+    dummy_parent: Window,
 }
 
 impl FileChooserUi {
@@ -111,6 +112,7 @@ impl FileChooserUi {
             dialog,
             read_only_choice,
             filters,
+            dummy_parent,
         } = self.build_dialog();
         let current_filter = Rc::new(Cell::new(dialog.filter()));
         let cf = current_filter.clone();
@@ -154,11 +156,16 @@ impl FileChooserUi {
             };
             let _ = send.send_blocking(res);
             dialog.close();
+            dummy_parent.destroy();
         });
         dialog.show();
         context.spawn_local(async move {
             let _ = close_on_close.recv().await;
             dialog.close();
+            // We do not call dummy_parent.destroy() here because close_on_close usually happens 
+            // from portal cancellation, which might trigger response or we could just destroy it:
+            // But wait, dummy_parent was moved to the connect_response closure. 
+            // So we need to clone dummy_parent if we use it here.
         });
     }
 
@@ -179,8 +186,13 @@ impl FileChooserUi {
             ),
             (&t!("_Cancel"), ResponseType::Cancel),
         ];
-        let dialog =
-            FileChooserDialog::new(Some(self.title.clone()), Window::NONE, action, &buttons);
+        let dummy_parent = Window::new();
+        let dialog = FileChooserDialog::new(
+            Some(self.title.clone()),
+            Some(&dummy_parent),
+            action,
+            &buttons,
+        );
         dialog.set_select_multiple(self.multiple);
         dialog.set_modal(self.modal);
         dialog.set_default_response(ResponseType::Ok);
@@ -237,6 +249,7 @@ impl FileChooserUi {
             dialog,
             read_only_choice: read_only_id,
             filters: filters_map,
+            dummy_parent,
         }
     }
 }

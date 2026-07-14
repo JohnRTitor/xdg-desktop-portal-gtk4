@@ -1,6 +1,6 @@
 use {
     crate::core::{request::run_request, response::Response},
-    gtk4::{glib, gio::AppInfo},
+    gtk4::{glib, gio::AppInfo, prelude::AppLaunchContextExt},
     zbus::{
         interface,
         zvariant::{DeserializeDict, OwnedObjectPath, SerializeDict, Type},
