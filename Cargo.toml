@@ -64,3 +64,4 @@ zbus = { version = "5.17.0", features = ["blocking"] }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt", "macros"] }
+

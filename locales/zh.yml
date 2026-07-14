@@ -1,0 +1,65 @@
+Activities: 活动
+Allow: 允许
+Background activity: 后台活动
+C_reate: 创建(_R)
+Cancel: 取消
+Choose an application to open the file “%s”.: 选择一个应用程序来打开文件“%s”。
+Choose an application.: 选择一个应用程序。
+Clear: 清除
+Create Application: 创建应用程序
+Create Web Application: 创建网页应用程序
+Deny Access: 拒绝访问
+Effects: 效果
+Entire Screen: 整个屏幕
+Failed to load image file: 加载图像文件失败
+Failed to start Software: 无法启动软件
+Find out more: 查找更多
+Force quit: 强制退出
+Grab after a _delay of: 在延迟后抓取(_D)
+Grab the current _window: 抓取当前窗口(_W)
+Grab the whole sc_reen: 抓取当前屏幕(_R)
+Grant Access: 授权访问
+Images: 图像
+Include _pointer: 包含指针(_P)
+Include the window _border: 包含窗口边框(_B)
+Keyboard: 键盘
+Make changes before sharing the information: 在共享信息之前进行更改
+No Apps available: 无可用应用
+No suitable app installed. You can find more applications in Software.: 没有安装合适的应用。您可以在“软件”中查找更多应用程序。
+Open With…: 打开方式…
+Open files read-only: 以只读方式打开文件
+Pointer: 指针
+Portal: 门户
+Remote desktop: 远程桌面
+Requested setting not found: 未找到请求的设置
+Screen Share: 共享屏幕
+Screenshot: 截屏
+Select: 选择
+Select _area to grab: 选择截取区域(_A)
+Select an Image: 选择一张图像
+Select devices to share with %s: 选择要与 %s 共享的设备
+Select devices to share with the requesting application: 选择要与正在请求的应用程序共享的设备
+Select monitor to share with %s: 选择与 %s 共享的监视器
+Select monitor to share with the requesting application: 选择与正在请求的应用共享的监视器
+Select window to share with %s: 选择与 %s 共享的窗口
+Select window to share with the requesting application: 选择与正在请求的应用共享的窗口
+Set: 设置
+Set Background: 设置背景
+Share Details: 分享详情
+Share this screenshot with %s?: 要与 %s 分享截屏吗？
+Share this screenshot with the requesting application?: 与正发出请求的应用程序共享此截图吗？
+Share your personal information with %s?: 与 %s 共享您的个人信息吗？
+Share your personal information with the requesting application?: 与正在请求的应用共享您的个人信息吗？
+Single Window: 单个窗口
+Take Screenshot: 截图
+Take _Screenshot: 截图(_S)
+Touch screen: 触摸屏
+_Cancel: 取消(_C)
+_Find More in Software: 在 软件 中查找更多(_F)
+_Open: 打开(_O)
+_Options…: 选项(_O)…
+_Save: 保存(_S)
+_Select: 选择(_S)
+_Share: 分享(_S)
+seconds: 秒
+“%s” is running in the background: “%s”正在后台运行

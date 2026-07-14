@@ -1,0 +1,64 @@
+Activities: Podgląd
+Allow: Zezwól
+Background activity: Działanie w tle
+C_reate: _Utwórz
+Cancel: Anuluj
+Choose an application to open the file “%s”.: Proszę wybrać program do otwarcia pliku „%s”.
+Choose an application.: Proszę wybrać program.
+Clear: Wyczyść
+Create Application: Utworzenie programu
+Create Web Application: Utworzenie programu WWW
+Deny Access: Odmów dostępu
+Effects: Efekty
+Entire Screen: Cały ekran
+Failed to load image file: Wczytanie pliku obrazu się nie powiodło
+Failed to start Software: Uruchomienie Menedżera oprogramowania się nie powiodło
+Find out more: Więcej informacji
+Force quit: Wymuś zakończenie
+Grab after a _delay of: Po _upływie
+Grab the current _window: O_becne okno
+Grab the whole sc_reen: _Cały ekran
+Grant Access: Udziel dostępu
+Images: Obrazy
+Include _pointer: Wi_doczny kursor
+Include the window _border: _Krawędź okna
+Keyboard: Klawiatura
+Make changes before sharing the information: Umożliwia wprowadzenie zmian przed udostępnieniem informacji
+No Apps available: Brak dostępnych programów
+Open With…: Otwarcie za pomocą…
+Open files read-only: Otwarcie plików tylko do odczytu
+Pointer: Kursor
+Portal: Portal
+Remote desktop: Zdalny pulpit
+Requested setting not found: Nie odnaleziono żądanego ustawienia
+Screen Share: Udostępnianie ekranu
+Screenshot: Zrzut ekranu
+Select: Wybierz
+Select _area to grab: Zaznaczony ob_szar
+Select an Image: Wybór obrazu
+Select devices to share with %s: Wybór urządzeń do udostępnienia programowi „%s”
+Select devices to share with the requesting application: Wybór urządzeń do udostępnienia proszącemu o to programowi
+Select monitor to share with %s: Wybór monitora do udostępnienia programowi „%s”
+Select monitor to share with the requesting application: Wybór monitora do udostępnienia proszącemu o to programowi
+Select window to share with %s: Wybór okna do udostępnienia programowi „%s”
+Select window to share with the requesting application: Wybór okna do udostępnienia proszącemu o to programowi
+Set: Ustaw
+Set Background: Ustawienie tła
+Share Details: Udostępnianie informacji
+Share this screenshot with %s?: Udostępnić ten zrzut ekranu programowi „%s”?
+Share this screenshot with the requesting application?: Udostępnić ten zrzut ekranu proszącemu o to programowi?
+Share your personal information with %s?: Udostępnić informacje o użytkowniku programowi „%s”?
+Share your personal information with the requesting application?: Udostępnić informacje o użytkowniku proszącemu o to programowi?
+Single Window: Jedno okno
+Take Screenshot: Zrzut ekranu
+Take _Screenshot: _Wykonaj zrzut ekranu
+Touch screen: Ekran dotykowy
+_Cancel: _Anuluj
+_Find More in Software: _Znajdź więcej w Menedżerze oprogramowania
+_Open: _Otwórz
+_Options…: _Opcje…
+_Save: _Zapisz
+_Select: _Wybierz
+_Share: _Udostępnij
+seconds: s
+“%s” is running in the background: Program „%s” działa w tle.

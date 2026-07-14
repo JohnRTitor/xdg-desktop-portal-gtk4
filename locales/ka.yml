@@ -1,0 +1,61 @@
+Activities: ქმედებები
+Allow: დაშვება
+Background activity: ფონური აქტივობა
+Cancel: გაუქმება
+Choose an application to open the file “%s”.: აირჩიეთ \
+Choose an application.: აირჩიეთ აპლიკაცია.
+Clear: გაწმენდა
+Deny Access: წვდომის უარყოფა
+Effects: ეფექტები
+Entire Screen: მთელ ეკრანზე
+Failed to load image file: გამოსახულების ფაილის ჩატვირთვის შეცდომა
+Failed to start Software: პროგრამის გაშვების შეცდომა
+Find out more: მეტის გაგება
+Force quit: ძალით გასვლა
+Grab after a _delay of: დათრევის _პაუზა
+Grab the current _window: _მიმდინარე ფანჯრის დათრევა
+Grab the whole sc_reen: მთლიანი _ეკრანის დათრევა
+Grant Access: წვდომის მინიჭება
+Images: გამოსახულებები
+Include _pointer: გამოჩნდება კურსორიც
+Include the window _border: ფანჯრის _ჩარჩოც გამოჩნდება
+Keyboard: კლავიატურა
+Make changes before sharing the information: შეცვალეთ ინფორმაციის გაზიარებამდე
+No Apps available: აპები მიუწვდომელია
+Open With…: გამხსნელი პროგრამა…
+Open files read-only: ფაილის მხოლოდ-წაკითხვად რეჟიმში გახსნა
+Pointer: კურსორი
+Portal: პორტალი
+Remote desktop: დაშორებული სამუშაო მაგიდა
+Requested setting not found: მოთხოვნილი პარამეტრი ვერ მოიძებნა
+Screen Share: ეკრანის გაზიარება
+Screenshot: ეკრანის ანაბეჭდი
+Select: აირჩიეთ
+Select _area to grab: მონიშნეთ დასათრევი ადგილი
+Select an Image: მონიშნეთ გამოსახულება
+Select devices to share with %s: აირჩიეთ %s-სთან გასაზიარებელი მოწყობილობები
+Select devices to share with the requesting application: აირჩიეთ მომთხოვნი აპლიკაციისთვის გასაზიარებელი მოწყობილობები
+Select monitor to share with %s: აირჩიეთ %s-სთან გასაზიარებელი ეკრანი
+Select monitor to share with the requesting application: აირჩიეთ მომთხოვნი აპლიკაციისთვის გასაზიარებელი ეკრანი
+Select window to share with %s: აირჩიეთ %s-სთან გასაზიარებელი ფანჯარა
+Select window to share with the requesting application: აირჩიეთ მომთხოვნი აპლიკაციისთვის გასაზიარებელი აპლიკაცია
+Set: დაყენება
+Set Background: ფონის დაყენება
+Share Details: დეტალების გაზიარება
+Share this screenshot with %s?: გავუზიარო ეკრანის ანაბეჭდი %s-ს?
+Share this screenshot with the requesting application?: გავუზიარო ეკრანის ანაბეჭდი მომთხოვნ აპლიკაციას?
+Share your personal information with %s?: გავუზიაროთ თქვენი პირადი ინფორმაცია %s -ს?
+Share your personal information with the requesting application?: გავუზიარო თქვენი პირადი ინფორმაცია მომთხოვნ აპლიკაციას?
+Single Window: ერთი ფანჯარა
+Take Screenshot: ეკრანის ანაბეჭდის გადაღება
+Take _Screenshot: ეკრანის ანაბეჭდის გადაღება
+Touch screen: სენსორული ეკრანი
+_Cancel: _გაუქმება
+_Find More in Software: _მეტის პროგრამის პოვნა
+_Open: _გახსნა
+_Options…: _მორგება…
+_Save: _შენახვა
+_Select: _არჩევა
+_Share: _გაზიარება
+seconds: წამები
+“%s” is running in the background: \
