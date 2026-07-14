@@ -3,7 +3,6 @@ use {
         gui::{print::{PrintUi, ExecutePrintUi}, UiProxy},
         portal::{request::run_request, response::Response},
     },
-    error_reporter::Report,
     zbus::{
         interface,
         zvariant::{DeserializeDict, Fd, OwnedObjectPath, SerializeDict, Type, Value, OwnedValue},
@@ -87,7 +86,7 @@ impl Print {
                 token: result.token,
             }),
             Err(e) => {
-                log::error!("PreparePrint failed: {}", Report::new(e));
+                log::error!("PreparePrint failed: {}", anyhow::Error::new(e));
                 Response::cancelled()
             }
         }
@@ -119,7 +118,7 @@ impl Print {
         match res {
             Ok(_) => Response::success(PrintResults::default()),
             Err(e) => {
-                log::error!("Print dispatch failed: {}", Report::new(e));
+                log::error!("Print dispatch failed: {}", anyhow::Error::new(e));
                 Response::cancelled()
             }
         }

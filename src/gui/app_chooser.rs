@@ -1,7 +1,7 @@
 use crate::{gui::UiProxy, utils::external_window::set_wayland_parent};
 use async_channel::{Receiver, Sender};
 use gtk4::{
-    glib::{self, MainContext},
+    glib::MainContext,
     prelude::*,
     ResponseType, Widget,
     gio::AppInfo,

@@ -3,7 +3,6 @@ use {
         gui::{dynamic_launcher::DynamicLauncherUi, UiProxy},
         portal::{request::run_request, response::Response},
     },
-    error_reporter::Report,
     uuid::Uuid,
     zbus::{
         interface,
@@ -98,7 +97,7 @@ impl DynamicLauncher {
                 })
             }
             Err(e) => {
-                log::error!("PrepareInstall failed: {}", Report::new(e));
+                log::error!("PrepareInstall failed: {}", anyhow::Error::new(e));
                 Response::cancelled()
             }
         }
@@ -118,13 +117,13 @@ impl DynamicLauncher {
 impl DynamicLauncher {
     async fn prepare_install(
         &self,
-        handle: OwnedObjectPath,
+        _handle: OwnedObjectPath,
         app_id: String,
         parent_window: String,
         name: String,
         icon_v: Value<'_>,
         options: PrepareInstallOptions,
-        #[zbus(object_server)] server: &ObjectServer,
+        #[zbus(object_server)] _server: &ObjectServer,
     ) -> Response<PrepareInstallResults> {
         let icon_owned = match OwnedValue::try_from(icon_v) {
             Ok(v) => v,

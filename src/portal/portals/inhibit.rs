@@ -1,13 +1,23 @@
 use {
-    crate::portal::{request::run_request, response::Response, session::Session},
+    crate::portal::session::Session,
     std::collections::HashMap,
     zbus::{
         interface,
-        zvariant::{DeserializeDict, OwnedObjectPath, SerializeDict, Type, Value},
+        zvariant::{DeserializeDict, OwnedObjectPath, Type, Value},
         Connection, ObjectServer,
         object_server::SignalEmitter,
     },
 };
+
+#[derive(DeserializeDict, Type, Debug, Default)]
+#[zvariant(signature = "dict")]
+struct InhibitOptions {
+    reason: Option<String>,
+}
+
+#[derive(DeserializeDict, Type, Debug, Default)]
+#[zvariant(signature = "dict")]
+struct CreateMonitorOptions {}
 
 #[zbus::proxy(
     interface = "org.freedesktop.ScreenSaver",
@@ -19,73 +29,37 @@ trait ScreenSaver {
     fn un_inhibit(&self, cookie: u32) -> zbus::Result<()>;
 }
 
+#[zbus::proxy(
+    interface = "org.freedesktop.login1.Manager",
+    default_service = "org.freedesktop.login1",
+    default_path = "/org/freedesktop/login1"
+)]
+trait Login1Manager {
+    fn inhibit(
+        &self,
+        what: &str,
+        who: &str,
+        why: &str,
+        mode: &str,
+    ) -> zbus::Result<zbus::zvariant::OwnedFd>;
+}
+
+struct InhibitRequest {
+    send: async_channel::Sender<()>,
+}
+
+#[interface(name = "org.freedesktop.impl.portal.Request")]
+impl InhibitRequest {
+    async fn close(&self) {
+        let _ = self.send.send(()).await;
+    }
+}
+
 pub struct Inhibit {}
 
 impl Inhibit {
     pub fn new() -> Self {
         Self {}
-    }
-}
-
-#[derive(DeserializeDict, Type, Debug, Default)]
-#[zvariant(signature = "dict")]
-struct InhibitOptions {
-    reason: Option<String>,
-}
-
-#[derive(SerializeDict, Type, Debug, Default)]
-#[zvariant(signature = "dict")]
-struct InhibitResults {}
-
-#[derive(DeserializeDict, Type, Debug, Default)]
-#[zvariant(signature = "dict")]
-struct CreateMonitorOptions {}
-
-#[derive(SerializeDict, Type, Debug, Default)]
-#[zvariant(signature = "dict")]
-struct CreateMonitorResults {}
-
-impl Inhibit {
-    async fn inhibit_impl(
-        &self,
-        app_id: String,
-        _window: String,
-        reason: u32,
-        _options: InhibitOptions,
-    ) -> Response<InhibitResults> {
-        let reason_str = match reason {
-            1 => "Logout",
-            2 => "User Switch",
-            4 => "Suspend",
-            8 => "Idle",
-            _ => "Unknown",
-        };
-
-        if let Ok(session_bus) = Connection::session().await {
-            if let Ok(proxy) = ScreenSaverProxy::new(&session_bus).await {
-                // For a proper implementation, we'd need to store the cookie and tie it to the request/app lifetime.
-                // But for parity we at least call the dbus method.
-                if let Err(e) = proxy.inhibit(&app_id, reason_str).await {
-                    log::warn!("Failed to inhibit via ScreenSaver: {}", e);
-                }
-            }
-        }
-        Response::success(InhibitResults::default())
-    }
-
-    async fn create_monitor_impl(
-        &self,
-        session_handle: String,
-        _app_id: String,
-        _window: String,
-        _options: CreateMonitorOptions,
-        server: &ObjectServer,
-    ) -> Response<CreateMonitorResults> {
-        let session = Session::new(session_handle.clone());
-        if let Ok(path) = OwnedObjectPath::try_from(session_handle) {
-            let _ = server.at(path, session).await;
-        }
-        Response::success(CreateMonitorResults::default())
     }
 }
 
@@ -95,34 +69,122 @@ impl Inhibit {
         &self,
         handle: OwnedObjectPath,
         app_id: String,
-        window: String,
+        _window: String,
         reason: u32,
         options: InhibitOptions,
         #[zbus(object_server)] server: &ObjectServer,
-    ) -> Response<InhibitResults> {
-        run_request(
-            server,
-            handle,
-            self.inhibit_impl(app_id, window, reason, options),
-        )
-        .await
+    ) -> zbus::fdo::Result<()> {
+        let (send, recv) = async_channel::bounded(1);
+        let request = InhibitRequest { send };
+
+        if let Err(e) = server.at(handle.clone(), request).await {
+            log::error!("Failed to export Inhibit Request {}: {}", handle, e);
+            return Err(zbus::fdo::Error::Failed("Failed to export Request".into()));
+        }
+
+        let server_clone = server.clone();
+        
+        std::thread::spawn(move || {
+            zbus::block_on(async move {
+                let session_bus_res = Connection::session().await;
+                let mut screen_saver_cookie = None;
+                let mut logind_fd = None;
+                
+                let system_bus_res = Connection::system().await;
+
+                let mut inhibit_what = Vec::new();
+
+                // Flags:
+                // 1: Logout
+                // 2: User Switch
+                // 4: Suspend
+                // 8: Idle
+                if reason & 1 != 0 {
+                    inhibit_what.push("shutdown");
+                }
+                if reason & 4 != 0 {
+                    inhibit_what.push("sleep");
+                }
+                if reason & 8 != 0 {
+                    inhibit_what.push("idle");
+                }
+                
+                let reason_str = options.reason.as_deref().unwrap_or("Portal inhibit");
+
+                // Try logind first for sleep/shutdown/idle
+                if !inhibit_what.is_empty() {
+                    if let Ok(system_bus) = &system_bus_res {
+                        if let Ok(logind_proxy) = Login1ManagerProxy::new(system_bus).await {
+                            let what_str = inhibit_what.join(":");
+                            match logind_proxy.inhibit(&what_str, &app_id, reason_str, "block").await {
+                                Ok(fd) => {
+                                    logind_fd = Some(fd);
+                                    log::debug!("Acquired logind inhibit lock for {}", what_str);
+                                },
+                                Err(e) => {
+                                    log::warn!("Failed to inhibit via logind: {}", e);
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // If Idle is requested, try ScreenSaver as a fallback or in addition (since logind idle is sometimes ignored by DEs)
+                if reason & 8 != 0 {
+                    if let Ok(session_bus) = &session_bus_res {
+                        if let Ok(ss_proxy) = ScreenSaverProxy::new(session_bus).await {
+                            match ss_proxy.inhibit(&app_id, reason_str).await {
+                                Ok(cookie) => {
+                                    screen_saver_cookie = Some((ss_proxy, cookie));
+                                    log::debug!("Acquired ScreenSaver inhibit cookie {}", cookie);
+                                },
+                                Err(e) => {
+                                    log::warn!("Failed to inhibit via ScreenSaver: {}", e);
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Wait for the Request to be closed
+                let _ = recv.recv().await;
+
+                log::debug!("Inhibit Request {} closed, releasing locks", handle);
+                
+                // Release ScreenSaver cookie
+                if let Some((proxy, cookie)) = screen_saver_cookie {
+                    let _ = proxy.un_inhibit(cookie).await;
+                }
+                
+                // logind_fd is automatically released when dropped
+                drop(logind_fd);
+                
+                // Unexport the Request
+                let _ = server_clone.remove::<InhibitRequest, _>(handle).await;
+            });
+        });
+
+        Ok(())
     }
 
     async fn create_monitor(
         &self,
-        handle: OwnedObjectPath,
+        _handle: OwnedObjectPath,
         session_handle: String,
-        app_id: String,
-        window: String,
-        options: CreateMonitorOptions,
+        _app_id: String,
+        _window: String,
+        _options: CreateMonitorOptions,
         #[zbus(object_server)] server: &ObjectServer,
-    ) -> Response<CreateMonitorResults> {
-        run_request(
-            server,
-            handle,
-            self.create_monitor_impl(session_handle, app_id, window, options, server),
-        )
-        .await
+    ) -> zbus::fdo::Result<u32> {
+        let session = Session::new(session_handle.clone());
+        if let Ok(path) = OwnedObjectPath::try_from(session_handle) {
+            if let Err(e) = server.at(path, session).await {
+                log::error!("Failed to export monitor session: {}", e);
+                return Ok(2); // Returning 2 as general error for create_monitor according to xdp-gtk
+            }
+        }
+        
+        Ok(0) // 0 == success
     }
 
     async fn query_end_response(
@@ -131,13 +193,13 @@ impl Inhibit {
         _response: u32,
         _options: HashMap<String, Value<'_>>,
     ) {
-        // Dummy implementation
+        log::debug!("query_end_response called");
     }
 
     #[zbus(signal)]
     async fn state_changed(
         ctx: &SignalEmitter<'_>,
         session_handle: OwnedObjectPath,
-        state: u32,
+        state: HashMap<String, Value<'_>>,
     ) -> zbus::Result<()>;
 }

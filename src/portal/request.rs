@@ -1,7 +1,6 @@
 use {
     crate::portal::response::Response,
     async_channel::Sender,
-    error_reporter::Report,
     futures_util::{select, FutureExt},
     std::future::Future,
     zbus::{
@@ -14,7 +13,7 @@ use {
 async fn export_request(server: &ObjectServer, path: OwnedObjectPath) {
     let (send, recv) = async_channel::bounded(1);
     if let Err(e) = server.at(&path, Request { send }).await {
-        log::error!("Could not export request object: {}", Report::new(e));
+        log::error!("Could not export request object: {}", anyhow::Error::new(e));
         return;
     }
     let _ = recv.recv().await;

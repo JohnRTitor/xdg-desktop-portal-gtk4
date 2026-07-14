@@ -6,7 +6,6 @@ use {
         },
         portal::{request::run_request, response::Response},
     },
-    error_reporter::Report,
     serde::Deserialize,
     zbus::{
         interface,
@@ -94,7 +93,7 @@ impl Access {
                 }),
             }),
             Err(e) => {
-                log::error!("AccessDialog failed: {}", Report::new(e));
+                log::error!("AccessDialog failed: {}", anyhow::Error::new(e));
                 Response::cancelled()
             }
         }

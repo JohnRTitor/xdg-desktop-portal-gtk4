@@ -10,7 +10,6 @@ use {
         portal::{request::run_request, response::Response},
     },
     bstr::{ByteSlice, ByteVec},
-    error_reporter::Report,
     serde::{Deserialize, Deserializer},
     std::{ffi::CString, path::Path, str::FromStr},
     thiserror::Error,
@@ -169,7 +168,7 @@ impl FileChooser {
                 writable: Some(res.writeable),
             }),
             Err(e) => {
-                log::error!("OpenFile failed: {}", Report::new(e));
+                log::error!("OpenFile failed: {}", anyhow::Error::new(e));
                 Response::cancelled()
             }
         }
@@ -207,7 +206,7 @@ impl FileChooser {
                 current_filter: res.current_filter.map(unmap_filter),
             }),
             Err(e) => {
-                log::error!("SaveFile failed: {}", Report::new(e));
+                log::error!("SaveFile failed: {}", anyhow::Error::new(e));
                 Response::cancelled()
             }
         }
@@ -303,7 +302,7 @@ impl FileChooser {
         {
             Ok(res) => Response::success(res),
             Err(e) => {
-                log::error!("SaveFiles failed: {}", Report::new(e));
+                log::error!("SaveFiles failed: {}", anyhow::Error::new(e));
                 Response::cancelled()
             }
         }

@@ -6,7 +6,6 @@ use {
         prelude::{Cast, DialogExt, GtkWindowExt, WidgetExt},
         PrintUnixDialog, ResponseType, Widget,
     },
-    rust_i18n::t,
     std::cell::RefCell,
     std::collections::HashMap,
     thiserror::Error,

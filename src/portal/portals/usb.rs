@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use zbus::zvariant::{DeserializeDict, SerializeDict, Type, OwnedObjectPath, OwnedValue, Value};
+use zbus::zvariant::{SerializeDict, Type, OwnedObjectPath, OwnedValue};
 use zbus::interface;
 use crate::{
     gui::{UiProxy, usb::{UsbUi, UsbError, UsbDevice}},

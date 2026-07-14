@@ -1,7 +1,6 @@
 use {
     crate::{gui::Ui, portal::Portal},
     clap::Parser,
-    error_reporter::Report,
 };
 
 /// The xdg-desktop-portal-gtk4 portal.
@@ -18,7 +17,7 @@ pub fn main() {
     let _portal = match Portal::create(ui.proxy(), args.replace) {
         Ok(p) => p,
         Err(e) => {
-            log::error!("Could not create the portal: {}", Report::new(e));
+            log::error!("Could not create the portal: {}", anyhow::Error::new(e));
             std::process::exit(1);
         }
     };

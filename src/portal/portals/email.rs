@@ -1,6 +1,5 @@
 use {
     crate::portal::{request::run_request, response::Response},
-    error_reporter::Report,
     gtk4::{glib, gio::AppInfo},
     zbus::{
         interface,
@@ -43,7 +42,7 @@ impl Email {
         match AppInfo::launch_default_for_uri(&url, None::<&gtk4::gio::AppLaunchContext>) {
             Ok(_) => Response::success(EmailResults::default()),
             Err(e) => {
-                log::error!("ComposeEmail failed: {}", Report::new(e));
+                log::error!("ComposeEmail failed: {}", anyhow::Error::new(e));
                 Response::cancelled()
             }
         }

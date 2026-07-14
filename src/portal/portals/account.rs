@@ -3,7 +3,6 @@ use {
         gui::{account::AccountUi, UiProxy},
         portal::{request::run_request, response::Response},
     },
-    error_reporter::Report,
     zbus::{
         interface,
         zvariant::{DeserializeDict, OwnedObjectPath, SerializeDict, Type},
@@ -97,7 +96,7 @@ impl Account {
                 image: res.image,
             }),
             Err(e) => {
-                log::error!("GetUserInformation failed: {}", Report::new(e));
+                log::error!("GetUserInformation failed: {}", anyhow::Error::new(e));
                 Response::cancelled()
             }
         }
