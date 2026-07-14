@@ -41,7 +41,14 @@ impl Email {
         options: ComposeEmailOptions,
     ) -> Response<EmailResults> {
         let url = build_mailto_url(&options);
-        match AppInfo::launch_default_for_uri(&url, None::<&gtk4::gio::AppLaunchContext>) {
+        
+        let launch_context = gtk4::gio::AppLaunchContext::new();
+        if let Some(token) = &options.activation_token {
+            launch_context.setenv("DESKTOP_STARTUP_ID", token);
+            launch_context.setenv("XDG_ACTIVATION_TOKEN", token);
+        }
+
+        match AppInfo::launch_default_for_uri(&url, Some(&launch_context)) {
             Ok(_) => Response::success(EmailResults::default()),
             Err(e) => {
                 log::error!("ComposeEmail failed: {}", anyhow::Error::new(e));

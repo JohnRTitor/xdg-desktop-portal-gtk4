@@ -38,6 +38,9 @@ struct PreparePrintResults {
     #[zvariant(rename = "page-setup")]
     page_setup: HashMap<String, OwnedValue>,
     token: u32,
+    supported_output_file_formats: Option<Vec<String>>,
+    has_current_page: Option<bool>,
+    has_selected_pages: Option<bool>,
 }
 
 #[derive(DeserializeDict, Type, Debug, Default)]
@@ -75,6 +78,9 @@ impl Print {
                 settings: result.settings,
                 page_setup: result.page_setup,
                 token: result.token,
+                supported_output_file_formats: Some(vec!["pdf".to_string(), "ps".to_string(), "svg".to_string()]),
+                has_current_page: Some(true),
+                has_selected_pages: Some(true),
             }),
             Err(e) => {
                 log::error!("PreparePrint failed: {}", anyhow::Error::new(e));
