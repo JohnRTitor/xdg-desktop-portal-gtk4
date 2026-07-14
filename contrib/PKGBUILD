@@ -3,11 +3,11 @@ pkgver=0.1.0
 pkgrel=1
 pkgdesc="A portal backend for xdg-desktop-portal using GTK4"
 arch=('x86_64')
-url="https://github.com/mahkoh/xdg-desktop-portal-gtk4"
+url="https://github.com/JohnRTitor/xdg-desktop-portal-gtk4"
 license=('LGPL-2.1')
 depends=('gtk4' 'xdg-desktop-portal')
 makedepends=('cargo' 'meson' 'git')
-source=("git+https://github.com/mahkoh/xdg-desktop-portal-gtk4.git")
+source=("git+https://github.com/JohnRTitor/xdg-desktop-portal-gtk4.git")
 sha256sums=('SKIP')
 
 build() {

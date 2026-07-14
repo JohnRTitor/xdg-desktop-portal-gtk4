@@ -5,6 +5,8 @@
   gtk4,
   glib,
   wrapGAppsHook4,
+  meson,
+  ninja,
 }:
 
 rustPlatform.buildRustPackage rec {
@@ -26,6 +28,8 @@ rustPlatform.buildRustPackage rec {
   nativeBuildInputs = [
     pkg-config
     wrapGAppsHook4
+    meson
+    ninja
   ];
 
   buildInputs = [
@@ -33,25 +37,35 @@ rustPlatform.buildRustPackage rec {
     glib
   ];
 
-  postInstall = ''
-    mkdir -p $out/libexec
-    mv $out/bin/xdg-desktop-portal-gtk4 $out/libexec/
-    rmdir $out/bin || true
+  # Prevent Nix from treating this primarily as a Meson package
+  dontUseMesonConfigure = true;
+  dontUseMesonBuild = true;
+  dontUseMesonInstall = true;
+  dontUseNinjaConfigure = true;
+  dontUseNinjaBuild = true;
+  dontUseNinjaInstall = true;
 
-    mkdir -p $out/share/xdg-desktop-portal/portals
-    cp data/gtk4.portal $out/share/xdg-desktop-portal/portals/
+  mesonFlags = [
+    "--libexecdir=libexec"
+    "-Dsystemd-user-unit-dir=lib/systemd/user"
+  ];
 
-    mkdir -p $out/share/applications
-    substitute data/xdg-desktop-portal-gtk4.desktop.in $out/share/applications/xdg-desktop-portal-gtk4.desktop \
-      --replace-fail "@libexecdir@" "$out/libexec"
+  # We don't want cargo to install the binary to $out/bin, meson will install it to libexec
+  dontCargoInstall = true;
 
-    mkdir -p $out/share/dbus-1/services
-    substitute data/org.freedesktop.impl.portal.desktop.gtk4.service.in $out/share/dbus-1/services/org.freedesktop.impl.portal.desktop.gtk4.service \
-      --replace-fail "@libexecdir@" "$out/libexec"
+  installPhase = ''
+    runHook preInstall
 
-    mkdir -p $out/share/systemd/user
-    substitute data/xdg-desktop-portal-gtk4.service.in $out/share/systemd/user/xdg-desktop-portal-gtk4.service \
-      --replace-fail "@libexecdir@" "$out/libexec"
+    # Cargo might put the binary in target/<target-triple>/release/ depending on the host.
+    # meson.build strictly expects it in target/release/, so we link it there.
+    mkdir -p target/release
+    find target -type f -name xdg-desktop-portal-gtk4 -executable -exec ln -sf $(pwd)/{} target/release/xdg-desktop-portal-gtk4 \;
+
+    # Let meson handle substituting templates and installing all files
+    mesonConfigurePhase
+    mesonInstallPhase
+
+    runHook postInstall
   '';
 
   meta = {
