@@ -1,9 +1,8 @@
 # xdg-desktop-portal-gtk4
 
-This is a portal backend for [xdg-desktop-portal][portal] using GTK4.
+This is a modern GTK4-based portal backend for [xdg-desktop-portal][portal].
 
-If your Wayland compositor would otherwise use the [GTK3 portal][gtk3] (Sway, Jay,
-Hyprland, etc.), you can instead use this portal to get thumbnails in the file picker.
+It provides native GTK4 dialogs for various desktop portals (like file picking, app choosing, and USB access). If your Wayland compositor typically defaults to the [GTK3 portal][gtk3] (such as Sway, Jay, or Hyprland), you can use this portal backend instead to benefit from modern GTK4 features, including native file picker thumbnails and updated UI elements.
 
 ![screenshot.png](./static/screenshot.png)
 
@@ -27,50 +26,9 @@ This implementation provides backend support for the following XDG Desktop Porta
 - **Settings** (`org.freedesktop.impl.portal.Settings`): Reading desktop settings (such as color-scheme for dark mode).
 - **USB** (`org.freedesktop.impl.portal.Usb`): Managing USB device access.
 
-## Dependencies
+## Building & Installation
 
-### Build Dependencies
-
-- **Rust/Cargo** (for compiling the backend)
-- **Meson** and **Ninja** (for installing data files and systemd services)
-- **pkg-config**
-- **GTK 4** development libraries (e.g., `libgtk-4-dev` or `gtk4-devel`)
-- **GLib 2.0** development libraries (e.g., `libglib2.0-dev` or `glib2-devel`)
-
-### Runtime Dependencies
-
-- **xdg-desktop-portal**
-
-## Building & Installing
-
-You will need to build the project using Cargo, and then use Meson to install the compiled binary alongside the necessary D-Bus service files and desktop portal configurations.
-
-```bash
-# Build the binary
-cargo build --release
-
-# Setup meson build directory
-meson setup build -Dprefix=/usr
-
-# Install the portal and its service files
-sudo meson install -C build
-```
-
-### Nix / NixOS
-
-This project provides a Flake for Nix users.
-
-To build the package:
-
-```bash
-nix build .#xdg-desktop-portal-gtk4
-```
-
-To enter a development shell with all necessary dependencies configured:
-
-```bash
-nix develop
-```
+Please see [BUILD.md](./BUILD.md) for detailed dependencies and build instructions.
 
 ## Configuring your Compositor
 
@@ -104,6 +62,47 @@ Restart `xdg-desktop-portal` afterwards to apply the configuration:
 
 ```bash
 systemctl --user restart xdg-desktop-portal
+```
+
+### NixOS Flake Installation
+
+If you use NixOS with flakes, you can install and enable this portal directly in your `flake.nix` and system configuration.
+
+Add the input to your `flake.nix`:
+
+```nix
+{
+  inputs = {
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    xdg-desktop-portal-gtk4.url = "github:JohnRTitor/xdg-desktop-portal-gtk4";
+  };
+  # ...
+
+}
+```
+
+Then configure your portals (e.g. in `configuration.nix`):
+
+```nix
+{ inputs, ... }: {
+  xdg.portal = {
+    enable = true;
+
+    extraPortals = [
+      inputs.xdg-desktop-portal-gtk4.packages.${pkgs.stdenv.hostPlatform.system}.xdg-desktop-portal-gtk4
+    ];
+
+    config.hyprland = {
+      default = [
+        "gtk4"
+        # other portals like "hyprland", "wlr"
+      ];
+
+      # Set the default portal for file choosers
+      "org.freedesktop.impl.portal.FileChooser" = [ "gtk4" ];
+    };
+};
+}
 ```
 
 ## License
