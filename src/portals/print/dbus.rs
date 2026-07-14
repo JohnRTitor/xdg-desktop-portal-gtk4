@@ -28,15 +28,7 @@ impl Print {
 #[zvariant(signature = "dict")]
 struct PreparePrintOptions {
     modal: Option<bool>,
-    token: Option<String>,
-    #[zvariant(rename = "accept-format")]
-    accept_format: Option<String>,
-    #[zvariant(rename = "accept-media")]
-    accept_media: Option<String>,
-    #[zvariant(rename = "accept-papers")]
-    accept_papers: Option<String>,
-    settings: Option<HashMap<String, OwnedValue>>,
-    page_setup: Option<HashMap<String, OwnedValue>>,
+    accept_label: Option<String>,
 }
 
 #[derive(SerializeDict, Type, Debug, Default)]
@@ -52,10 +44,7 @@ struct PreparePrintResults {
 struct PrintOptions {
     modal: Option<bool>,
     token: Option<u32>,
-    #[zvariant(rename = "accept-format")]
-    accept_format: Option<String>,
-    settings: Option<HashMap<String, OwnedValue>>,
-    page_setup: Option<HashMap<String, OwnedValue>>,
+    supported_output_file_formats: Option<Vec<String>>,
 }
 
 #[derive(SerializeDict, Type, Debug, Default)]

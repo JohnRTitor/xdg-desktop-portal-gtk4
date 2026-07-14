@@ -57,12 +57,6 @@ impl Default for PrepareInstallResults {
 struct RequestInstallTokenOptions {
 }
 
-#[derive(SerializeDict, Type, Debug, Default)]
-#[zvariant(signature = "dict")]
-struct RequestInstallTokenResults {
-    token: String,
-}
-
 impl DynamicLauncher {
     async fn prepare_install_impl(
         &self,
@@ -103,28 +97,19 @@ impl DynamicLauncher {
             }
         }
     }
-
-    async fn request_install_token_impl(
-        &self,
-        _app_id: String,
-        _options: RequestInstallTokenOptions,
-    ) -> Response<RequestInstallTokenResults> {
-        let token = Uuid::new_v4().to_string();
-        Response::success(RequestInstallTokenResults { token })
-    }
 }
 
 #[interface(name = "org.freedesktop.impl.portal.DynamicLauncher")]
 impl DynamicLauncher {
     async fn prepare_install(
         &self,
-        _handle: OwnedObjectPath,
+        handle: OwnedObjectPath,
         app_id: String,
         parent_window: String,
         name: String,
         icon_v: Value<'_>,
         options: PrepareInstallOptions,
-        #[zbus(object_server)] _server: &ObjectServer,
+        #[zbus(object_server)] server: &ObjectServer,
     ) -> Response<PrepareInstallResults> {
         let icon_owned = match OwnedValue::try_from(icon_v) {
             Ok(v) => v,
@@ -133,21 +118,29 @@ impl DynamicLauncher {
                 return Response::cancelled();
             }
         };
-        self.prepare_install_impl(app_id, parent_window, name, icon_owned, options).await
+        run_request(
+            server,
+            handle,
+            self.prepare_install_impl(app_id, parent_window, name, icon_owned, options)
+        )
+        .await
     }
 
     async fn request_install_token(
         &self,
-        handle: OwnedObjectPath,
-        app_id: String,
-        options: RequestInstallTokenOptions,
-        #[zbus(object_server)] server: &ObjectServer,
-    ) -> Response<RequestInstallTokenResults> {
-        run_request(
-            server,
-            handle,
-            self.request_install_token_impl(app_id, options),
-        )
-        .await
+        _app_id: String,
+        _options: RequestInstallTokenOptions,
+    ) -> u32 {
+        0 // 0 means allowed
+    }
+
+    #[zbus(property, name = "SupportedLauncherTypes")]
+    fn supported_launcher_types(&self) -> u32 {
+        3 // 1 (Application) | 2 (Webapp)
+    }
+
+    #[zbus(property, name = "version")]
+    fn version(&self) -> u32 {
+        1
     }
 }

@@ -69,13 +69,13 @@ struct OpenFileOptions {
 struct SaveFileOptions {
     accept_label: Option<String>,
     modal: Option<bool>,
-    multiple: Option<bool>,
     filters: Option<Vec<FileFilter>>,
     current_filter: Option<FileFilter>,
     choices: Option<Vec<Choice>>,
     current_name: Option<String>,
     current_folder: Option<FilePath>,
-    current_filename: Option<FilePath>,
+    #[zvariant(rename = "current_file")]
+    current_file: Option<FilePath>,
 }
 
 #[derive(DeserializeDict, Type, Debug, Default)]
@@ -85,7 +85,7 @@ struct SaveFilesOptions {
     modal: Option<bool>,
     choices: Option<Vec<Choice>>,
     current_folder: Option<FilePath>,
-    files: Vec<FilePath>,
+    files: Option<Vec<FilePath>>,
 }
 
 #[derive(SerializeDict, Type, Debug, Default)]
@@ -181,7 +181,7 @@ impl FileChooser {
     ) -> Response<SaveFileResults> {
         let res = FileChooserUi {
             title,
-            multiple: options.multiple.unwrap_or(false),
+            multiple: false,
             accept_label: options.accept_label,
             modal: options.modal.unwrap_or(true),
             directory: false,
@@ -189,7 +189,7 @@ impl FileChooser {
             current_filter: options.current_filter.map(map_filter),
             current_name: options.current_name,
             current_folder: options.current_folder.map(map_cstr),
-            current_filename: options.current_filename.map(map_cstr),
+            current_filename: options.current_file.map(map_cstr),
             choices: options.choices.map(map_choices),
             save: true,
             parent_window,
@@ -217,7 +217,8 @@ impl FileChooser {
         title: String,
         options: SaveFilesOptions,
     ) -> Result<SaveFilesResults, SaveFilesError> {
-        for file in &options.files {
+        let files = options.files.as_ref().map(|v| v.as_slice()).unwrap_or(&[]);
+        for file in files {
             let file = Path::new(&file.0);
             // none of the following can be used securely with the current UI
             if file.is_absolute() {
@@ -261,7 +262,7 @@ impl FileChooser {
             .to_file_path()
             .map_err(|_| SaveFilesError::SelectedNotValidPath)?;
         let mut uris = vec![];
-        for file in &options.files {
+        for file in files {
             let mut path = base.join(&file.0);
             if path.exists() {
                 let (prefix, dot, suffix) = match file.0.split_once('.') {

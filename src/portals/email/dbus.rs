@@ -19,12 +19,14 @@ impl Email {
 #[derive(DeserializeDict, Type, Debug, Default)]
 #[zvariant(signature = "dict")]
 struct ComposeEmailOptions {
+    address: Option<String>,
     addresses: Option<Vec<String>>,
     cc: Option<Vec<String>>,
     bcc: Option<Vec<String>>,
     subject: Option<String>,
     body: Option<String>,
     attachments: Option<Vec<String>>,
+    activation_token: Option<String>,
 }
 
 #[derive(SerializeDict, Type, Debug, Default)]
@@ -51,9 +53,15 @@ impl Email {
 
 fn build_mailto_url(options: &ComposeEmailOptions) -> String {
     let mut url = String::from("mailto:");
-    
+    let mut all_addresses = Vec::new();
+    if let Some(address) = &options.address {
+        all_addresses.push(address.clone());
+    }
     if let Some(addresses) = &options.addresses {
-        url.push_str(&addresses.join(","));
+        all_addresses.extend(addresses.iter().cloned());
+    }
+    if !all_addresses.is_empty() {
+        url.push_str(&all_addresses.join(","));
     }
     
     url.push('?');
@@ -124,10 +132,11 @@ mod tests {
     #[test]
     fn test_compose_url_multiple_addresses() {
         let options = ComposeEmailOptions {
+            address: Some("single@example.com".to_string()),
             addresses: Some(vec!["foo@example.com".to_string(), "bar@example.com".to_string()]),
             ..Default::default()
         };
-        assert_eq!(build_mailto_url(&options), "mailto:foo@example.com,bar@example.com");
+        assert_eq!(build_mailto_url(&options), "mailto:single@example.com,foo@example.com,bar@example.com");
     }
 
     #[test]

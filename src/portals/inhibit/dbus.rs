@@ -15,9 +15,7 @@ struct InhibitOptions {
     reason: Option<String>,
 }
 
-#[derive(DeserializeDict, Type, Debug, Default)]
-#[zvariant(signature = "dict")]
-struct CreateMonitorOptions {}
+
 
 #[zbus::proxy(
     interface = "org.freedesktop.ScreenSaver",
@@ -173,7 +171,6 @@ impl Inhibit {
         session_handle: String,
         _app_id: String,
         _window: String,
-        _options: CreateMonitorOptions,
         #[zbus(object_server)] server: &ObjectServer,
     ) -> zbus::fdo::Result<u32> {
         let session = Session::new(session_handle.clone());
@@ -190,8 +187,6 @@ impl Inhibit {
     async fn query_end_response(
         &self,
         _session_handle: OwnedObjectPath,
-        _response: u32,
-        _options: HashMap<String, Value<'_>>,
     ) {
         log::debug!("query_end_response called");
     }

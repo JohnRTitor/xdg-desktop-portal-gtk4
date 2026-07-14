@@ -91,11 +91,17 @@ impl Account {
         .await;
 
         match res {
-            Ok(res) => Response::success(UserInformation {
-                id: res.user_name,
-                name: res.real_name,
-                image: res.image,
-            }),
+            Ok(res) => {
+                let mut image_uri = res.image;
+                if image_uri.starts_with('/') {
+                    image_uri = format!("file://{}", image_uri);
+                }
+                Response::success(UserInformation {
+                    id: res.user_name,
+                    name: res.real_name,
+                    image: image_uri,
+                })
+            }
             Err(e) => {
                 log::error!("GetUserInformation failed: {}", anyhow::Error::new(e));
                 Response::cancelled()
