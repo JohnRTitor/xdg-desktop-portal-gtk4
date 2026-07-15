@@ -1,5 +1,5 @@
 pkgname=xdg-desktop-portal-gtk4
-pkgver=0.1.0
+pkgver=1.2.0
 pkgrel=1
 pkgdesc="A portal backend for xdg-desktop-portal using GTK4"
 arch=('x86_64')
