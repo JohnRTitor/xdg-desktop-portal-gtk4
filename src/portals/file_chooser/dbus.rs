@@ -1,6 +1,8 @@
 use {
-    super::gui as file_chooser,
-    super::gui::{ChoiceVariant, FileChooserError, FileChooserUi, Filter, FilterKind, FinalChoice},
+    super::{
+        gui as file_chooser,
+        gui::{ChoiceVariant, FileChooserError, FileChooserUi, Filter, FilterKind, FinalChoice},
+    },
     crate::{
         core::{request::run_request, response::Response},
         gui::UiProxy,
@@ -425,8 +427,7 @@ fn map_final_choice(c: FinalChoice) -> (String, String) {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use zbus::zvariant::Type;
+    use {super::*, zbus::zvariant::Type};
 
     #[test]
     fn test_map_filter_glob() {

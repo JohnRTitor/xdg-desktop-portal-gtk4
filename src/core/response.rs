@@ -21,9 +21,7 @@ impl<T: Type> Response<T> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use serde::Serialize;
-    use zbus::zvariant::Type;
+    use {super::*, serde::Serialize, zbus::zvariant::Type};
 
     #[derive(Serialize, Type, Default)]
     #[zvariant(signature = "u")]

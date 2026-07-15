@@ -1,11 +1,13 @@
-use crate::{gui::UiProxy, utils::external_window::set_wayland_parent};
-use async_channel::{Receiver, Sender};
-use gtk4::{
-    Box as GtkBox, Image, Label, ListBox, ListBoxRow, Orientation, ResponseType, ScrolledWindow,
-    Widget, gio::AppInfo, glib::MainContext, prelude::*,
+use {
+    crate::{gui::UiProxy, utils::external_window::set_wayland_parent},
+    async_channel::{Receiver, Sender},
+    gtk4::{
+        Box as GtkBox, Image, Label, ListBox, ListBoxRow, Orientation, ResponseType,
+        ScrolledWindow, Widget, gio::AppInfo, glib::MainContext, prelude::*,
+    },
+    rust_i18n::t,
+    thiserror::Error,
 };
-use rust_i18n::t;
-use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum AppChooserError {

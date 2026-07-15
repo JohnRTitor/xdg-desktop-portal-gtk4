@@ -1,9 +1,9 @@
 use {
     gtk4::gio::{Settings, SettingsSchemaSource, prelude::SettingsExt},
     std::collections::HashMap,
-    zbus::object_server::SignalEmitter,
     zbus::{
         interface,
+        object_server::SignalEmitter,
         zvariant::{OwnedValue, Value},
     },
 };

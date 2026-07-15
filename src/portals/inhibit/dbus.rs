@@ -1,9 +1,7 @@
 use {
     crate::core::session::Session,
     futures_util::stream::StreamExt,
-    std::collections::HashMap,
-    std::str::FromStr,
-    std::sync::Mutex,
+    std::{collections::HashMap, str::FromStr, sync::Mutex},
     zbus::{
         Connection, ObjectServer, interface,
         object_server::SignalEmitter,

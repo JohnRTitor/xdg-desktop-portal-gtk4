@@ -1,5 +1,7 @@
-use clap::Parser;
-use xdg_desktop_portal_gtk4::{core::Portal, gui::Ui, logging};
+use {
+    clap::Parser,
+    xdg_desktop_portal_gtk4::{core::Portal, gui::Ui, logging},
+};
 
 /// The xdg-desktop-portal-gtk4 portal.
 #[derive(Parser, Debug)]

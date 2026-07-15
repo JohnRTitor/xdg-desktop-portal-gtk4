@@ -1,14 +1,15 @@
-use crate::{gui::UiProxy, utils::external_window::set_wayland_parent};
-use async_channel::{Receiver, Sender};
-use gtk4::{
-    Box as GtkBox, CheckButton, Label, ListBox, ListBoxRow, Orientation, ResponseType,
-    ScrolledWindow, Widget, glib::MainContext, prelude::*,
+use {
+    crate::{gui::UiProxy, utils::external_window::set_wayland_parent},
+    async_channel::{Receiver, Sender},
+    gtk4::{
+        Box as GtkBox, CheckButton, Label, ListBox, ListBoxRow, Orientation, ResponseType,
+        ScrolledWindow, Widget, glib::MainContext, prelude::*,
+    },
+    rust_i18n::t,
+    std::{collections::HashMap, rc::Rc},
+    thiserror::Error,
+    zbus::zvariant::OwnedValue,
 };
-use rust_i18n::t;
-use std::collections::HashMap;
-use std::rc::Rc;
-use thiserror::Error;
-use zbus::zvariant::OwnedValue;
 
 #[derive(Debug, Error)]
 pub enum UsbError {
@@ -72,11 +73,7 @@ impl UsbUi {
         content_area.set_margin_end(12);
         content_area.set_spacing(12);
 
-        let label_text = format!(
-            "{} {}",
-            self.app_id,
-            t!("wants_to_access_usb_devices")
-        );
+        let label_text = format!("{} {}", self.app_id, t!("wants_to_access_usb_devices"));
         let label = Label::builder().label(&label_text).wrap(true).build();
         content_area.append(&label);
 

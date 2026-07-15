@@ -1,11 +1,15 @@
-use super::gui::{UsbDevice, UsbError, UsbUi};
-use crate::{
-    core::{request::run_request, response::Response},
-    gui::UiProxy,
+use {
+    super::gui::{UsbDevice, UsbError, UsbUi},
+    crate::{
+        core::{request::run_request, response::Response},
+        gui::UiProxy,
+    },
+    std::collections::HashMap,
+    zbus::{
+        interface,
+        zvariant::{OwnedObjectPath, OwnedValue, SerializeDict, Type},
+    },
 };
-use std::collections::HashMap;
-use zbus::interface;
-use zbus::zvariant::{OwnedObjectPath, OwnedValue, SerializeDict, Type};
 
 #[derive(SerializeDict, Type, Debug, Default)]
 #[zvariant(signature = "dict")]
@@ -135,8 +139,7 @@ impl UsbPortal {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use zbus::zvariant::Type;
+    use {super::*, zbus::zvariant::Type};
 
     #[test]
     fn test_parse_udev_basic() {

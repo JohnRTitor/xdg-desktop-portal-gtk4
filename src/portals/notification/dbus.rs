@@ -1,7 +1,6 @@
 use {
     futures_util::stream::StreamExt,
-    std::str::FromStr,
-    std::{collections::HashMap, sync::Mutex},
+    std::{collections::HashMap, str::FromStr, sync::Mutex},
     zbus::{
         Connection, ObjectServer, interface,
         object_server::SignalEmitter,
@@ -303,8 +302,7 @@ async fn listen_for_notification_closed(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use zbus::zvariant::Type;
+    use {super::*, zbus::zvariant::Type};
 
     #[test]
     fn test_get_key() {

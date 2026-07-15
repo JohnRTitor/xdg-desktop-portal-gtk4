@@ -1,13 +1,16 @@
-use super::gui::{AppChooserError, AppChooserUi};
-use crate::{
-    core::{request::run_request, response::Response},
-    gui::UiProxy,
+use {
+    super::gui::{AppChooserError, AppChooserUi},
+    crate::{
+        core::{request::run_request, response::Response},
+        gui::UiProxy,
+    },
+    async_channel::Sender,
+    std::{collections::HashMap, sync::Mutex},
+    zbus::{
+        interface,
+        zvariant::{DeserializeDict, OwnedObjectPath, SerializeDict, Type},
+    },
 };
-use async_channel::Sender;
-use std::collections::HashMap;
-use std::sync::Mutex;
-use zbus::interface;
-use zbus::zvariant::{DeserializeDict, OwnedObjectPath, SerializeDict, Type};
 
 #[derive(DeserializeDict, Type, Debug)]
 #[zvariant(signature = "dict")]

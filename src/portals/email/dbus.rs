@@ -136,8 +136,7 @@ impl Email {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use zbus::zvariant::Type;
+    use {super::*, zbus::zvariant::Type};
 
     #[test]
     fn test_compose_url_basic() {

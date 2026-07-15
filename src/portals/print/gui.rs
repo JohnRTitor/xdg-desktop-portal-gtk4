@@ -6,8 +6,7 @@ use {
         glib::MainContext,
         prelude::{Cast, DialogExt, GtkWindowExt, WidgetExt},
     },
-    std::cell::RefCell,
-    std::collections::HashMap,
+    std::{cell::RefCell, collections::HashMap},
     thiserror::Error,
     zbus::zvariant::OwnedValue,
 };

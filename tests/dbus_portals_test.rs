@@ -1,8 +1,10 @@
-use std::collections::HashMap;
-use zbus::{
-    connection::Builder,
-    proxy,
-    zvariant::{OwnedObjectPath, OwnedValue, Value},
+use {
+    std::collections::HashMap,
+    zbus::{
+        connection::Builder,
+        proxy,
+        zvariant::{OwnedObjectPath, OwnedValue, Value},
+    },
 };
 macro_rules! skip_if_dbus_tests_disabled {
     () => {
