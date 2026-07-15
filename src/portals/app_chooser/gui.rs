@@ -105,7 +105,6 @@ impl AppChooserUi {
             ok_button_clone.set_sensitive(row.is_some());
         });
 
-        let dummy_parent_clone = dummy_parent.clone();
         let list_box_clone = list_box.clone();
         dialog.connect_response(move |d, r| {
             let res = match r {
@@ -127,7 +126,7 @@ impl AppChooserUi {
             };
             let _ = send.send_blocking(res);
             d.close();
-            dummy_parent_clone.destroy();
+            dummy_parent.destroy();
         });
 
         if let Some(w) = dialog.upcast_ref::<Widget>().downcast_ref::<gtk4::Window>() {

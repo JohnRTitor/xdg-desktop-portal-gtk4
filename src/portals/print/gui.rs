@@ -68,7 +68,6 @@ impl PrintUi {
         dialog.upcast_ref::<Widget>().realize();
         set_wayland_parent(dialog.upcast_ref::<Widget>(), &self.parent_window);
 
-        let dummy_parent_clone = dummy_parent.clone();
         dialog.connect_response(move |d, r| {
             let res = match r {
                 ResponseType::Ok => {
@@ -131,7 +130,7 @@ impl PrintUi {
             };
             let _ = send.send_blocking(res);
             d.close();
-            dummy_parent_clone.destroy();
+            dummy_parent.destroy();
         });
 
         dialog.show();

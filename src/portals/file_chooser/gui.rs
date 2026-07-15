@@ -170,10 +170,6 @@ impl FileChooserUi {
         context.spawn_local(async move {
             let _ = close_on_close.recv().await;
             dialog.close();
-            // We do not call dummy_parent.destroy() here because close_on_close usually happens
-            // from portal cancellation, which might trigger response or we could just destroy it:
-            // But wait, dummy_parent was moved to the connect_response closure.
-            // So we need to clone dummy_parent if we use it here.
         });
     }
 
