@@ -1,33 +1,12 @@
-Activities: गतिविधियां
-C_reate: बनाएं (_r)
-Cancel: रद्द करें
-Choose an application to open the file “%s”.: फाइल “%s” को खोलने के लिए एक अनुप्रयोग चुनें।
-Choose an application.: एक अनुप्रयोग चुनें।
-Clear: साफ करे
-Create Application: अनुप्रयोग बनाएं
-Create Web Application: वेब अनुप्रयोग बनाएं
-Deny Access: पहुंच अस्वीकारें
-Failed to load image file: छवि फाइल लोड करने में विफल
-Failed to start Software: सॉफ्टवेयर प्रारंभ करने में विफल
-Grant Access: पहुंच स्वीकारें
-Images: छवियां
-Make changes before sharing the information: जानकारी साझा करने से पहले बदलाव करें
-No Apps available: कोई ऐप उपलब्ध नहीं है
-No suitable app installed. You can find more applications in Software.: कोई उपयुक्त ऐप स्थापित नहीं है। आप 'सॉफ्टवेयर' में और अनुप्रयोग पा सकते हैं।
-Open With…: इससे खोलें…
-Open files read-only: फाइलें केवल-पढ़ने के लिए खोलें
-Portal: पोर्टल
-Requested setting not found: अनुरोधित सेटिंग नहीं मिली
-Select: चुनें
-Select an Image: एक छवि चुनें
-Set: निर्धारित करें
-Set Background: पृष्ठभूमि निर्धारित करें
-Share Details: जानकारी साझा करें
-Share your personal information with %s?: '%s के साथ अपनी व्यक्तिगत जानकारी साझा करें?'
-Share your personal information with the requesting application?: अनुरोध करने वाले अनुप्रयोग के साथ अपनी व्यक्तिगत जानकारी साझा करें?
-_Cancel: रद्द करें (_C)
-_Find More in Software: '''सॉफ्टवेयर'' में अधिक पाएं (_F)'
-_Open: खोलें (_O)
-_Save: सहेजें (_S)
-_Select: चुनें (_S)
-_Share: साझा करें (_S)
+cancel_action: रद्द करें
+choose_an_application: एक अनुप्रयोग चुनें।
+create_action: बनाएं (_r)
+create_web_application: वेब अनुप्रयोग बनाएं
+deny_access_action: पहुंच अस्वीकारें
+grant_access_action: पहुंच स्वीकारें
+open_action: खोलें (_O)
+open_files_read_only: फाइलें केवल-पढ़ने के लिए खोलें
+save_action: सहेजें (_S)
+select_application_to_open_file: फाइल “%s” को खोलने के लिए एक अनुप्रयोग चुनें।
+share_action: साझा करें (_S)
+share_information: जानकारी साझा करें

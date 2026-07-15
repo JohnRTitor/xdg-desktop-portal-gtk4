@@ -1,32 +1,12 @@
-Activities: アクティビティ
-C_reate: 作成(_R)
-Cancel: キャンセル
-Choose an application to open the file “%s”.: “%s”を開くアプリケーションを選択してください。
-Choose an application.: アプリケーションを選択してください。
-Clear: クリア
-Create Application: アプリケーションを作成
-Create Web Application: Web アプリケーションを作成
-Deny Access: アクセスを拒否
-Failed to load image file: 画像ファイルの読み込みに失敗しました
-Failed to start Software: “ソフトウェア”の起動に失敗しました
-Grant Access: アクセスを許可
-Images: 画像
-Make changes before sharing the information: 情報の共有前に変更を加える
-No Apps available: 利用可能なアプリなし
-Open With…: 次で開く…
-Open files read-only: 読み取り専用でファイルを開く
-Portal: ポータル
-Requested setting not found: 要求された設定が見つかりませんでした
-Select: 選択
-Select an Image: 画像を選択
-Set: 設定
-Set Background: 背景を設定
-Share Details: 共有の詳細
-Share your personal information with %s?: あなたの個人情報を %s で共有しますか?
-Share your personal information with the requesting application?: あなたの個人情報を、要求しているアプリケーションで共有しますか?
-_Cancel: キャンセル(_C)
-_Find More in Software: “ソフトウェア”で探す(_F)
-_Open: 開く(_O)
-_Save: 保存(_S)
-_Select: 選択(_S)
-_Share: 共有(_S)
+cancel_action: キャンセル
+choose_an_application: アプリケーションを選択してください。
+create_action: 作成(_R)
+create_web_application: Web アプリケーションを作成
+deny_access_action: アクセスを拒否
+grant_access_action: アクセスを許可
+open_action: 開く(_O)
+open_files_read_only: 読み取り専用でファイルを開く
+save_action: 保存(_S)
+select_application_to_open_file: “%s”を開くアプリケーションを選択してください。
+share_action: 共有(_S)
+share_information: 共有の詳細

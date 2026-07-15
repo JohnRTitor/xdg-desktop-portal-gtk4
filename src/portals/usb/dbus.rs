@@ -78,8 +78,8 @@ impl UsbPortal {
 
             parsed_devices.push(UsbDevice {
                 id,
-                title: model.unwrap_or_else(|| rust_i18n::t!("Unknown device").to_string()),
-                subtitle: vendor.unwrap_or_else(|| rust_i18n::t!("Unknown vendor").to_string()),
+                title: model.unwrap_or_else(|| rust_i18n::t!("unknown_device").to_string()),
+                subtitle: vendor.unwrap_or_else(|| rust_i18n::t!("unknown_vendor").to_string()),
                 serial,
                 access_options,
             });

@@ -1,61 +1,11 @@
-Activities: Activiteiten
-Allow: Toestaan
-Background activity: Achtergrondactiviteit
-Cancel: Annuleren
-Choose an application to open the file “%s”.: Kies een toepassing om ‘%s’ mee te openen.
-Choose an application.: Kies een toepassing.
-Clear: Wissen
-Deny Access: Toegang weigeren
-Effects: Effecten
-Entire Screen: Gehele scherm
-Failed to load image file: Het bestand kan niet worden geladen
-Failed to start Software: GNOME Software kan niet worden gestart
-Find out more: Meer informatie
-Force quit: Gedwongen afsluiten
-Grab after a _delay of: Vastleggen na een wachttij_d van
-Grab the current _window: Huidige venster _vastleggen
-Grab the whole sc_reen: Gehele sche_rm vastleggen
-Grant Access: Toegang verlenen
-Images: Afbeeldingen
-Include _pointer: Cursor _tonen
-Include the window _border: Vensterrand t_onen
-Keyboard: Toetsenbord
-Make changes before sharing the information: Maak aanpassingen alvorens te delen
-No Apps available: Er zijn geen toepassingen beschikbaar
-Open With…: Openen met…
-Open files read-only: Bestanden openen als alleen-lezen
-Pointer: Cursor
-Portal: Portaal
-Remote desktop: Extern bureaublad
-Requested setting not found: De opgevraagde instelling bestaat niet
-Screen Share: Schermdeling
-Screenshot: Schermfoto
-Select: Kiezen
-Select _area to grab: V_astleggebied selecteren
-Select an Image: Kies een afbeelding
-Select devices to share with %s: Kies de apparaten die u wilt delen met %s
-Select devices to share with the requesting application: Kies de apparaten die u wilt delen met de toepassing in kwestie
-Select monitor to share with %s: Kies het beeldscherm dat u wilt delen met %s
-Select monitor to share with the requesting application: Kies het beeldscherm dat u wilt delen met de toepassing in kwestie
-Select window to share with %s: Kies het venster dat u wilt delen met %s
-Select window to share with the requesting application: Kies het venster dat u wilt delen met de toepassing in kwestie
-Set: Instellen
-Set Background: Achtergrond instellen
-Share Details: Gegevens delen
-Share this screenshot with %s?: Wilt u deze schermfoto delen met %s?
-Share this screenshot with the requesting application?: Wilt u deze schermfoto delen met de toepassing in kwestie?
-Share your personal information with %s?: Wilt u persoonlijke gegevens delen met %s?
-Share your personal information with the requesting application?: Wilt u persoonlijke gegevens delen met de toepassing in kwestie?
-Single Window: Venster
-Take Screenshot: Schermfoto maken
-Take _Screenshot: _Schermfoto maken
-Touch screen: Touchscreen
-_Cancel: _Annuleren
-_Find More in Software: Zoeken in GNOME So_ftware
-_Open: _Openen
-_Options…: _Opties…
-_Save: Op_slaan
-_Select: _Kiezen
-_Share: _Delen
-seconds: seconden
-“%s” is running in the background: ‘%s’ wordt uitgevoerd op de achtergrond
+allow_action: Toestaan
+cancel_action: Annuleren
+choose_an_application: Kies een toepassing.
+deny_access_action: Toegang weigeren
+grant_access_action: Toegang verlenen
+open_action: _Openen
+open_files_read_only: Bestanden openen als alleen-lezen
+save_action: Op_slaan
+select_application_to_open_file: Kies een toepassing om ‘%s’ mee te openen.
+share_action: _Delen
+share_information: Gegevens delen

@@ -57,7 +57,7 @@ impl AppChooser {
         let ui = AppChooserUi {
             app_id,
             parent_window,
-            title: rust_i18n::t!("Choose an application").to_string(),
+            title: rust_i18n::t!("choose_an_application").to_string(),
             choices,
             filename: options.filename,
             content_type: options.content_type,

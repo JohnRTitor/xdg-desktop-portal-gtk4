@@ -60,8 +60,8 @@ impl AppChooserUi {
             .transient_for(&dummy_parent)
             .build();
 
-        dialog.add_button(&t!("_Cancel"), ResponseType::Cancel);
-        let ok_button = dialog.add_button(&t!("_Open"), ResponseType::Ok);
+        dialog.add_button(&t!("cancel_action"), ResponseType::Cancel);
+        let ok_button = dialog.add_button(&t!("open_action"), ResponseType::Ok);
         ok_button.set_sensitive(false);
 
         let content_area = dialog.content_area();
@@ -72,9 +72,9 @@ impl AppChooserUi {
         content_area.set_spacing(12);
 
         let label_text = if let Some(ref filename) = self.filename {
-            format!("{} {}", t!("Select an application to open"), filename)
+            format!("{} {}", t!("select_application_to_open"), filename)
         } else {
-            t!("Select an application to open the file").to_string()
+            t!("select_application_to_open_file").to_string()
         };
         let label = Label::new(Some(&label_text));
         content_area.append(&label);

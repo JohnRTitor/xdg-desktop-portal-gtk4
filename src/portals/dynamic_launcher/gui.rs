@@ -50,7 +50,7 @@ impl DynamicLauncherUi {
         context: MainContext,
         close_on_close: Receiver<()>,
     ) {
-        let title = t!("Create Web Application");
+        let title = t!("create_web_application");
         let subtitle = format!("{} wants to create a web application.", self.app_id);
 
         let dialog = MessageDialog::new(
@@ -63,8 +63,8 @@ impl DynamicLauncherUi {
 
         dialog.format_secondary_text(Some(&subtitle));
 
-        dialog.add_button(&t!("_Cancel"), ResponseType::Cancel);
-        dialog.add_button(&t!("_Create"), ResponseType::Ok);
+        dialog.add_button(&t!("cancel_action"), ResponseType::Cancel);
+        dialog.add_button(&t!("create_action"), ResponseType::Ok);
 
         if let Ok(area) = dialog.message_area().downcast::<gtk4::Box>() {
             let hbox = gtk4::Box::new(gtk4::Orientation::Horizontal, 12);
@@ -90,7 +90,7 @@ impl DynamicLauncherUi {
             let vbox = gtk4::Box::new(gtk4::Orientation::Vertical, 6);
             hbox.append(&vbox);
 
-            let name_label = Label::new(Some(&t!("Name")));
+            let name_label = Label::new(Some(&t!("name")));
             name_label.set_halign(gtk4::Align::Start);
             vbox.append(&name_label);
 

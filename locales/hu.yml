@@ -1,32 +1,12 @@
-Activities: Tevékenységek
-C_reate: Lét_rehozás
-Cancel: Mégse
-Choose an application to open the file “%s”.: Válasszon egy alkalmazást a(z) „%s” fájl megnyitásához.
-Choose an application.: Válasszon egy alkalmazást.
-Clear: Törlés
-Create Application: Alkalmazás létrehozása
-Create Web Application: Webalkalmazás létrehozása
-Deny Access: Hozzáférés megtagadása
-Failed to load image file: A képfájl betöltése sikertelen
-Failed to start Software: Nem sikerült elindítani a Szoftvert
-Grant Access: Hozzáférés megadása
-Images: Képek
-Make changes before sharing the information: Megváltoztatás az információk megosztása előtt
-No Apps available: Nem érhetők el alkalmazások
-Open With…: Megnyitás ezzel…
-Open files read-only: Fájlok megnyitása csak olvasásra
-Portal: Portál
-Requested setting not found: A kért beállítás nem található
-Select: Kiválasztás
-Select an Image: Válasszon képet
-Set: Beállítás
-Set Background: Háttérkép beállítása
-Share Details: Részletek megosztása
-Share your personal information with %s?: 'Megosztja a személyes információit ezzel: %s?'
-Share your personal information with the requesting application?: Megosztja a személyes információit a kérelmező alkalmazással?
-_Cancel: _Mégse
-_Find More in Software: _Továbbiak keresése a Szoftverben
-_Open: _Megnyitás
-_Save: _Mentés
-_Select: _Kiválasztás
-_Share: Meg_osztás
+cancel_action: Mégse
+choose_an_application: Válasszon egy alkalmazást.
+create_action: Lét_rehozás
+create_web_application: Webalkalmazás létrehozása
+deny_access_action: Hozzáférés megtagadása
+grant_access_action: Hozzáférés megadása
+open_action: _Megnyitás
+open_files_read_only: Fájlok megnyitása csak olvasásra
+save_action: _Mentés
+select_application_to_open_file: Válasszon egy alkalmazást a(z) „%s” fájl megnyitásához.
+share_action: Meg_osztás
+share_information: Részletek megosztása

@@ -1,64 +1,13 @@
-Activities: Aktiviteter
-Allow: Tillåt
-Background activity: Bakgrundsaktivitet
-C_reate: S_kapa
-Cancel: Avbryt
-Choose an application to open the file “%s”.: Välj ett program för att öppna filen ”%s”.
-Choose an application.: Välj ett program.
-Clear: Rensa
-Create Application: Skapa program
-Create Web Application: Skapa webbapplikation
-Deny Access: Neka åtkomst
-Effects: Effekter
-Entire Screen: Hela skärmen
-Failed to load image file: Misslyckades med att läsa in bildfil
-Failed to start Software: Misslyckades med att starta Programvara
-Find out more: Lär dig mer
-Force quit: Tvinga avslut
-Grab after a _delay of: Fånga _efter fördröjning av
-Grab the current _window: Fånga aktuellt _fönster
-Grab the whole sc_reen: Fånga hela sk_ärmen
-Grant Access: Bevilja åtkomst
-Images: Bilder
-Include _pointer: Inkludera _pekare
-Include the window _border: Inkludera fönster_ramen
-Keyboard: Tangentbord
-Make changes before sharing the information: Ändra informationen innan den delas
-No Apps available: Inga program tillgängliga
-Open With…: Öppna med…
-Open files read-only: Öppna filer som skrivskyddade
-Pointer: Pekare
-Portal: Portal
-Remote desktop: Fjärrskrivbord
-Requested setting not found: Begärd inställning hittades inte
-Screen Share: Skärmdelning
-Screenshot: Skärmbild
-Select: Välj
-Select _area to grab: Välj _område att fånga
-Select an Image: Välj en bild
-Select devices to share with %s: Välj enheter att dela med %s
-Select devices to share with the requesting application: Välj enheter att dela med programmet
-Select monitor to share with %s: Välj bildskärm att dela med %s
-Select monitor to share with the requesting application: Välj vilken bildskärm du vill dela med programmet
-Select window to share with %s: Välj fönster att dela med %s
-Select window to share with the requesting application: Välj vilket fönster du vill dela med programmet
-Set: Ställ in
-Set Background: Ställ in bakgrund
-Share Details: Dela detaljer
-Share this screenshot with %s?: Dela denna skärmbild med %s?
-Share this screenshot with the requesting application?: Dela denna skärmbild med programmet som begär den?
-Share your personal information with %s?: Dela din personliga information med %s?
-Share your personal information with the requesting application?: Dela din personliga information med programmet som begär den?
-Single Window: Ett fönster
-Take Screenshot: Ta en skärmbild
-Take _Screenshot: Ta en _skärmbild
-Touch screen: Pekskärm
-_Cancel: _Avbryt
-_Find More in Software: _Hitta fler i Programvara
-_Open: _Öppna
-_Options…: _Alternativ…
-_Save: _Spara
-_Select: _Välj
-_Share: _Dela
-seconds: sekunder
-“%s” is running in the background: ”%s” körs i bakgrunden
+allow_action: Tillåt
+cancel_action: Avbryt
+choose_an_application: Välj ett program.
+create_action: S_kapa
+create_web_application: Skapa webbapplikation
+deny_access_action: Neka åtkomst
+grant_access_action: Bevilja åtkomst
+open_action: _Öppna
+open_files_read_only: Öppna filer som skrivskyddade
+save_action: _Spara
+select_application_to_open_file: Välj ett program för att öppna filen ”%s”.
+share_action: _Dela
+share_information: Dela detaljer

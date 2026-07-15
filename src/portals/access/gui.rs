@@ -86,10 +86,10 @@ impl AccessUi {
 
         let deny_label = self
             .deny_label
-            .unwrap_or_else(|| t!("_Deny Access").to_string());
+            .unwrap_or_else(|| t!("deny_access_action").to_string());
         let grant_label = self
             .grant_label
-            .unwrap_or_else(|| t!("_Grant Access").to_string());
+            .unwrap_or_else(|| t!("grant_access_action").to_string());
 
         dialog.add_button(&deny_label, ResponseType::Cancel);
         dialog.add_button(&grant_label, ResponseType::Ok);

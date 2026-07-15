@@ -51,15 +51,15 @@ impl AccountUi {
         context: MainContext,
         close_on_close: Receiver<()>,
     ) {
-        let title = t!("Share Information");
+        let title = t!("share_information");
         let subtitle = if let Some(reason) = &self.reason {
             format!(
                 "{} ({})",
-                t!("An application wants to access your information"),
+                t!("application_wants_to_access_information"),
                 reason
             )
         } else {
-            t!("An application wants to access your information").to_string()
+            t!("application_wants_to_access_information").to_string()
         };
 
         let dialog = MessageDialog::new(
@@ -72,8 +72,8 @@ impl AccountUi {
 
         dialog.format_secondary_text(Some(&subtitle));
 
-        dialog.add_button(&t!("_Deny"), ResponseType::Cancel);
-        dialog.add_button(&t!("_Share"), ResponseType::Ok);
+        dialog.add_button(&t!("deny_action"), ResponseType::Cancel);
+        dialog.add_button(&t!("share_action"), ResponseType::Ok);
 
         if let Ok(area) = dialog.message_area().downcast::<gtk4::Box>() {
             let hbox = gtk4::Box::new(gtk4::Orientation::Horizontal, 12);

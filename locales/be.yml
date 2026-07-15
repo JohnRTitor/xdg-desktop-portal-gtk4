@@ -1,61 +1,11 @@
-Activities: Дзейнасць
-Allow: Дазволіць
-Background activity: Фонавая актыўнасць
-Cancel: Скасаваць
-Choose an application to open the file “%s”.: Выберыце праграму, каб адкрыць файл «%s».
-Choose an application.: Выберыце праграму.
-Clear: Ачысціць
-Deny Access: Забараніць доступ
-Effects: Эфекты
-Entire Screen: Увесь экран
-Failed to load image file: Не ўдалося загрузіць выяву
-Failed to start Software: Не ўдалося запусціць кіраўнік праграмнага забеспячэнне
-Find out more: Даведацца больш
-Force quit: Прымусова завяршыць
-Grab after a _delay of: Затрымка перад _здымкай
-Grab the current _window: Здымка бягучага _акна
-Grab the whole sc_reen: Здымка ўсяго _экрана
-Grant Access: Дазволіць доступ
-Images: Выявы
-Include _pointer: Улучыць _указальнік мышы
-Include the window _border: Улучыць _мяжу акна
-Keyboard: Клавіятура
-Make changes before sharing the information: Унясіце змены, перш чым даць доступ да інфармацыі
-No Apps available: Няма даступных праграм
-Open With…: Адкрыць праз…
-Open files read-only: Адкрыць файлы ў рэжыме толькі для чытання
-Pointer: Указальнік
-Portal: Партал
-Remote desktop: Аддалены працоўны стол
-Requested setting not found: Запытаная налада не знойдзена
-Screen Share: Доступ да экрана
-Screenshot: Здымак экрана
-Select: Выбраць
-Select _area to grab: Вылучыце _вобласць здымкі
-Select an Image: Выберыце выяву
-Select devices to share with %s: Выберыце прылады, да якіх будзе доступ у %s
-Select devices to share with the requesting application: Выберыце прылады, да якіх будзе доступ у праграмы
-Select monitor to share with %s: Выберыце манітор, да якога будзе доступ у %s
-Select monitor to share with the requesting application: Выберыце манітор, да якога будзе доступ у праграмы
-Select window to share with %s: Выберыце акно, да якога будзе доступ у %s
-Select window to share with the requesting application: Выберыце акно, да якога будзе доступ у праграмы
-Set: Задаць
-Set Background: Задаць як фон
-Share Details: Падрабязнасці
-Share this screenshot with %s?: Даць доступ да здымкаў для %s?
-Share this screenshot with the requesting application?: Даць доступ да здымкаў для праграмы?
-Share your personal information with %s?: Даць доступ да персанальнай інфармацыі для %s?
-Share your personal information with the requesting application?: Даць доступ да персанальнай інфармацыі для праграмы?
-Single Window: Асобнае акно
-Take Screenshot: Зрабіць здымак экрана
-Take _Screenshot: Зрабіць _здымак экрана
-Touch screen: Сэнсарны экран
-_Cancel: _Скасаваць
-_Find More in Software: _Шукаць у кіраўніку праграмнага забеспячэнне
-_Open: _Адкрыць
-_Options…: _Параметры…
-_Save: _Захаваць
-_Select: _Выбраць
-_Share: _Даць доступ
-seconds: секунд
-“%s” is running in the background: «%s» выконваецца ў фонавым рэжыме
+allow_action: Дазволіць
+cancel_action: Скасаваць
+choose_an_application: Выберыце праграму.
+deny_access_action: Забараніць доступ
+grant_access_action: Дазволіць доступ
+open_action: _Адкрыць
+open_files_read_only: Адкрыць файлы ў рэжыме толькі для чытання
+save_action: _Захаваць
+select_application_to_open_file: Выберыце праграму, каб адкрыць файл «%s».
+share_action: _Даць доступ
+share_information: Падрабязнасці

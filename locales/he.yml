@@ -1,33 +1,12 @@
-Activities: פעילויות
-C_reate: י_צירה
-Cancel: ביטול
-Choose an application to open the file “%s”.: נא לבחור יישום לפתיחת הקובץ „%s”.
-Choose an application.: בחירת יישום.
-Clear: ניקוי
-Create Application: יצירת יישום
-Create Web Application: יצירת יישום רשת
-Deny Access: מניעת גישה
-Failed to load image file: טעינת קובץ התמונה נכשלה
-Failed to start Software: הפעלת תכנה נכשלה
-Grant Access: הענקת גישה
-Images: תמונות
-Make changes before sharing the information: ביצוע שינויים לפני שיתוף המידע
-No Apps available: אין יישומים זמינים
-No suitable app installed. You can find more applications in Software.: לא מותקן יישום מתאים. ניתן למצוא יישומים נוספים בתכנה.
-Open With…: פתיחה באמצעות…
-Open files read-only: פתיחת קבצים לקריאה בלבד
-Portal: שער
-Requested setting not found: ההגדרה המבוקשת לא נמצאה
-Select: בחירה
-Select an Image: בחירת תמונה
-Set: הגדרה
-Set Background: הגדרת רקע
-Share Details: שיתוף פרטים
-Share your personal information with %s?: לשתף את המידע האישי שלך עם %s?
-Share your personal information with the requesting application?: לשתף את המידע האישי שלך עם היישומים הדורשים זאת?
-_Cancel: _ביטול
-_Find More in Software: _איתור נוספים בתכנה
-_Open: _פתיחה
-_Save: _שמירה
-_Select: _בחירה
-_Share: _שיתוף
+cancel_action: ביטול
+choose_an_application: בחירת יישום.
+create_action: י_צירה
+create_web_application: יצירת יישום רשת
+deny_access_action: מניעת גישה
+grant_access_action: הענקת גישה
+open_action: _פתיחה
+open_files_read_only: פתיחת קבצים לקריאה בלבד
+save_action: _שמירה
+select_application_to_open_file: נא לבחור יישום לפתיחת הקובץ „%s”.
+share_action: _שיתוף
+share_information: שיתוף פרטים

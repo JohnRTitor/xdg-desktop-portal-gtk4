@@ -1,58 +1,11 @@
-Activities: Діяльність
-Allow: Дозволити
-Background activity: Фонова робота
-Cancel: Скасувати
-Choose an application to open the file “%s”.: Виберіть програму для відкриття файла «%s».
-Choose an application.: Виберіть програму.
-Clear: Спорожнити
-Deny Access: Заборонити доступ
-Effects: Ефекти
-Entire Screen: Увесь екран
-Failed to load image file: Не вдалося завантажити файл зображення
-Failed to start Software: Не вдалося запустити «Програмні засоби»
-Find out more: Дізнатися більше
-Force quit: Примусове завершення роботи
-Grab after a _delay of: Захопити із з_атримкою у
-Grab the current _window: Захопити поточне _вікно
-Grab the whole sc_reen: Захопити увесь е_кран
-Grant Access: Надати доступ
-Images: Образи
-Include _pointer: Разом із в_казівником
-Include the window _border: Включити _рамку вікна
-Keyboard: Клавіатура
-Make changes before sharing the information: Внести зміни до оприлюднення даних
-No Apps available: Немає доступних програм
-Open With…: Відкрити за допомогою…
-Open files read-only: Відкрити файли лише для читання
-Pointer: Координатний пристрій
-Portal: Портал
-Remote desktop: Віддалена стільниця
-Requested setting not found: Потрібного вам параметра не знайдено
-Screen Share: Оприлюднення екрана
-Screenshot: Знімок екрана
-Select: Вибрати
-Select _area to grab: Вибрати _область для захоплення
-Select an Image: Виберіть образ
-Select devices to share with %s: Виберіть пристрої, які слід оприлюднити для %s
-Select monitor to share with %s: Виберіть монітор, дані з якого слід оприлюднити для %s
-Select window to share with %s: Виберіть вікно, дані з якого слід оприлюднити для %s
-Set: Встановити
-Set Background: Встановити тло
-Share Details: Оприлюднити подробиці
-Share this screenshot with %s?: Оприлюднити цей знімок екрана за допомогою %s?
-Share this screenshot with the requesting application?: Оприлюднити цей знімок екрана за допомогою відповідної програми?
-Share your personal information with %s?: Поділитися вашими особистими даними з %s?
-Share your personal information with the requesting application?: Поділитися вашими особистими даними з програмою, яка про це просить?
-Single Window: Окреме вікно
-Take Screenshot: Зробити знімок екрана
-Take _Screenshot: З_робити знімок екрана
-Touch screen: Сенсорна панель
-_Cancel: _Скасувати
-_Find More in Software: З_найти інші у програмі «Програмні засоби»
-_Open: _Відкрити
-_Options…: П_араметри…
-_Save: _Зберегти
-_Select: _Вибрати
-_Share: _Оприлюднити
-seconds: секунд
-“%s” is running in the background: «%s» працює у фоновому режимі
+allow_action: Дозволити
+cancel_action: Скасувати
+choose_an_application: Виберіть програму.
+deny_access_action: Заборонити доступ
+grant_access_action: Надати доступ
+open_action: _Відкрити
+open_files_read_only: Відкрити файли лише для читання
+save_action: _Зберегти
+select_application_to_open_file: Виберіть програму для відкриття файла «%s».
+share_action: _Оприлюднити
+share_information: Оприлюднити подробиці

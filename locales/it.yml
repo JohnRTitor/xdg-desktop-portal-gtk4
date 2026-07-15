@@ -1,57 +1,11 @@
-Activities: Attività
-Allow: Consenti
-Background activity: Attività sullo sfondo
-Cancel: Annulla
-Choose an application to open the file “%s”.: Scegliere un'applicazione per aprire il file «%s».
-Choose an application.: Scegliere un'applicazione.
-Clear: Azzera
-Deny Access: Nega accesso
-Effects: Effetti
-Entire Screen: Schermo intero
-Failed to load image file: Caricamento immagine non riuscito
-Failed to start Software: Avvio di «Software» non riuscito
-Find out more: Maggiori informazioni
-Force quit: Uscita forzata
-Grab after a _delay of: C_attura dopo un ritardo di
-Grab the current _window: Cattura la _finestra corrente
-Grab the whole sc_reen: Cattura l'intero sc_hermo
-Grant Access: Consenti accesso
-Images: Immagini
-Include _pointer: Includere il _puntatore
-Include the window _border: Includere il _bordo finestra
-Keyboard: Tastiera
-Make changes before sharing the information: Applica modifiche prima di condividere
-No Apps available: Nessuna app disponibile
-Open With…: Apri con…
-Open files read-only: Apri file in sola-lettura
-Pointer: Puntatore
-Portal: Portale
-Remote desktop: Desktop remoto
-Requested setting not found: Impostazione richiesta non trovata
-Screen Share: Condivisione dello schermo
-Screenshot: Schermata
-Select: Seleziona
-Select _area to grab: Seleziona l'_area da catturare
-Select an Image: Seleziona una immagine
-Select devices to share with %s: Selezionare i dispositivi da condividere con %s
-Select monitor to share with %s: Selezionare la schermata da condividere con %s
-Select window to share with %s: Selezionare la finestra da condividere con %s
-Set: Imposta
-Set Background: Imposta sfondo
-Share Details: Dettagli
-Share this screenshot with %s?: Condividere questa schermata con %s?
-Share this screenshot with the requesting application?: Condividere questa schermata con l'applicazione che la richiede?
-Share your personal information with %s?: Condividere le proprie informazioni personali con %s?
-Single Window: Finestra singola
-Take Screenshot: Cattura schermata
-Take _Screenshot: Cattura _schermata
-Touch screen: Schermo tattile
-_Cancel: A_nnulla
-_Find More in Software: _Trova in Software
-_Open: A_pri
-_Options…: Op_zioni…
-_Save: _Salva
-_Select: _Seleziona
-_Share: Co_ndividi
-seconds: secondi
-“%s” is running in the background: «%s» è in esecuzione sullo sfondo
+allow_action: Consenti
+cancel_action: Annulla
+choose_an_application: Scegliere un'applicazione.
+deny_access_action: Nega accesso
+grant_access_action: Consenti accesso
+open_action: A_pri
+open_files_read_only: Apri file in sola-lettura
+save_action: _Salva
+select_application_to_open_file: Scegliere un'applicazione per aprire il file «%s».
+share_action: Co_ndividi
+share_information: Dettagli

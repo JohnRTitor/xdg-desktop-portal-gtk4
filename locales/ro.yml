@@ -1,32 +1,12 @@
-Activities: Activități
-C_reate: C_reează
-Cancel: Anulează
-Choose an application to open the file “%s”.: Alegeți o aplicație pentru a deschide fișierul „%s”.
-Choose an application.: Alegeți o aplicație.
-Clear: Șterge
-Create Application: Creează o aplicație
-Create Web Application: Creează o aplicație web
-Deny Access: Refuză accesul
-Failed to load image file: Încărcarea fișierului imagine a eșuat
-Failed to start Software: Eșec la lansarea programului «Aplicații»
-Grant Access: Acordă accesul
-Images: Imagini
-Make changes before sharing the information: Faceți modificări înainte de a partaja informațiile
-No Apps available: Nu există aplicații disponibile
-Open With…: Deschide cu…
-Open files read-only: Deschide fișiere numai-pentru-citire
-Portal: Portal
-Requested setting not found: Configurația solicitată nu a fost găsită
-Select: Selectează
-Select an Image: Selectează o imagine
-Set: Stabilește
-Set Background: Stabilește fundalul
-Share Details: Partajare detalii
-Share your personal information with %s?: Partajați informațiile dvs. personale cu %s?
-Share your personal information with the requesting application?: Partajați informațiile dvs. personale cu aplicația care le solicită?
-_Cancel: _Anulare
-_Find More in Software: _Găsiți mai multe în «Aplicații»
-_Open: _Deschide
-_Save: _Salvează
-_Select: _Selectează
-_Share: _Partajare
+cancel_action: Anulează
+choose_an_application: Alegeți o aplicație.
+create_action: C_reează
+create_web_application: Creează o aplicație web
+deny_access_action: Refuză accesul
+grant_access_action: Acordă accesul
+open_action: _Deschide
+open_files_read_only: Deschide fișiere numai-pentru-citire
+save_action: _Salvează
+select_application_to_open_file: Alegeți o aplicație pentru a deschide fișierul „%s”.
+share_action: _Partajare
+share_information: Partajare detalii

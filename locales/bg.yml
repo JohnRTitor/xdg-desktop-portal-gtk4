@@ -1,33 +1,12 @@
-Activities: Дейности
-C_reate: _Създаване
-Cancel: Отказване
-Choose an application to open the file “%s”.: Избор на програма за отваряне на „%s“.
-Choose an application.: Изберете програма.
-Clear: Изчистване
-Create Application: Създаване на програма
-Create Web Application: Създаване на уеб програма
-Deny Access: Отказване на достъп
-Failed to load image file: Неуспешно зареждане на файла с изображение
-Failed to start Software: Приложението „Програми“ не може да се стартира
-Grant Access: Позволяване на достъп
-Images: Изображения
-Make changes before sharing the information: Направете промени, преди да споделите информацията
-No Apps available: Няма налични програми
-No suitable app installed. You can find more applications in Software.: Липсва подходяща програма. Може да потърсите приложение в „Програми“.
-Open With…: Отваряне с…
-Open files read-only: Отваряне на файловете само за четене
-Portal: Портал
-Requested setting not found: Поисканата настройка липсва
-Select: Избор
-Select an Image: Избор на изображение
-Set: Задаване
-Set Background: Задаване на фон
-Share Details: Споделяне на подробностите
-Share your personal information with %s?: Да се сподели ли личната ви информация с %s?
-Share your personal information with the requesting application?: Да се сподели ли личната ви информация с искащата това програма?
-_Cancel: _Отказване
-_Find More in Software: _Търсене на приложение в „Програми“
-_Open: _Отваряне
-_Save: _Запазване
-_Select: _Избор
-_Share: _Споделяне
+cancel_action: Отказване
+choose_an_application: Изберете програма.
+create_action: _Създаване
+create_web_application: Създаване на уеб програма
+deny_access_action: Отказване на достъп
+grant_access_action: Позволяване на достъп
+open_action: _Отваряне
+open_files_read_only: Отваряне на файловете само за четене
+save_action: _Запазване
+select_application_to_open_file: Избор на програма за отваряне на „%s“.
+share_action: _Споделяне
+share_information: Споделяне на подробностите

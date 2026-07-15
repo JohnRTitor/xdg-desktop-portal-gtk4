@@ -1,31 +1,12 @@
-Activities: Aktivitäten
-C_reate: E_rstellen
-Cancel: Abbrechen
-Choose an application to open the file “%s”.: Wählen Sie eine Anwendung zum Öffnen der Datei »%s«.
-Choose an application.: Eine Anwendung wählen.
-Clear: Löschen
-Create Application: Anwendung erstellen
-Create Web Application: Web-Anwendung erstellen
-Deny Access: Zugriff verweigern
-Failed to load image file: Bilddatei konnte nicht geladen werden
-Failed to start Software: Software konnte nicht gestartet werden
-Grant Access: Zugriff gewähren
-Images: Bilder
-Make changes before sharing the information: Änderungen vor der Freigabe der Informationen durchführen
-No Apps available: Keine Anwendungen verfügbar
-Open With…: Öffnen mit …
-Open files read-only: Dateien schreibgeschützt öffnen
-Portal: Portal
-Requested setting not found: Angeforderte Einstellung nicht gefunden
-Select: Auswählen
-Select an Image: Ein Bild auswählen
-Set: Festlegen
-Set Background: Hintergrund festlegen
-Share Details: Details freigeben
-Share your personal information with %s?: Möchten Sie Ihre persönlichen Daten mit %s teilen?
-_Cancel: Abbre_chen
-_Find More in Software: _Finden Sie mehr in Software
-_Open: _Öffnen
-_Save: _Speichern
-_Select: Au_swählen
-_Share: _Teilen
+cancel_action: Abbrechen
+choose_an_application: Eine Anwendung wählen.
+create_action: E_rstellen
+create_web_application: Web-Anwendung erstellen
+deny_access_action: Zugriff verweigern
+grant_access_action: Zugriff gewähren
+open_action: _Öffnen
+open_files_read_only: Dateien schreibgeschützt öffnen
+save_action: _Speichern
+select_application_to_open_file: Wählen Sie eine Anwendung zum Öffnen der Datei »%s«.
+share_action: _Teilen
+share_information: Details freigeben

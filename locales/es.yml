@@ -1,57 +1,11 @@
-Activities: Actividades
-Allow: Permitir
-Background activity: Actividad en segundo plano
-Cancel: Cancelar
-Choose an application to open the file “%s”.: Elija una aplicación para abrir el archivo «%s».
-Choose an application.: Elija una aplicación.
-Clear: Vaciar
-Deny Access: Denegar el acceso
-Effects: Efectos
-Entire Screen: Toda la pantalla
-Failed to load image file: Fallo al cargar el archivo de imagen
-Failed to start Software: No se pudo iniciar Software
-Find out more: Más información
-Force quit: Forzar la salida
-Grab after a _delay of: Capturar tras un _retardo de
-Grab the current _window: Capturar la _ventana actual
-Grab the whole sc_reen: Capturar _toda la pantalla
-Grant Access: Conceder el acceso
-Images: Imágenes
-Include _pointer: Incluir el _puntero
-Include the window _border: Incluir el _borde de la ventana
-Keyboard: Teclado
-Make changes before sharing the information: Realizar cambios antes de compartir la información
-No Apps available: No hay aplicaciones disponibles
-Open With…: Abrir con…
-Open files read-only: Abrir archivos de sólo lectura
-Pointer: Puntero
-Portal: Portal
-Remote desktop: Escritorio remoto
-Requested setting not found: No se ha encontrado la configuración solicitada
-Screen Share: Compartir pantalla
-Screenshot: Captura de pantalla
-Select: Seleccionar
-Select _area to grab: Seleccionar la _zona que capturar
-Select an Image: Seleccione una imagen
-Select devices to share with %s: Seleccione qué dispositivos compartir con %s
-Select devices to share with the requesting application: Seleccione qué dispositivos compartir con la aplicación solicitante
-Select monitor to share with %s: Seleccione el monitor que quiera compartir con %s
-Select window to share with %s: Seleccione la ventana que quiera compartir con %s
-Set: Establecer
-Set Background: Establecer el fondo
-Share Details: Compartir los datos
-Share this screenshot with %s?: ¿Quiere compartir esta captura de pantalla con %s?
-Share your personal information with %s?: ¿Quiere compartir su información personal con %s?
-Single Window: Ventana única
-Take Screenshot: Capturar la pantalla
-Take _Screenshot: Capturar la panta_lla
-Touch screen: Pantalla táctil
-_Cancel: _Cancelar
-_Find More in Software: _Encontrar más en Software
-_Open: _Abrir
-_Options…: _Opciones…
-_Save: _Guardar
-_Select: _Seleccionar
-_Share: Co_mpartir
-seconds: segundos
-“%s” is running in the background: «%s» se está ejecutando en segundo plano
+allow_action: Permitir
+cancel_action: Cancelar
+choose_an_application: Elija una aplicación.
+deny_access_action: Denegar el acceso
+grant_access_action: Conceder el acceso
+open_action: _Abrir
+open_files_read_only: Abrir archivos de sólo lectura
+save_action: _Guardar
+select_application_to_open_file: Elija una aplicación para abrir el archivo «%s».
+share_action: Co_mpartir
+share_information: Compartir los datos

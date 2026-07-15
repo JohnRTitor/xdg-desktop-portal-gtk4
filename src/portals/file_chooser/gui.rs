@@ -184,15 +184,15 @@ impl FileChooserUi {
             (false, _) => FileChooserAction::Open,
         };
         let accept_label = match self.save {
-            true => t!("_Save"),
-            false => t!("_Open"),
+            true => t!("save_action"),
+            false => t!("open_action"),
         };
         let buttons = [
             (
                 self.accept_label.as_deref().unwrap_or(&accept_label),
                 ResponseType::Ok,
             ),
-            (&t!("_Cancel"), ResponseType::Cancel),
+            (&t!("cancel_action"), ResponseType::Cancel),
         ];
         let dummy_parent = Window::new();
         let dialog = FileChooserDialog::new(
@@ -238,7 +238,7 @@ impl FileChooserUi {
             while choice_ids.contains(read_only_id.as_str()) {
                 read_only_id.push('_');
             }
-            dialog.add_choice_fixed(&read_only_id, t!("Open files read-only").as_ref(), &[]);
+            dialog.add_choice_fixed(&read_only_id, t!("open_files_read_only").as_ref(), &[]);
             dialog.set_choice(&read_only_id, "true");
         }
         if let Some(choices) = &self.choices {

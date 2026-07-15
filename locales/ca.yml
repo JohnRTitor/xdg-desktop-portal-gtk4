@@ -1,61 +1,13 @@
-Activities: Activitats
-Allow: Permet
-Background activity: Activitat en segon pla
-C_reate: C_rea
-Cancel: Cancel·la
-Choose an application to open the file “%s”.: Trieu una aplicació per a obrir el fitxer «%s».
-Choose an application.: Trieu una aplicació.
-Clear: Neteja
-Create Application: Crea una aplicació
-Create Web Application: Crea una aplicació web
-Deny Access: Denega l'accés
-Effects: Efectes
-Entire Screen: Tota la pantalla
-Failed to load image file: No s'ha pogut carregar la imatge
-Failed to start Software: Ha fallat en iniciar el programari
-Find out more: Troba'n més
-Force quit: Força la sortida
-Grab after a _delay of: _Captura després d'un retard de
-Grab the current _window: C_aptura la finestra actual
-Grab the whole sc_reen: _Captura tota la pantalla
-Grant Access: Permet l'accés
-Images: Imatges
-Include _pointer: _Inclou el punter
-Include the window _border: In_clou la vora de la finestra
-Keyboard: Teclat
-Make changes before sharing the information: Fer canvis abans de compartir la informació
-No Apps available: No hi ha cap app disponible
-Open With…: Obre amb…
-Open files read-only: Obre fitxers de només lectura
-Pointer: Punter
-Portal: Portal
-Remote desktop: Escriptori remot
-Requested setting not found: No s'ha trobat la configuració sol·licitada
-Screen Share: Compartició de pantalla
-Screenshot: Captura de pantalla
-Select: Selecciona
-Select _area to grab: _Selecciona l'àrea a capturar
-Select an Image: Seleccioneu una imatge
-Select devices to share with %s: Seleccioneu els dispositius a compartir amb %s
-Select devices to share with the requesting application: Seleccioneu els dispositius a compartir amb l'aplicació sol·licitant
-Select monitor to share with %s: Seleccioneu el monitor que voleu compartir amb %s
-Select window to share with %s: Seleccioneu la finestra a compartir amb %s
-Set: Estableix
-Set Background: Estableix el fons
-Share Details: Comparteix detalls
-Share this screenshot with %s?: Voleu compartir aquesta captura de pantalla amb %s?
-Share your personal information with %s?: Voleu compartir informació personal amb %s?
-Share your personal information with the requesting application?: Voleu compartir informació personal amb l'aplicació sol·licitant?
-Single Window: Una sola finestra
-Take Screenshot: Fes una captura de pantalla
-Take _Screenshot: _Fes una captura de pantalla
-Touch screen: Pantalla tàctil
-_Cancel: _Cancel·la
-_Find More in Software: _Cerca més a Programari
-_Open: _Obre
-_Options…: _Opcions…
-_Save: De_sa
-_Select: _Selecciona
-_Share: _Comparteix
-seconds: segons
-“%s” is running in the background: «%s» s'està executant en segon pla
+allow_action: Permet
+cancel_action: Cancel·la
+choose_an_application: Trieu una aplicació.
+create_action: C_rea
+create_web_application: Crea una aplicació web
+deny_access_action: Denega l'accés
+grant_access_action: Permet l'accés
+open_action: _Obre
+open_files_read_only: Obre fitxers de només lectura
+save_action: De_sa
+select_application_to_open_file: Trieu una aplicació per a obrir el fitxer «%s».
+share_action: _Comparteix
+share_information: Comparteix detalls

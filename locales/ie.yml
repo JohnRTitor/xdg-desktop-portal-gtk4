@@ -1,32 +1,12 @@
-Activities: Activitás
-C_reate: C_rear
-Cancel: Anullar
-Choose an application to open the file “%s”.: Selecte un application por aperter li file «%s».
-Choose an application.: Selecte un application.
-Clear: Vacuar
-Create Application: Crear un application
-Create Web Application: Crear un application web
-Deny Access: Refusar li accesse
-Failed to load image file: Ne successat cargar li file de image
-Failed to start Software: Ne successat lansar li Programmarium
-Grant Access: Permisser li accesse
-Images: Images
-Make changes before sharing the information: Far modificationes ante que partir li information
-No Apps available: Null applicationes disponibil
-Open With…: Aperter per…
-Open files read-only: Aperter files solmen por letion
-Portal: Portale
-Requested setting not found: Un besonat parametre ne esset trovat
-Select: Selecter
-Select an Image: Selecter un image
-Set: Assignar
-Set Background: Assignar quam li funde
-Share Details: Detallies de partite
-Share your personal information with %s?: Esque partir vor personal information con %s?
-Share your personal information with the requesting application?: Esque partir vor personal information con li demandant application?
-_Cancel: A_nullar
-_Find More in Software: _Trovar plu in li Programmarium
-_Open: _Aperter
-_Save: _Gardar
-_Select: _Selecter
-_Share: _Partir
+cancel_action: Anullar
+choose_an_application: Selecte un application.
+create_action: C_rear
+create_web_application: Crear un application web
+deny_access_action: Refusar li accesse
+grant_access_action: Permisser li accesse
+open_action: _Aperter
+open_files_read_only: Aperter files solmen por letion
+save_action: _Gardar
+select_application_to_open_file: Selecte un application por aperter li file «%s».
+share_action: _Partir
+share_information: Detallies de partite

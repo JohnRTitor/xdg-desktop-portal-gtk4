@@ -55,14 +55,14 @@ impl UsbUi {
         close_on_close: Receiver<()>,
     ) {
         let dialog = gtk4::Dialog::builder()
-            .title(t!("Allow USB Access").to_string())
+            .title(t!("allow_usb_access").to_string())
             .modal(true)
             .default_width(400)
             .default_height(400)
             .build();
 
-        dialog.add_button(&t!("_Cancel"), ResponseType::Cancel);
-        let ok_button = dialog.add_button(&t!("_Allow"), ResponseType::Ok);
+        dialog.add_button(&t!("cancel_action"), ResponseType::Cancel);
+        let ok_button = dialog.add_button(&t!("allow_action"), ResponseType::Ok);
         ok_button.set_sensitive(false);
 
         let content_area = dialog.content_area();
@@ -75,7 +75,7 @@ impl UsbUi {
         let label_text = format!(
             "{} {}",
             self.app_id,
-            t!("wants to access the following USB devices")
+            t!("wants_to_access_usb_devices")
         );
         let label = Label::builder().label(&label_text).wrap(true).build();
         content_area.append(&label);
