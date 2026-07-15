@@ -194,3 +194,120 @@ fn parse_icon(icon_v: &OwnedValue) -> (Option<String>, Option<Vec<u8>>) {
         _ => (None, None),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use {
+        super::*,
+        zbus::zvariant::{Structure, Value},
+    };
+
+    #[test]
+    fn test_parse_icon_string() {
+        let v = OwnedValue::try_from(Value::Str("my-icon".into())).unwrap();
+        let (name, data) = parse_icon(&v);
+        assert_eq!(name, Some("my-icon".to_string()));
+        assert_eq!(data, None);
+    }
+
+    #[test]
+    fn test_parse_icon_bytes() {
+        let v = OwnedValue::try_from(Value::from(("bytes", vec![1u8, 2, 3, 4]))).unwrap();
+        let (name, data) = parse_icon(&v);
+        assert_eq!(name, None);
+        assert_eq!(data, Some(vec![1, 2, 3, 4]));
+    }
+
+    #[test]
+    fn test_parse_icon_themed() {
+        let v = OwnedValue::try_from(Value::from(("themed", vec!["icon1", "icon2"]))).unwrap();
+        let (name, data) = parse_icon(&v);
+        assert_eq!(name, Some("icon1".to_string()));
+        assert_eq!(data, None);
+    }
+
+    #[test]
+    fn test_parse_icon_themed_empty() {
+        let empty_vec: Vec<String> = vec![];
+        let v = OwnedValue::try_from(Value::from(("themed", empty_vec))).unwrap();
+        let (name, data) = parse_icon(&v);
+        assert_eq!(name, None);
+        assert_eq!(data, None);
+    }
+
+    #[test]
+    fn test_parse_icon_invalid_structure() {
+        let type_val = Value::Str("unknown".into());
+        let dummy_val = Value::from(123);
+        let variant_val = Value::from(dummy_val);
+        let v = OwnedValue::try_from(Value::from((type_val, variant_val))).unwrap();
+        let (name, data) = parse_icon(&v);
+        assert_eq!(name, None);
+        assert_eq!(data, None);
+    }
+
+    #[test]
+    fn test_parse_icon_wrong_field_count() {
+        let type_val = Value::Str("bytes".into());
+        let v = OwnedValue::try_from(Value::from((type_val,))).unwrap();
+        let (name, data) = parse_icon(&v);
+        assert_eq!(name, None);
+        assert_eq!(data, None);
+    }
+
+    #[tokio::test]
+    async fn test_request_install_token_allowed() {
+        // We just create an empty MainContext for the UiProxy so we don't start GTK.
+        let proxy = UiProxy {
+            context: gtk4::glib::MainContext::default(),
+        };
+        let launcher = DynamicLauncher::new(&proxy);
+
+        assert_eq!(
+            launcher
+                .request_install_token(
+                    "org.gnome.Software".to_string(),
+                    RequestInstallTokenOptions::default()
+                )
+                .await,
+            0
+        );
+        assert_eq!(
+            launcher
+                .request_install_token(
+                    "org.kde.discover".to_string(),
+                    RequestInstallTokenOptions::default()
+                )
+                .await,
+            0
+        );
+    }
+
+    #[tokio::test]
+    async fn test_request_install_token_denied() {
+        let proxy = UiProxy {
+            context: gtk4::glib::MainContext::default(),
+        };
+        let launcher = DynamicLauncher::new(&proxy);
+
+        assert_eq!(
+            launcher
+                .request_install_token(
+                    "com.example.App".to_string(),
+                    RequestInstallTokenOptions::default()
+                )
+                .await,
+            2
+        );
+    }
+
+    #[test]
+    fn test_dynamic_launcher_properties() {
+        let proxy = UiProxy {
+            context: gtk4::glib::MainContext::default(),
+        };
+        let launcher = DynamicLauncher::new(&proxy);
+        assert_eq!(launcher.supported_launcher_types(), 3);
+        assert_eq!(launcher.version(), 1);
+    }
+}

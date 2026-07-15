@@ -159,3 +159,28 @@ impl Print {
         .await
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use {super::*, zbus::zvariant::Type};
+
+    #[test]
+    fn test_prepare_print_options_signature() {
+        assert_eq!(PreparePrintOptions::SIGNATURE, "a{sv}");
+    }
+
+    #[test]
+    fn test_prepare_print_results_signature() {
+        assert_eq!(PreparePrintResults::SIGNATURE, "a{sv}");
+    }
+
+    #[test]
+    fn test_print_options_signature() {
+        assert_eq!(PrintOptions::SIGNATURE, "a{sv}");
+    }
+
+    #[test]
+    fn test_print_results_signature() {
+        assert_eq!(PrintResults::SIGNATURE, "a{sv}");
+    }
+}

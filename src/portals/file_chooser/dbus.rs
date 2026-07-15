@@ -509,4 +509,68 @@ mod tests {
     fn test_open_file_results_signature() {
         assert_eq!(OpenFileResults::SIGNATURE, "a{sv}");
     }
+
+    #[tokio::test]
+    async fn test_save_files_validation_absolute_path() {
+        let proxy = crate::gui::UiProxy {
+            context: gtk4::glib::MainContext::default(),
+        };
+        let chooser = FileChooser::new(&proxy);
+        let options = SaveFilesOptions {
+            files: Some(vec![FilePath("/absolute/path".into())]),
+            ..Default::default()
+        };
+        let res = chooser
+            .try_save_files_impl("app_id".into(), "".into(), "".into(), options)
+            .await;
+        assert!(matches!(res, Err(SaveFilesError::AbsolutePath)));
+    }
+
+    #[tokio::test]
+    async fn test_save_files_validation_multiple_components() {
+        let proxy = crate::gui::UiProxy {
+            context: gtk4::glib::MainContext::default(),
+        };
+        let chooser = FileChooser::new(&proxy);
+        let options = SaveFilesOptions {
+            files: Some(vec![FilePath("relative/path".into())]),
+            ..Default::default()
+        };
+        let res = chooser
+            .try_save_files_impl("app_id".into(), "".into(), "".into(), options)
+            .await;
+        assert!(matches!(res, Err(SaveFilesError::MultipleComponents)));
+    }
+
+    #[tokio::test]
+    async fn test_save_files_validation_special_path_dot() {
+        let proxy = crate::gui::UiProxy {
+            context: gtk4::glib::MainContext::default(),
+        };
+        let chooser = FileChooser::new(&proxy);
+        let options = SaveFilesOptions {
+            files: Some(vec![FilePath(".".into())]),
+            ..Default::default()
+        };
+        let res = chooser
+            .try_save_files_impl("app_id".into(), "".into(), "".into(), options)
+            .await;
+        assert!(matches!(res, Err(SaveFilesError::SpecialPath)));
+    }
+
+    #[tokio::test]
+    async fn test_save_files_validation_special_path_dot_dot() {
+        let proxy = crate::gui::UiProxy {
+            context: gtk4::glib::MainContext::default(),
+        };
+        let chooser = FileChooser::new(&proxy);
+        let options = SaveFilesOptions {
+            files: Some(vec![FilePath("..".into())]),
+            ..Default::default()
+        };
+        let res = chooser
+            .try_save_files_impl("app_id".into(), "".into(), "".into(), options)
+            .await;
+        assert!(matches!(res, Err(SaveFilesError::SpecialPath)));
+    }
 }

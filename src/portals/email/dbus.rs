@@ -206,6 +206,21 @@ mod tests {
     }
 
     #[test]
+    fn test_compose_url_attachments() {
+        let options = ComposeEmailOptions {
+            attachments: Some(vec![
+                "file:///tmp/doc.txt".to_string(),
+                "file:///tmp/image.png".to_string(),
+            ]),
+            ..Default::default()
+        };
+        assert_eq!(
+            build_mailto_url(&options),
+            "mailto:?attachment=file%3A%2F%2F%2Ftmp%2Fdoc.txt&attachment=file%3A%2F%2F%2Ftmp%2Fimage.png"
+        );
+    }
+
+    #[test]
     fn test_email_results_signature() {
         assert_eq!(EmailResults::SIGNATURE, "a{sv}");
     }

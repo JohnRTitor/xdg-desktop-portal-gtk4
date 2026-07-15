@@ -318,4 +318,15 @@ mod tests {
     fn test_portal_notification_signature() {
         assert_eq!(PortalNotification::SIGNATURE, "a{sv}");
     }
+
+    #[test]
+    fn test_notification_properties() {
+        let notification = Notification::new();
+        assert_eq!(notification.version(), 1);
+
+        let options = notification.supported_options();
+        assert!(options.contains_key("body"));
+        assert!(options.contains_key("icon"));
+        assert!(options.contains_key("default-action"));
+    }
 }

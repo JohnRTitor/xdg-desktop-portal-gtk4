@@ -121,3 +121,57 @@ impl AppChooser {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use {
+        super::*,
+        zbus::zvariant::{ObjectPath, Type},
+    };
+
+    #[test]
+    fn test_choose_application_options_signature() {
+        assert_eq!(ChooseApplicationOptions::SIGNATURE, "a{sv}");
+    }
+
+    #[test]
+    fn test_choose_application_results_signature() {
+        assert_eq!(ChooseApplicationResults::SIGNATURE, "a{sv}");
+    }
+
+    #[tokio::test]
+    async fn test_update_choices_sends_message() {
+        let proxy = UiProxy {
+            context: gtk4::glib::MainContext::default(),
+        };
+        let chooser = AppChooser::new(&proxy);
+        let (sender, receiver) = async_channel::bounded(1);
+
+        {
+            let mut lock = chooser.active_dialogs.lock().unwrap();
+            lock.insert("/test/handle".to_string(), sender);
+        }
+
+        let path = OwnedObjectPath::try_from("/test/handle").unwrap();
+        let choices = vec!["choice1".to_string(), "choice2".to_string()];
+
+        let res = chooser.update_choices(path, choices.clone()).await;
+        assert!(res.is_ok());
+
+        let received = receiver.try_recv().unwrap();
+        assert_eq!(received, choices);
+    }
+
+    #[tokio::test]
+    async fn test_update_choices_unknown_handle() {
+        let proxy = UiProxy {
+            context: gtk4::glib::MainContext::default(),
+        };
+        let chooser = AppChooser::new(&proxy);
+        let path = OwnedObjectPath::try_from("/unknown/handle").unwrap();
+
+        // Should succeed but do nothing
+        let res = chooser.update_choices(path, vec![]).await;
+        assert!(res.is_ok());
+    }
+}
