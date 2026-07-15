@@ -1,6 +1,7 @@
 project('xdg-desktop-portal-gtk4')
 
 prefix = get_option('prefix')
+bindir = prefix / get_option('bindir')
 datadir = prefix / get_option('datadir')
 libexecdir = prefix / get_option('libexecdir')
 dbus_service_dir = get_option('dbus-service-dir')
@@ -12,7 +13,11 @@ if systemd_userunit_dir == ''
   systemd_userunit_dir = prefix / 'lib' / 'systemd' / 'user'
 endif
 
-install_data('target/release/xdg-desktop-portal-gtk4', install_dir: libexecdir)
+install_symlink(
+  'xdg-desktop-portal-gtk4',
+  install_dir: libexecdir,
+  pointing_to: bindir / 'xdg-desktop-portal-gtk4',
+)
 install_data('data/gtk4.portal', install_dir: datadir / 'xdg-desktop-portal/portals')
 conf = configuration_data()
 conf.set('libexecdir', libexecdir)

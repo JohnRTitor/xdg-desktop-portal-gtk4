@@ -23,8 +23,15 @@ This project uses a custom `build.rs` script and `make` or similar standard tool
 # Build the binary
 cargo build --release
 
-# Note: Installation steps depend on your system. Usually you need to place the binary in /usr/libexec/ or /usr/lib/
-# and install the .service and .portal files to their respective directories.
+# Install the binary
+# Note: Installation steps depend on your system, but typically you install it to /usr/bin.
+# You can do this manually:
+sudo install -Dm755 target/release/xdg-desktop-portal-gtk4 /usr/bin/xdg-desktop-portal-gtk4
+
+# Configure and install the remaining data files (desktop, portal, systemd services) using Meson.
+# Meson will also set up a symlink in /usr/libexec pointing to the binary in /usr/bin.
+meson setup build -Dprefix=/usr
+sudo meson install -C build
 ```
 
 ### Nix / NixOS

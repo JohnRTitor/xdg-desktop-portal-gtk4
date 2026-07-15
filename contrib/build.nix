@@ -52,9 +52,6 @@ rustPlatform.buildRustPackage {
     "-Dsystemd-user-unit-dir=lib/systemd/user"
   ];
 
-  # We don't want cargo to install the binary to $out/bin, meson will install it to libexec
-  dontCargoInstall = true;
-
   nativeCheckInputs = lib.optionals withDbusTests [ dbus ];
 
   preCheck = lib.optionalString withDbusTests ''
@@ -67,19 +64,13 @@ rustPlatform.buildRustPackage {
     export PATH=$(pwd)/bin:$PATH
   '';
 
-  installPhase = ''
-    runHook preInstall
-
-    # Cargo might put the binary in target/<target-triple>/release/ depending on the host.
-    # meson.build strictly expects it in target/release/, so we link it there.
-    mkdir -p target/release
-    find target -type f -name xdg-desktop-portal-gtk4 -executable -exec ln -sf $(pwd)/{} target/release/xdg-desktop-portal-gtk4 \;
-
+  postInstall = ''
     # Let meson handle substituting templates and installing all files
+    # Note: mesonConfigurePhase cd's into the build directory
     mesonConfigurePhase
-    mesonInstallPhase
-
-    runHook postInstall
+    
+    # Run meson install directly to avoid mesonInstallPhase recursively triggering postInstall
+    meson install --no-rebuild
   '';
 
   meta = {
