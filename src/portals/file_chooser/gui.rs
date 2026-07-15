@@ -125,7 +125,15 @@ impl FileChooserUi {
                         .files()
                         .into_iter()
                         .filter_map(|f| f.ok().and_then(|f| f.downcast::<gtk4::gio::File>().ok()))
-                        .map(|f| f.uri().into())
+                        .map(|f| {
+                            let uri = f.uri();
+                            if !uri.starts_with("file://") {
+                                if let Some(path) = f.path() {
+                                    return gtk4::gio::File::for_path(path).uri().into();
+                                }
+                            }
+                            uri.into()
+                        })
                         .collect();
                     add_recent(&self.app_id, &files);
                     let filter = cf.take().and_then(|f| filters.get(&f).cloned());
