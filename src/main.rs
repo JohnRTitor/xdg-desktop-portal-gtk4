@@ -16,14 +16,14 @@ fn main() {
     init_i18n();
 
     let args = Cli::parse();
-    
+
     // We instantiate the UI state first, which sets up the GTK MainContext and channel receivers.
     // This allows us to pass a thread-safe Proxy to the D-Bus services.
     let ui = Ui::new();
-    
+
     // Initialize the D-Bus portal objects. We block on the GTK MainContext here
     // to ensure that name acquisition and object registration on D-Bus succeed
-    // *before* we start the GTK main loop. If we fail to acquire the name (e.g. 
+    // *before* we start the GTK main loop. If we fail to acquire the name (e.g.
     // another portal is running and `replace` is false), we exit immediately.
     let _portal = match ui
         .proxy()

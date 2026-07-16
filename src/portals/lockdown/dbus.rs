@@ -12,7 +12,7 @@ impl LockdownPortal {
 ///
 /// This portal allows system administrators or desktop environments to restrict
 /// certain features (like printing, saving files, or using devices) for sandboxed apps.
-/// 
+///
 /// Currently, this implementation defaults to allowing everything (returning `false` for all
 /// `disable-*` properties). A more complete implementation might read these settings from
 /// GSettings or a configuration file.

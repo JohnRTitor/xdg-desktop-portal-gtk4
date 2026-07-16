@@ -1,0 +1,14 @@
+use {
+    gdk4_wayland::WaylandToplevel,
+    gtk4::prelude::{Cast, IsA, NativeExt, WidgetExt},
+};
+
+pub fn set_wayland_parent(widget: &impl IsA<gtk4::Widget>, parent_window: &str) {
+    if let Some(surface) = widget.native().and_then(|n| n.surface()) {
+        if let Some(toplevel) = surface.downcast_ref::<WaylandToplevel>() {
+            toplevel.set_transient_for_exported(parent_window);
+        } else {
+            log::warn!("Tried to set Wayland parent, but surface is not WaylandToplevel");
+        }
+    }
+}

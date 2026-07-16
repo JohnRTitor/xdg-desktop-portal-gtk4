@@ -49,6 +49,7 @@ impl UsbPortal {
             HashMap<String, OwnedValue>,
             HashMap<String, OwnedValue>,
         )>,
+        options: HashMap<String, OwnedValue>,
     ) -> Response<UsbResults> {
         let mut parsed_devices = Vec::new();
         for (id, props, access_options) in devices_in {
@@ -90,9 +91,14 @@ impl UsbPortal {
             });
         }
 
+        let activation_token = options
+            .get("activation_token")
+            .and_then(|v| <&str>::try_from(v).ok())
+            .map(|s| s.to_string());
         let ui = UsbUi {
             app_id,
             parent_window,
+            activation_token,
             devices: parsed_devices,
         };
 
@@ -126,13 +132,13 @@ impl UsbPortal {
             HashMap<String, OwnedValue>,
             HashMap<String, OwnedValue>,
         )>,
-        _options: HashMap<String, OwnedValue>,
+        options: HashMap<String, OwnedValue>,
         #[zbus(object_server)] server: &zbus::ObjectServer,
     ) -> Response<UsbResults> {
         run_request(
             server,
             handle,
-            self.acquire_devices_impl(app_id, parent_window, devices),
+            self.acquire_devices_impl(app_id, parent_window, devices, options),
         )
         .await
     }

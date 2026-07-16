@@ -1,8 +1,6 @@
 use {
-    crate::{
-        gui::{UiError, UiProxy},
-        utils::file_chooser_ext::FileChooserExtManualFixed,
-    },
+    super::file_chooser_ext::FileChooserExtManualFixed,
+    crate::gui::{UiError, UiProxy},
     async_channel::{Receiver, Sender},
     gtk4::{
         FileChooserAction, FileChooserDialog, FileFilter, RecentData, RecentManager, ResponseType,
@@ -64,6 +62,7 @@ pub struct FileChooserUi {
     pub choices: Option<Vec<Choice>>,
     pub save: bool,
     pub parent_window: String,
+    pub activation_token: Option<String>,
     pub app_id: String,
 }
 
@@ -181,7 +180,7 @@ impl FileChooserUi {
             ),
             (&t!("cancel_action"), ResponseType::Cancel),
         ];
-        
+
         // We create a dummy invisible parent window for the FileChooserDialog.
         // This is a workaround because `FileChooserDialog` requires a transient parent
         // to behave correctly in some compositors, and we will export this dummy window
@@ -247,7 +246,11 @@ impl FileChooserUi {
                 dialog.set_choice(&choice.id, &choice.default);
             }
         }
-        crate::gui::setup_wayland(&dialog, &self.parent_window);
+        crate::gui::windowing::external_window::setup_window(
+            &dialog,
+            &self.parent_window,
+            self.activation_token.as_deref(),
+        );
         DialogData {
             dialog,
             read_only_choice: read_only_id,

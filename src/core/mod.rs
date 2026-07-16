@@ -40,7 +40,7 @@ pub struct Portal {
 
 impl Portal {
     /// Creates the D-Bus interfaces and attempts to acquire the portal name.
-    /// 
+    ///
     /// This method registers all specific portal implementations on the session bus.
     pub async fn create(proxy: &UiProxy, replace: bool) -> Result<Self, PortalError> {
         let session = Connection::session()

@@ -29,6 +29,7 @@ pub struct FinalChoice {
 pub struct AccessUi {
     pub app_id: String,
     pub parent_window: String,
+    pub activation_token: Option<String>,
     pub title: String,
     pub subtitle: String,
     pub body: String,
@@ -197,10 +198,14 @@ impl AccessUi {
         });
 
         // Bind the dialog to the calling application's window if running under Wayland.
-        crate::gui::setup_wayland(&window, &self.parent_window);
+        crate::gui::windowing::external_window::setup_window(
+            &window,
+            &self.parent_window,
+            self.activation_token.as_deref(),
+        );
 
         window.show();
-        
+
         // Spawn a background task to close the window if the D-Bus request is cancelled.
         // This task runs on the GTK MainContext, so it can safely manipulate the `window`.
         context.spawn_local(async move {

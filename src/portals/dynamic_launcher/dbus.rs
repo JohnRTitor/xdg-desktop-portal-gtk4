@@ -30,6 +30,7 @@ struct PrepareInstallOptions {
     target: Option<String>,
     editable_name: Option<bool>,
     editable_icon: Option<bool>,
+    pub activation_token: Option<String>,
 }
 
 #[derive(SerializeDict, Type, Debug)]
@@ -68,6 +69,7 @@ impl DynamicLauncher {
         let res = DynamicLauncherUi {
             app_id,
             parent_window,
+            activation_token: options.activation_token.clone(),
             name,
             editable_name: options.editable_name.unwrap_or(false),
             icon_name,
@@ -155,7 +157,7 @@ impl DynamicLauncher {
 }
 
 /// Parses the `icon_v` variant passed by the portal frontend.
-/// 
+///
 /// The portal specification allows the icon to be passed as a string (icon name),
 /// a byte array (serialized image data), or a themed icon struct.
 fn parse_icon(icon_v: &OwnedValue) -> (Option<String>, Option<Vec<u8>>) {

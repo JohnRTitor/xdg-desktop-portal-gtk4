@@ -64,6 +64,7 @@ impl AppChooser {
         let ui = AppChooserUi {
             app_id,
             parent_window,
+            activation_token: options.activation_token.clone(),
             title: rust_i18n::t!("choose_an_application").to_string(),
             choices,
             filename: options.filename,

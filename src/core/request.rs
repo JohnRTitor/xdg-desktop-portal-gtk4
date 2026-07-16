@@ -10,9 +10,9 @@ use {
 };
 
 /// Exports a `Request` object on D-Bus and waits for it to be closed.
-/// 
-/// The `xdg-desktop-portal` frontend creates a request path and expects the backend 
-/// (us) to export an object at that path. The frontend can then call `Close()` on 
+///
+/// The `xdg-desktop-portal` frontend creates a request path and expects the backend
+/// (us) to export an object at that path. The frontend can then call `Close()` on
 /// this object to cancel the request.
 async fn export_request(server: &ObjectServer, path: OwnedObjectPath) {
     let (send, recv) = async_channel::bounded(1);

@@ -45,7 +45,7 @@ impl SettingsPortal {
                     });
                 }
 
-                // The freedesktop appearance namespace defines cross-desktop standards for 
+                // The freedesktop appearance namespace defines cross-desktop standards for
                 // dark mode, high contrast, and reduced motion.
                 // We map GTK-specific setting keys to these standardized names.
                 if key_str == "color-scheme"
@@ -175,7 +175,7 @@ pub(crate) fn map_color_scheme(val: &str) -> u32 {
 
 /// The D-Bus interface implementation for `org.freedesktop.impl.portal.Settings`.
 ///
-/// This portal allows sandboxed applications to read system settings, such as 
+/// This portal allows sandboxed applications to read system settings, such as
 /// dark mode preferences, accessibility toggles, and font configurations.
 #[interface(name = "org.freedesktop.impl.portal.Settings")]
 impl SettingsPortal {

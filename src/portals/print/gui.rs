@@ -28,6 +28,7 @@ thread_local! {
 pub struct PrintUi {
     pub app_id: String,
     pub parent_window: String,
+    pub activation_token: Option<String>,
     pub title: String,
 }
 
@@ -57,7 +58,11 @@ impl PrintUi {
         let dialog = PrintUnixDialog::new(Some(&self.title), Some(&dummy_parent));
         dialog.set_modal(true);
 
-        crate::gui::setup_wayland(&dialog, &self.parent_window);
+        crate::gui::windowing::external_window::setup_window(
+            &dialog,
+            &self.parent_window,
+            self.activation_token.as_deref(),
+        );
 
         dialog.connect_response(move |d, r| {
             let res = match r {
@@ -93,7 +98,7 @@ impl PrintUi {
                     if let Some(printer) = printer {
                         let settings_obj = d.settings();
                         let page_setup_obj = d.page_setup();
-                        
+
                         // Generate a random token to identify this job in the subsequent `Print` call.
                         let token: u32 = rand::random();
                         PRINT_JOBS.with(|jobs| {

@@ -61,6 +61,7 @@ struct OpenFileOptions {
     current_filter: Option<FileFilter>,
     choices: Option<Vec<Choice>>,
     current_folder: Option<FilePath>,
+    pub activation_token: Option<String>,
 }
 
 #[derive(DeserializeDict, Type, Debug, Default)]
@@ -75,6 +76,7 @@ struct SaveFileOptions {
     current_folder: Option<FilePath>,
     #[zvariant(rename = "current_file")]
     current_file: Option<FilePath>,
+    pub activation_token: Option<String>,
 }
 
 #[derive(DeserializeDict, Type, Debug, Default)]
@@ -85,6 +87,7 @@ struct SaveFilesOptions {
     choices: Option<Vec<Choice>>,
     current_folder: Option<FilePath>,
     files: Option<Vec<FilePath>>,
+    pub activation_token: Option<String>,
 }
 
 #[derive(SerializeDict, Type, Debug, Default)]
@@ -153,6 +156,7 @@ impl FileChooser {
             choices: options.choices.map(map_choices),
             save: false,
             parent_window,
+            activation_token: options.activation_token.clone(),
             app_id,
         }
         .run(&self.proxy)
@@ -192,6 +196,7 @@ impl FileChooser {
             choices: options.choices.map(map_choices),
             save: true,
             parent_window,
+            activation_token: options.activation_token.clone(),
             app_id,
         }
         .run(&self.proxy)
@@ -217,7 +222,7 @@ impl FileChooser {
         options: SaveFilesOptions,
     ) -> Result<SaveFilesResults, SaveFilesError> {
         let files = options.files.as_ref().map(|v| v.as_slice()).unwrap_or(&[]);
-        
+
         // Security checks: The client provides paths to save, but we must ensure
         // they don't contain absolute paths or directory traversal attacks, because
         // we will combine these with a user-selected directory.
@@ -247,6 +252,7 @@ impl FileChooser {
             choices: options.choices.map(map_choices),
             save: true,
             parent_window,
+            activation_token: options.activation_token.clone(),
             app_id,
         }
         .run(&self.proxy)

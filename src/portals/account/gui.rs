@@ -13,6 +13,7 @@ use {
 pub struct AccountUi {
     pub app_id: String,
     pub parent_window: String,
+    pub activation_token: Option<String>,
     pub user_name: String,
     pub real_name: String,
     pub icon_file: String,
@@ -133,7 +134,11 @@ impl AccountUi {
             w_ok.close();
         });
 
-        crate::gui::setup_wayland(&window, &self.parent_window);
+        crate::gui::windowing::external_window::setup_window(
+            &window,
+            &self.parent_window,
+            self.activation_token.as_deref(),
+        );
 
         window.show();
         context.spawn_local(async move {

@@ -12,6 +12,7 @@ use {
 pub struct DynamicLauncherUi {
     pub app_id: String,
     pub parent_window: String,
+    pub activation_token: Option<String>,
     pub name: String,
     pub editable_name: bool,
     pub icon_name: Option<String>,
@@ -114,7 +115,11 @@ impl DynamicLauncherUi {
             w_ok.close();
         });
 
-        crate::gui::setup_wayland(&window, &self.parent_window);
+        crate::gui::windowing::external_window::setup_window(
+            &window,
+            &self.parent_window,
+            self.activation_token.as_deref(),
+        );
 
         window.show();
         context.spawn_local(async move {

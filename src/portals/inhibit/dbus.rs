@@ -70,7 +70,7 @@ impl Inhibit {
 
 /// The D-Bus interface implementation for `org.freedesktop.impl.portal.Inhibit`.
 ///
-/// This portal allows applications to inhibit session state changes like sleep, 
+/// This portal allows applications to inhibit session state changes like sleep,
 /// logout, or idle (screensaver) on behalf of the user. It also allows applications
 /// to monitor these states.
 #[interface(name = "org.freedesktop.impl.portal.Inhibit")]
@@ -145,7 +145,7 @@ impl Inhibit {
                 }
 
                 // If Idle is requested, try ScreenSaver as a fallback or in addition.
-                // Some desktop environments (like GNOME) don't fully honor logind idle locks 
+                // Some desktop environments (like GNOME) don't fully honor logind idle locks
                 // for screen blanking, so using the standard D-Bus ScreenSaver API is recommended.
                 if reason & 8 != 0 {
                     if let Ok(session_bus) = &session_bus_res {

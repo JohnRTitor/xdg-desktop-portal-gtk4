@@ -43,6 +43,7 @@ impl Account {
 #[zvariant(signature = "dict")]
 struct GetUserInformationOptions {
     reason: Option<String>,
+    pub activation_token: Option<String>,
 }
 
 #[derive(SerializeDict, Type, Debug, Default)]
@@ -65,6 +66,7 @@ impl Account {
         let res = AccountUi {
             app_id,
             parent_window,
+            activation_token: options.activation_token.clone(),
             user_name,
             real_name,
             icon_file,
@@ -120,7 +122,7 @@ impl Account {
 async fn fetch_user_data() -> zbus::Result<(String, String, String)> {
     // We assume the portal is running as the user invoking the application.
     let uid = unsafe { libc::getuid() };
-    
+
     // AccountsService exposes user objects at paths like `/org/freedesktop/Accounts/User1000`.
     let path = format!("/org/freedesktop/Accounts/User{}", uid);
     let obj_path = zbus::zvariant::ObjectPath::try_from(path)?;

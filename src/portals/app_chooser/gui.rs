@@ -11,6 +11,7 @@ use {
 pub struct AppChooserUi {
     pub app_id: String,
     pub parent_window: String,
+    pub activation_token: Option<String>,
     pub title: String,
     pub choices: Vec<String>,
     pub filename: Option<String>,
@@ -130,7 +131,11 @@ impl AppChooserUi {
             w_ok.close();
         });
 
-        crate::gui::setup_wayland(&window, &self.parent_window);
+        crate::gui::windowing::external_window::setup_window(
+            &window,
+            &self.parent_window,
+            self.activation_token.as_deref(),
+        );
 
         window.show();
         context.spawn_local(async move {

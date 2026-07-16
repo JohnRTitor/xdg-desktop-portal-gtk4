@@ -22,6 +22,7 @@ pub struct UsbDevice {
 pub struct UsbUi {
     pub app_id: String,
     pub parent_window: String,
+    pub activation_token: Option<String>,
     pub devices: Vec<UsbDevice>,
 }
 
@@ -154,7 +155,11 @@ impl UsbUi {
             w_ok.close();
         });
 
-        crate::gui::setup_wayland(&window, &self.parent_window);
+        crate::gui::windowing::external_window::setup_window(
+            &window,
+            &self.parent_window,
+            self.activation_token.as_deref(),
+        );
 
         window.show();
         context.spawn_local(async move {

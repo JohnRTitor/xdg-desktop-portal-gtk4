@@ -36,6 +36,7 @@ struct AccessDialogOptions {
     grant_label: Option<String>,
     icon: Option<String>,
     choices: Option<Vec<Choice>>,
+    pub activation_token: Option<String>,
 }
 
 #[derive(SerializeDict, Type, Debug, Default)]
@@ -79,6 +80,7 @@ impl Access {
         let res = AccessUi {
             app_id,
             parent_window,
+            activation_token: options.activation_token.clone(),
             title,
             subtitle,
             body,
@@ -106,7 +108,7 @@ impl Access {
 }
 
 /// The D-Bus interface implementation for `org.freedesktop.impl.portal.Access`.
-/// 
+///
 /// This portal is used by flatpak and other systems to request permissions from the user,
 /// such as accessing the camera, microphone, or location.
 #[interface(name = "org.freedesktop.impl.portal.Access")]

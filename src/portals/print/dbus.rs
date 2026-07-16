@@ -28,6 +28,7 @@ impl Print {
 struct PreparePrintOptions {
     modal: Option<bool>,
     accept_label: Option<String>,
+    pub activation_token: Option<String>,
 }
 
 #[derive(SerializeDict, Type, Debug, Default)]
@@ -48,6 +49,7 @@ struct PrintOptions {
     modal: Option<bool>,
     token: Option<u32>,
     supported_output_file_formats: Option<Vec<String>>,
+    pub activation_token: Option<String>,
 }
 
 #[derive(SerializeDict, Type, Debug, Default)]
@@ -62,11 +64,12 @@ impl Print {
         title: String,
         _settings: HashMap<String, Value<'_>>,
         _page_setup: HashMap<String, Value<'_>>,
-        _options: PreparePrintOptions,
+        options: PreparePrintOptions,
     ) -> Response<PreparePrintResults> {
         let res = PrintUi {
             app_id,
             parent_window,
+            activation_token: options.activation_token.clone(),
             title,
         }
         .run(&self.proxy)
