@@ -105,7 +105,18 @@ Then configure your portals (e.g. in `configuration.nix`):
 }
 ```
 
+## Acknowledgements
+
+This project was originally created by [mahkoh](https://github.com/mahkoh) as [mahkoh/xdg-desktop-portal-gtk4](https://github.com/mahkoh/xdg-desktop-portal-gtk4). I extend my sincere gratitude to them for laying the foundation of this work.
+
+I would also like to thank the KDE and GNOME communities for their respective portal implementations[^1][^2], which served as valuable references and inspiration for this project.
+1
+
 ## License
 
 xdg-desktop-portal-gtk4 is free software licensed under the GNU Lesser General Public
 License v2.1.
+
+[^1]: https://github.com/KDE/xdg-desktop-portal-kde
+
+[^2]: https://github.com/KDE/xdg-desktop-portal-kde
