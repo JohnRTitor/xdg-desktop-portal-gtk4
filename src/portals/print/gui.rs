@@ -63,6 +63,7 @@ impl PrintUi {
             self.activation_token.as_deref(),
         );
 
+        let context_for_closure = context.clone();
         dialog.connect_response(move |d, r| {
             let res = match r {
                 ResponseType::Ok => {
@@ -111,6 +112,15 @@ impl PrintUi {
                                     page_setup: page_setup_obj,
                                 },
                             );
+                        });
+
+                        let token_clone = token;
+                        let context_clone = context_for_closure.clone();
+                        context_clone.spawn_local(async move {
+                            gtk4::glib::timeout_future(std::time::Duration::from_secs(600)).await;
+                            PRINT_JOBS.with(|jobs| {
+                                jobs.borrow_mut().remove(&token_clone);
+                            });
                         });
 
                         Ok(PrintResult {

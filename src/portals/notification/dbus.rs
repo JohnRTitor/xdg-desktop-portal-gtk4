@@ -183,6 +183,7 @@ impl Notification {
 
         let reverse_map_clone = self.reverse_map.clone();
         let server_clone = server.clone();
+        let active_clone = self.active_notifications.clone();
 
         self.init_once.call_once(move || {
             let rm1 = reverse_map_clone.clone();
@@ -194,8 +195,9 @@ impl Notification {
             });
 
             let rm2 = reverse_map_clone.clone();
+            let act2 = active_clone.clone();
             gtk4::glib::MainContext::default().spawn(async move {
-                if let Err(e) = listen_for_notification_closed(rm2).await {
+                if let Err(e) = listen_for_notification_closed(rm2, act2).await {
                     log::error!(
                         "Notification closed listener failed: {}",
                         anyhow::Error::new(e)
@@ -293,6 +295,7 @@ async fn listen_for_action_invoked(
 
 async fn listen_for_notification_closed(
     reverse_map: std::sync::Arc<Mutex<HashMap<u32, (String, String, HashMap<String, OwnedValue>)>>>,
+    active_notifications: std::sync::Arc<Mutex<HashMap<String, u32>>>,
 ) -> zbus::Result<()> {
     let session_bus = Connection::session().await?;
     let proxy = NotificationsProxy::new(&session_bus).await?;
@@ -301,8 +304,21 @@ async fn listen_for_notification_closed(
     while let Some(signal) = stream.next().await {
         let args = signal.args()?;
         let id = args.id;
-        if let Ok(mut lock) = reverse_map.lock() {
-            lock.remove(&id);
+        
+        let removed_key = if let Ok(mut lock) = reverse_map.lock() {
+            if let Some((app_id, portal_id, _)) = lock.remove(&id) {
+                Some(Notification::get_key(&app_id, &portal_id))
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        
+        if let Some(key) = removed_key {
+            if let Ok(mut lock) = active_notifications.lock() {
+                lock.remove(&key);
+            }
         }
     }
     Ok(())

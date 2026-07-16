@@ -7,11 +7,12 @@ use zbus::interface;
 /// can also close it.
 pub struct Session {
     pub id: String,
+    pub on_close: Option<async_channel::Sender<String>>,
 }
 
 impl Session {
-    pub fn new(id: String) -> Self {
-        Self { id }
+    pub fn new(id: String, on_close: Option<async_channel::Sender<String>>) -> Self {
+        Self { id, on_close }
     }
 }
 
@@ -23,5 +24,8 @@ impl Session {
         // Currently, we only log the closure. Real implementations (if added later)
         // would need to clean up resources, close GTK dialogs, or stop screen recording.
         log::info!("Session {} closed", self.id);
+        if let Some(tx) = &self.on_close {
+            let _ = tx.send(self.id.clone()).await;
+        }
     }
 }

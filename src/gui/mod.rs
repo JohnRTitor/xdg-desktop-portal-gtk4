@@ -10,7 +10,7 @@ pub use {
 
 use {
     async_channel::{Receiver, Sender, bounded},
-    gtk4::{glib::MainContext, prelude::*},
+    gtk4::glib::MainContext,
 };
 
 /// Runs a closure on the GTK main thread and waits for its result.

@@ -3,7 +3,7 @@ use {
     async_channel::{Receiver, Sender},
     gtk4::{
         Button, CheckButton, Image, Label,
-        glib::MainContext,
+        glib::{MainContext, clone::Downgrade},
         prelude::{BoxExt, ButtonExt, CheckButtonExt, GtkWindowExt, WidgetExt},
     },
     rust_i18n::t,
@@ -161,14 +161,16 @@ impl AccessUi {
         });
 
         let send_deny = send.clone();
-        let w_deny = window.clone();
+        let w_deny = window.downgrade();
         deny_btn.connect_clicked(move |_| {
             let _ = send_deny.send_blocking(Err(UiError::Rejected));
-            w_deny.close();
+            if let Some(w) = w_deny.upgrade() {
+                w.close();
+            }
         });
 
         let send_grant = send.clone();
-        let w_grant = window.clone();
+        let w_grant = window.downgrade();
         grant_btn.connect_clicked(move |_| {
             let mut final_choices = None;
             if choices_cfg {
@@ -194,7 +196,9 @@ impl AccessUi {
                 final_choices = Some(fc);
             }
             let _ = send_grant.send_blocking(Ok(AccessResult { final_choices }));
-            w_grant.close();
+            if let Some(w) = w_grant.upgrade() {
+                w.close();
+            }
         });
 
         // Bind the dialog to the calling application's window if running under Wayland.

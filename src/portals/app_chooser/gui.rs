@@ -103,14 +103,16 @@ impl AppChooserUi {
         });
 
         let send_cancel = send.clone();
-        let w_cancel = window.clone();
+        let w_cancel = window.downgrade();
         cancel_button.connect_clicked(move |_| {
             let _ = send_cancel.send_blocking(Err(UiError::Rejected));
-            w_cancel.close();
+            if let Some(w) = w_cancel.upgrade() {
+                w.close();
+            }
         });
 
         let send_ok = send.clone();
-        let w_ok = window.clone();
+        let w_ok = window.downgrade();
         ok_button.connect_clicked(move |_| {
             let res = if let Some(row) = list_box_clone.selected_row() {
                 // If the user selected an app, generate a startup notification token.
@@ -128,7 +130,9 @@ impl AppChooserUi {
                 Err(UiError::Rejected)
             };
             let _ = send_ok.send_blocking(res);
-            w_ok.close();
+            if let Some(w) = w_ok.upgrade() {
+                w.close();
+            }
         });
 
         crate::gui::windowing::external_window::setup_window(

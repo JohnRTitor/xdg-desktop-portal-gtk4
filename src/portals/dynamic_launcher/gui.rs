@@ -3,7 +3,7 @@ use {
     async_channel::{Receiver, Sender},
     gtk4::{
         Button, Entry, Image, Label,
-        glib::MainContext,
+        glib::{MainContext, clone::Downgrade},
         prelude::{BoxExt, ButtonExt, EditableExt, GtkWindowExt, WidgetExt},
     },
     rust_i18n::t,
@@ -99,20 +99,24 @@ impl DynamicLauncherUi {
         });
 
         let send_cancel = send.clone();
-        let w_cancel = window.clone();
+        let w_cancel = window.downgrade();
         cancel_button.connect_clicked(move |_| {
             let _ = send_cancel.send_blocking(Err(UiError::Rejected));
-            w_cancel.close();
+            if let Some(w) = w_cancel.upgrade() {
+                w.close();
+            }
         });
 
         let send_ok = send.clone();
-        let w_ok = window.clone();
+        let w_ok = window.downgrade();
         ok_button.connect_clicked(move |_| {
             let res = Ok(DynamicLauncherResult {
                 name: name_entry.text().to_string(),
             });
             let _ = send_ok.send_blocking(res);
-            w_ok.close();
+            if let Some(w) = w_ok.upgrade() {
+                w.close();
+            }
         });
 
         crate::gui::windowing::external_window::setup_window(

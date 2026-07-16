@@ -193,15 +193,26 @@ impl Inhibit {
         _window: String,
         #[zbus(object_server)] server: &ObjectServer,
     ) -> zbus::fdo::Result<u32> {
-        let session = Session::new(session_handle.as_str().to_string());
+        let (tx, rx) = async_channel::unbounded();
+        let session = Session::new(session_handle.as_str().to_string(), Some(tx));
         if let Err(e) = server.at(session_handle.clone(), session).await {
             log::error!("Failed to export monitor session: {}", e);
             return Ok(2); // Returning 2 as general error for create_monitor according to xdp-gtk
         }
 
         if let Ok(mut lock) = self.active_monitors.lock() {
-            lock.insert(handle, session_handle.clone());
+            lock.insert(handle.clone(), session_handle.clone());
         }
+
+        let handle_clone = handle.clone();
+        let monitors_clone2 = self.active_monitors.clone();
+        gtk4::glib::MainContext::default().spawn(async move {
+            if let Ok(_) = rx.recv().await {
+                if let Ok(mut lock) = monitors_clone2.lock() {
+                    lock.remove(&handle_clone);
+                }
+            }
+        });
 
         let server_clone = server.clone();
         let monitors_clone = self.active_monitors.clone();
