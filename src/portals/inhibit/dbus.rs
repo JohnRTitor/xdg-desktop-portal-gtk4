@@ -94,7 +94,7 @@ impl Inhibit {
 
         let server_clone = server.clone();
 
-        gtk4::glib::MainContext::default().spawn_local(async move {
+        gtk4::glib::MainContext::default().spawn(async move {
             {
                 let session_bus_res = Connection::session().await;
                 let mut screen_saver_cookie = None;
@@ -207,7 +207,7 @@ impl Inhibit {
         let monitors_clone = self.active_monitors.clone();
 
         self.init_once.call_once(move || {
-            gtk4::glib::MainContext::default().spawn_local(async move {
+            gtk4::glib::MainContext::default().spawn(async move {
                 {
                     if let Ok(session_bus) = Connection::session().await {
                         if let Ok(proxy) = ScreenSaverProxy::new(&session_bus).await {
