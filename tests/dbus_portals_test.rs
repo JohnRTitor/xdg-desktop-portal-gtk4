@@ -60,7 +60,7 @@ trait InhibitTest {
         window: &str,
         reason: u32,
         options: HashMap<&str, Value<'_>>,
-    ) -> zbus::Result<(u32, HashMap<String, OwnedValue>)>;
+    ) -> zbus::Result<()>;
 }
 
 #[tokio::test]
@@ -152,7 +152,7 @@ async fn test_inhibit_returns_success() -> Result<(), Box<dyn std::error::Error>
         .inhibit(path, "app_id", "window", 1, HashMap::new())
         .await?;
 
-    assert_eq!(res.0, 0); // PORTAL_SUCCESS
+    assert_eq!(res, ()); // PORTAL_SUCCESS
 
     Ok(())
 }
