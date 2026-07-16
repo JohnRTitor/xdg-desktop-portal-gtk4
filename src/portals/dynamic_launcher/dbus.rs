@@ -4,7 +4,6 @@ use {
         core::{request::run_request, response::Response},
         gui::UiProxy,
     },
-    uuid::Uuid,
     zbus::{
         ObjectServer, interface,
         zvariant::{DeserializeDict, OwnedObjectPath, OwnedValue, SerializeDict, Type, Value},
@@ -197,10 +196,7 @@ fn parse_icon(icon_v: &OwnedValue) -> (Option<String>, Option<Vec<u8>>) {
 
 #[cfg(test)]
 mod tests {
-    use {
-        super::*,
-        zbus::zvariant::{Structure, Value},
-    };
+    use {super::*, zbus::zvariant::Value};
 
     #[test]
     fn test_parse_icon_string() {

@@ -1,11 +1,11 @@
 use {
     crate::core::session::Session,
     futures_util::stream::StreamExt,
-    std::{collections::HashMap, str::FromStr, sync::Mutex},
+    std::{collections::HashMap, sync::Mutex},
     zbus::{
         Connection, ObjectServer, interface,
         object_server::SignalEmitter,
-        zvariant::{DeserializeDict, ObjectPath, OwnedObjectPath, Type, Value},
+        zvariant::{DeserializeDict, OwnedObjectPath, Type, Value},
     },
 };
 
@@ -55,7 +55,7 @@ impl InhibitRequest {
 }
 
 pub struct Inhibit {
-    active_monitors: std::sync::Arc<Mutex<HashMap<String, OwnedObjectPath>>>,
+    active_monitors: std::sync::Arc<Mutex<HashMap<OwnedObjectPath, OwnedObjectPath>>>,
     init_once: std::sync::Once,
 }
 
@@ -189,9 +189,8 @@ impl Inhibit {
             return Ok(2); // Returning 2 as general error for create_monitor according to xdp-gtk
         }
 
-        let handle_str = handle.as_str().to_string();
         if let Ok(mut lock) = self.active_monitors.lock() {
-            lock.insert(handle_str, session_handle.clone());
+            lock.insert(handle, session_handle.clone());
         }
 
         let server_clone = server.clone();

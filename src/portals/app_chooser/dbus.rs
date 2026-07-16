@@ -1,8 +1,8 @@
 use {
-    super::gui::{AppChooserError, AppChooserUi},
+    super::gui::AppChooserUi,
     crate::{
         core::{request::run_request, response::Response},
-        gui::UiProxy,
+        gui::{UiError, UiProxy},
     },
     async_channel::Sender,
     std::{collections::HashMap, sync::Mutex},
@@ -32,7 +32,7 @@ pub struct ChooseApplicationResults {
 
 pub struct AppChooser {
     proxy: UiProxy,
-    active_dialogs: Mutex<HashMap<String, Sender<Vec<String>>>>,
+    active_dialogs: Mutex<HashMap<OwnedObjectPath, Sender<Vec<String>>>>,
 }
 
 impl AppChooser {
@@ -45,7 +45,7 @@ impl AppChooser {
 
     async fn choose_application_impl(
         &self,
-        handle_str: String,
+        handle: OwnedObjectPath,
         app_id: String,
         parent_window: String,
         choices: Vec<String>,
@@ -54,7 +54,7 @@ impl AppChooser {
         let (update_sender, update_receiver) = async_channel::bounded(10);
 
         if let Ok(mut lock) = self.active_dialogs.lock() {
-            lock.insert(handle_str.clone(), update_sender);
+            lock.insert(handle.clone(), update_sender);
         }
 
         let ui = AppChooserUi {
@@ -69,7 +69,7 @@ impl AppChooser {
         let res = ui.run(&self.proxy, update_receiver).await;
 
         if let Ok(mut lock) = self.active_dialogs.lock() {
-            lock.remove(&handle_str);
+            lock.remove(&handle);
         }
 
         match res {
@@ -80,7 +80,7 @@ impl AppChooser {
                 };
                 Response::success(res)
             }
-            Err(AppChooserError::Closed) | Err(AppChooserError::Rejected) => Response::cancelled(),
+            Err(UiError::Closed) | Err(UiError::Rejected) => Response::cancelled(),
         }
     }
 }
@@ -97,11 +97,10 @@ impl AppChooser {
         options: ChooseApplicationOptions,
         #[zbus(object_server)] server: &zbus::ObjectServer,
     ) -> Response<ChooseApplicationResults> {
-        let handle_str = handle.as_str().to_string();
         run_request(
             server,
-            handle,
-            self.choose_application_impl(handle_str, app_id, parent_window, choices, options),
+            handle.clone(),
+            self.choose_application_impl(handle, app_id, parent_window, choices, options),
         )
         .await
     }
@@ -114,7 +113,7 @@ impl AppChooser {
     ) -> zbus::fdo::Result<()> {
         log::info!("UpdateChoices called for handle: {}", handle.as_str());
         if let Ok(lock) = self.active_dialogs.lock() {
-            if let Some(sender) = lock.get(handle.as_str()) {
+            if let Some(sender) = lock.get(&handle) {
                 let _ = sender.try_send(choices);
             }
         }
@@ -124,10 +123,7 @@ impl AppChooser {
 
 #[cfg(test)]
 mod tests {
-    use {
-        super::*,
-        zbus::zvariant::{ObjectPath, Type},
-    };
+    use {super::*, zbus::zvariant::Type};
 
     #[test]
     fn test_choose_application_options_signature() {
@@ -147,12 +143,12 @@ mod tests {
         let chooser = AppChooser::new(&proxy);
         let (sender, receiver) = async_channel::bounded(1);
 
+        let path = OwnedObjectPath::try_from("/test/handle").unwrap();
+
         {
             let mut lock = chooser.active_dialogs.lock().unwrap();
-            lock.insert("/test/handle".to_string(), sender);
+            lock.insert(path.clone(), sender);
         }
-
-        let path = OwnedObjectPath::try_from("/test/handle").unwrap();
         let choices = vec!["choice1".to_string(), "choice2".to_string()];
 
         let res = chooser.update_choices(path, choices.clone()).await;

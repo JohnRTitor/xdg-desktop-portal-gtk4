@@ -1,12 +1,11 @@
 use {
     crate::{
-        gui::UiProxy,
-        utils::{external_window::set_wayland_parent, file_chooser_ext::FileChooserExtManualFixed},
+        gui::{UiError, UiProxy},
+        utils::file_chooser_ext::FileChooserExtManualFixed,
     },
     async_channel::{Receiver, Sender},
     gtk4::{
         FileChooserAction, FileChooserDialog, FileFilter, RecentData, RecentManager, ResponseType,
-        Widget, Window,
         gio::File,
         glib::MainContext,
         prelude::{
@@ -20,16 +19,7 @@ use {
         collections::{HashMap, HashSet},
         rc::Rc,
     },
-    thiserror::Error,
 };
-
-#[derive(Debug, Error)]
-pub enum FileChooserError {
-    #[error("Operation could not be started")]
-    Closed,
-    #[error("Operation was rejected")]
-    Rejected,
-}
 
 #[derive(Eq, PartialEq, Clone)]
 pub struct Filter {
@@ -88,23 +78,22 @@ struct DialogData {
     dialog: FileChooserDialog,
     read_only_choice: String,
     filters: HashMap<FileFilter, Filter>,
-    dummy_parent: Window,
+    dummy_parent: gtk4::Window,
 }
 
 impl FileChooserUi {
-    pub async fn run(self, proxy: &UiProxy) -> Result<FileChooserResult, FileChooserError> {
-        let (send, recv) = async_channel::bounded(1);
-        let (_send, close_on_close) = async_channel::bounded(1);
-        let context = proxy.context.clone();
-        proxy
-            .context
-            .invoke(move || self.run_impl(send, context, close_on_close));
-        recv.recv().await.map_err(|_| FileChooserError::Closed)?
+    pub async fn run(self, proxy: &UiProxy) -> Result<FileChooserResult, UiError> {
+        crate::gui::run_ui_task(
+            proxy,
+            |send, context, close_on_close| self.run_impl(send, context, close_on_close),
+            || UiError::Closed,
+        )
+        .await
     }
 
     fn run_impl(
         self,
-        send: Sender<Result<FileChooserResult, FileChooserError>>,
+        send: Sender<Result<FileChooserResult, UiError>>,
         context: MainContext,
         close_on_close: Receiver<()>,
     ) {
@@ -160,7 +149,7 @@ impl FileChooserUi {
                         writeable,
                     })
                 }
-                _ => Err(FileChooserError::Rejected),
+                _ => Err(UiError::Rejected),
             };
             let _ = send.send_blocking(res);
             dialog.close();
@@ -190,7 +179,7 @@ impl FileChooserUi {
             ),
             (&t!("cancel_action"), ResponseType::Cancel),
         ];
-        let dummy_parent = Window::new();
+        let dummy_parent = gtk4::Window::new();
         let dialog = FileChooserDialog::new(
             Some(self.title.clone()),
             Some(&dummy_parent),
@@ -247,8 +236,7 @@ impl FileChooserUi {
                 dialog.set_choice(&choice.id, &choice.default);
             }
         }
-        dialog.upcast_ref::<Widget>().realize();
-        set_wayland_parent(dialog.upcast_ref::<Widget>(), &self.parent_window);
+        crate::gui::setup_wayland(&dialog, &self.parent_window);
         DialogData {
             dialog,
             read_only_choice: read_only_id,

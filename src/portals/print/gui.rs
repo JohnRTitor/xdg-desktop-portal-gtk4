@@ -1,13 +1,12 @@
 use {
-    crate::{gui::UiProxy, utils::external_window::set_wayland_parent},
+    crate::gui::{UiError, UiProxy},
     async_channel::{Receiver, Sender},
     gtk4::{
-        PrintUnixDialog, ResponseType, Widget,
+        PrintUnixDialog, ResponseType,
         glib::MainContext,
-        prelude::{Cast, DialogExt, GtkWindowExt, WidgetExt},
+        prelude::{DialogExt, GtkWindowExt, WidgetExt},
     },
     std::{cell::RefCell, collections::HashMap},
-    thiserror::Error,
     zbus::zvariant::OwnedValue,
 };
 
@@ -23,14 +22,6 @@ thread_local! {
     pub static PRINT_JOBS: RefCell<HashMap<u32, CachedPrintJob>> = RefCell::new(HashMap::new());
 }
 
-#[derive(Debug, Error)]
-pub enum PrintError {
-    #[error("Operation could not be started")]
-    Closed,
-    #[error("Operation was rejected")]
-    Rejected,
-}
-
 pub struct PrintUi {
     pub app_id: String,
     pub parent_window: String,
@@ -44,19 +35,18 @@ pub struct PrintResult {
 }
 
 impl PrintUi {
-    pub async fn run(self, proxy: &UiProxy) -> Result<PrintResult, PrintError> {
-        let (send, recv) = async_channel::bounded(1);
-        let (_send, close_on_close) = async_channel::bounded(1);
-        let context = proxy.context.clone();
-        proxy
-            .context
-            .invoke(move || self.run_impl(send, context, close_on_close));
-        recv.recv().await.map_err(|_| PrintError::Closed)?
+    pub async fn run(self, proxy: &UiProxy) -> Result<PrintResult, UiError> {
+        crate::gui::run_ui_task(
+            proxy,
+            |send, context, close_on_close| self.run_impl(send, context, close_on_close),
+            || UiError::Closed,
+        )
+        .await
     }
 
     fn run_impl(
         self,
-        send: Sender<Result<PrintResult, PrintError>>,
+        send: Sender<Result<PrintResult, UiError>>,
         context: MainContext,
         close_on_close: Receiver<()>,
     ) {
@@ -64,8 +54,7 @@ impl PrintUi {
         let dialog = PrintUnixDialog::new(Some(&self.title), Some(&dummy_parent));
         dialog.set_modal(true);
 
-        dialog.upcast_ref::<Widget>().realize();
-        set_wayland_parent(dialog.upcast_ref::<Widget>(), &self.parent_window);
+        crate::gui::setup_wayland(&dialog, &self.parent_window);
 
         dialog.connect_response(move |d, r| {
             let res = match r {
@@ -122,10 +111,10 @@ impl PrintUi {
                         })
                     } else {
                         // Dialog was confirmed but no printer was selected
-                        Err(PrintError::Rejected)
+                        Err(UiError::Rejected)
                     }
                 }
-                _ => Err(PrintError::Rejected),
+                _ => Err(UiError::Rejected),
             };
             let _ = send.send_blocking(res);
             d.close();
@@ -146,13 +135,11 @@ pub struct ExecutePrintUi {
 }
 
 impl ExecutePrintUi {
-    pub async fn run(self, proxy: &UiProxy) -> Result<(), PrintError> {
-        let (send, recv) = async_channel::bounded(1);
-        proxy.context.invoke(move || self.run_impl(send));
-        recv.recv().await.map_err(|_| PrintError::Closed)?
+    pub async fn run(self, proxy: &UiProxy) -> Result<(), UiError> {
+        crate::gui::run_ui_task(proxy, |send, _, _| self.run_impl(send), || UiError::Closed).await
     }
 
-    fn run_impl(self, send: Sender<Result<(), PrintError>>) {
+    fn run_impl(self, send: Sender<Result<(), UiError>>) {
         let job = PRINT_JOBS.with(|jobs| jobs.borrow_mut().remove(&self.token));
 
         if let Some(cached) = job {
@@ -164,7 +151,7 @@ impl ExecutePrintUi {
             );
             if let Err(e) = print_job.set_source_fd(self.fd) {
                 log::error!("Failed to set source fd for print job: {}", e);
-                let _ = send.send_blocking(Err(PrintError::Rejected));
+                let _ = send.send_blocking(Err(UiError::Rejected));
                 return;
             }
 
@@ -178,7 +165,7 @@ impl ExecutePrintUi {
             let _ = send.send_blocking(Ok(()));
         } else {
             log::warn!("Received print request for unknown token: {}", self.token);
-            let _ = send.send_blocking(Err(PrintError::Rejected));
+            let _ = send.send_blocking(Err(UiError::Rejected));
         }
     }
 }

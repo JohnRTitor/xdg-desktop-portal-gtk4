@@ -46,7 +46,7 @@ impl Request {
 
 #[cfg(test)]
 mod tests {
-    use {super::*, std::time::Duration, zbus::Connection};
+    use {super::*, zbus::Connection};
 
     #[tokio::test]
     async fn test_run_request_cancellation() -> Result<(), Box<dyn std::error::Error>> {
@@ -69,11 +69,8 @@ mod tests {
         let handle =
             tokio::spawn(async move { run_request(&server_clone, path_clone, long_running).await });
 
-        // Yield a few times to let the spawn run and export the object
-        tokio::task::yield_now().await;
-        tokio::task::yield_now().await;
-        tokio::task::yield_now().await;
-        tokio::task::yield_now().await;
+        // Sleep to let the spawn run and export the object
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
         let client_conn = Connection::session().await?;
         let proxy = zbus::Proxy::new(

@@ -9,7 +9,6 @@ use {
             settings::dbus::SettingsPortal, usb::dbus::UsbPortal,
         },
     },
-    std::thread,
     thiserror::Error,
     zbus::{Connection, fdo::RequestNameFlags},
 };

@@ -1,22 +1,13 @@
 use {
-    crate::{gui::UiProxy, utils::external_window::set_wayland_parent},
+    crate::gui::{UiError, UiProxy},
     async_channel::{Receiver, Sender},
     gtk4::{
-        CheckButton, DialogFlags, Image, Label, MessageDialog, MessageType, ResponseType, Widget,
+        Button, CheckButton, Image, Label,
         glib::MainContext,
-        prelude::{BoxExt, Cast, CheckButtonExt, DialogExt, GtkWindowExt, WidgetExt},
+        prelude::{BoxExt, ButtonExt, CheckButtonExt, GtkWindowExt, WidgetExt},
     },
     rust_i18n::t,
-    thiserror::Error,
 };
-
-#[derive(Debug, Error)]
-pub enum AccessError {
-    #[error("Operation could not be started")]
-    Closed,
-    #[error("Operation was rejected")]
-    Rejected,
-}
 
 pub struct Choice {
     pub id: String,
@@ -53,36 +44,22 @@ pub struct AccessResult {
 }
 
 impl AccessUi {
-    pub async fn run(self, proxy: &UiProxy) -> Result<AccessResult, AccessError> {
-        let (send, recv) = async_channel::bounded(1);
-        let (_send, close_on_close) = async_channel::bounded(1);
-        let context = proxy.context.clone();
-        proxy
-            .context
-            .invoke(move || self.run_impl(send, context, close_on_close));
-        recv.recv().await.map_err(|_| AccessError::Closed)?
+    pub async fn run(self, proxy: &UiProxy) -> Result<AccessResult, UiError> {
+        crate::gui::run_ui_task(
+            proxy,
+            |send, context, close_on_close| self.run_impl(send, context, close_on_close),
+            || UiError::Closed,
+        )
+        .await
     }
 
     fn run_impl(
         self,
-        send: Sender<Result<AccessResult, AccessError>>,
+        send: Sender<Result<AccessResult, UiError>>,
         context: MainContext,
         close_on_close: Receiver<()>,
     ) {
-        let mut flags = DialogFlags::empty();
-        if self.modal {
-            flags |= DialogFlags::MODAL;
-        }
-
-        let dialog = MessageDialog::new(
-            None::<&gtk4::Window>,
-            flags,
-            MessageType::Question,
-            gtk4::ButtonsType::None,
-            &*self.title,
-        );
-
-        dialog.format_secondary_text(Some(&self.subtitle));
+        let dialog = crate::gui::dialog::CustomDialog::new(&self.title, self.modal);
 
         let deny_label = self
             .deny_label
@@ -91,122 +68,136 @@ impl AccessUi {
             .grant_label
             .unwrap_or_else(|| t!("grant_access_action").to_string());
 
-        dialog.add_button(&deny_label, ResponseType::Cancel);
-        dialog.add_button(&grant_label, ResponseType::Ok);
+        let deny_btn = Button::with_label(&deny_label);
+        let grant_btn = Button::with_label(&grant_label);
+        grant_btn.add_css_class("suggested-action");
 
-        if let Ok(area) = dialog.message_area().downcast::<gtk4::Box>() {
-            if !self.body.is_empty() {
-                let body_label = Label::new(Some(&self.body));
-                body_label.set_halign(gtk4::Align::Start);
-                body_label.set_margin_top(10);
-                body_label.set_wrap(true);
-                body_label.set_max_width_chars(50);
-                area.append(&body_label);
-            }
+        dialog.action_area.append(&deny_btn);
+        dialog.action_area.append(&grant_btn);
 
-            let mut boolean_choices = Vec::new();
-            let mut radio_choices = Vec::new();
-
-            if let Some(choices) = &self.choices {
-                for choice in choices {
-                    if choice.variants.is_empty() {
-                        let button = CheckButton::with_label(&choice.label);
-                        button.set_margin_top(10);
-                        if choice.default == "true" {
-                            button.set_active(true);
-                        }
-                        area.append(&button);
-                        boolean_choices.push((choice.id.clone(), button));
-                    } else {
-                        let label = Label::new(Some(&choice.label));
-                        label.set_halign(gtk4::Align::Start);
-                        label.set_margin_top(10);
-                        label.add_css_class("dim-label");
-                        area.append(&label);
-
-                        let mut group = None::<CheckButton>;
-                        let mut variants_for_choice = Vec::new();
-
-                        for variant in &choice.variants {
-                            let radio = if let Some(ref g) = group {
-                                CheckButton::builder()
-                                    .label(&variant.label)
-                                    .group(g)
-                                    .build()
-                            } else {
-                                CheckButton::builder().label(&variant.label).build()
-                            };
-
-                            if group.is_none() {
-                                group = Some(radio.clone());
-                            }
-
-                            if choice.default == variant.id {
-                                radio.set_active(true);
-                            }
-
-                            area.append(&radio);
-                            variants_for_choice.push((variant.id.clone(), radio));
-                        }
-                        radio_choices.push((choice.id.clone(), variants_for_choice));
-                    }
-                }
-            }
-
-            if let Some(icon) = &self.icon {
-                let image = Image::from_icon_name(icon);
-                area.prepend(&image);
-            }
-
-            let choices_cfg = self.choices.is_some();
-
-            dialog.connect_response(move |d, r| {
-                let res = match r {
-                    ResponseType::Ok => {
-                        let mut final_choices = None;
-                        if choices_cfg {
-                            let mut fc = Vec::new();
-                            for (id, button) in &boolean_choices {
-                                fc.push(FinalChoice {
-                                    id: id.clone(),
-                                    variant_id: if button.is_active() {
-                                        "true".to_string()
-                                    } else {
-                                        "false".to_string()
-                                    },
-                                });
-                            }
-                            for (id, variants) in &radio_choices {
-                                if let Some((v_id, _)) =
-                                    variants.iter().find(|(_, r)| r.is_active())
-                                {
-                                    fc.push(FinalChoice {
-                                        id: id.clone(),
-                                        variant_id: v_id.clone(),
-                                    });
-                                }
-                            }
-                            final_choices = Some(fc);
-                        }
-                        Ok(AccessResult { final_choices })
-                    }
-                    _ => Err(AccessError::Rejected),
-                };
-                let _ = send.send_blocking(res);
-                d.close();
-            });
-        } else {
-            log::error!("Failed to downcast message_area to Box in AccessDialog");
-            let _ = send.send_blocking(Err(AccessError::Rejected));
+        if !self.subtitle.is_empty() {
+            let subtitle_lbl = Label::new(Some(&self.subtitle));
+            subtitle_lbl.add_css_class("title-2");
+            subtitle_lbl.set_halign(gtk4::Align::Start);
+            dialog.content_area.append(&subtitle_lbl);
         }
 
-        dialog.upcast_ref::<Widget>().realize();
-        set_wayland_parent(dialog.upcast_ref::<Widget>(), &self.parent_window);
+        if !self.body.is_empty() {
+            let body_label = Label::new(Some(&self.body));
+            body_label.set_halign(gtk4::Align::Start);
+            body_label.set_margin_top(10);
+            body_label.set_wrap(true);
+            body_label.set_max_width_chars(50);
+            dialog.content_area.append(&body_label);
+        }
 
-        dialog.show();
+        let mut boolean_choices = Vec::new();
+        let mut radio_choices = Vec::new();
+
+        if let Some(choices) = &self.choices {
+            for choice in choices {
+                if choice.variants.is_empty() {
+                    let button = CheckButton::with_label(&choice.label);
+                    button.set_margin_top(10);
+                    if choice.default == "true" {
+                        button.set_active(true);
+                    }
+                    dialog.content_area.append(&button);
+                    boolean_choices.push((choice.id.clone(), button));
+                } else {
+                    let label = Label::new(Some(&choice.label));
+                    label.set_halign(gtk4::Align::Start);
+                    label.set_margin_top(10);
+                    label.add_css_class("dim-label");
+                    dialog.content_area.append(&label);
+
+                    let mut group = None::<CheckButton>;
+                    let mut variants_for_choice = Vec::new();
+
+                    for variant in &choice.variants {
+                        let radio = if let Some(ref g) = group {
+                            CheckButton::builder()
+                                .label(&variant.label)
+                                .group(g)
+                                .build()
+                        } else {
+                            CheckButton::builder().label(&variant.label).build()
+                        };
+
+                        if group.is_none() {
+                            group = Some(radio.clone());
+                        }
+
+                        if choice.default == variant.id {
+                            radio.set_active(true);
+                        }
+
+                        dialog.content_area.append(&radio);
+                        variants_for_choice.push((variant.id.clone(), radio));
+                    }
+                    radio_choices.push((choice.id.clone(), variants_for_choice));
+                }
+            }
+        }
+
+        if let Some(icon) = &self.icon {
+            let image = Image::from_icon_name(icon);
+            image.set_pixel_size(48);
+            dialog.content_area.prepend(&image);
+        }
+
+        let choices_cfg = self.choices.is_some();
+        let window = dialog.window.clone();
+
+        let send_close = send.clone();
+        window.connect_close_request(move |_| {
+            let _ = send_close.send_blocking(Err(UiError::Rejected));
+            gtk4::glib::Propagation::Proceed
+        });
+
+        let send_deny = send.clone();
+        let w_deny = window.clone();
+        deny_btn.connect_clicked(move |_| {
+            let _ = send_deny.send_blocking(Err(UiError::Rejected));
+            w_deny.close();
+        });
+
+        let send_grant = send.clone();
+        let w_grant = window.clone();
+        grant_btn.connect_clicked(move |_| {
+            let mut final_choices = None;
+            if choices_cfg {
+                let mut fc = Vec::new();
+                for (id, button) in &boolean_choices {
+                    fc.push(FinalChoice {
+                        id: id.clone(),
+                        variant_id: if button.is_active() {
+                            "true".to_string()
+                        } else {
+                            "false".to_string()
+                        },
+                    });
+                }
+                for (id, variants) in &radio_choices {
+                    if let Some((v_id, _)) = variants.iter().find(|(_, r)| r.is_active()) {
+                        fc.push(FinalChoice {
+                            id: id.clone(),
+                            variant_id: v_id.clone(),
+                        });
+                    }
+                }
+                final_choices = Some(fc);
+            }
+            let _ = send_grant.send_blocking(Ok(AccessResult { final_choices }));
+            w_grant.close();
+        });
+
+        crate::gui::setup_wayland(&window, &self.parent_window);
+
+        window.show();
         context.spawn_local(async move {
             let _ = close_on_close.recv().await;
-            dialog.close();
+            window.close();
         });
     }
 }

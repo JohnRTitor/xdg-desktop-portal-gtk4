@@ -8,8 +8,6 @@ use {
     },
 };
 
-use std::str::FromStr;
-
 pub struct SettingsPortal {}
 
 impl SettingsPortal {

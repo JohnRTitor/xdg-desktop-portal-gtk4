@@ -1,10 +1,10 @@
 use {
     futures_util::stream::StreamExt,
-    std::{collections::HashMap, str::FromStr, sync::Mutex},
+    std::{collections::HashMap, sync::Mutex},
     zbus::{
         Connection, ObjectServer, interface,
         object_server::SignalEmitter,
-        zvariant::{DeserializeDict, ObjectPath, OwnedValue, Type, Value},
+        zvariant::{DeserializeDict, OwnedValue, Type, Value},
     },
 };
 

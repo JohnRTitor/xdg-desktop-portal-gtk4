@@ -1,23 +1,14 @@
 use {
-    crate::{gui::UiProxy, utils::external_window::set_wayland_parent},
+    crate::gui::{UiError, UiProxy},
     async_channel::{Receiver, Sender},
     gtk4::{
-        Box as GtkBox, CheckButton, Label, ListBox, ListBoxRow, Orientation, ResponseType,
-        ScrolledWindow, Widget, glib::MainContext, prelude::*,
+        Box as GtkBox, Button, CheckButton, Label, ListBox, ListBoxRow, Orientation,
+        ScrolledWindow, glib::MainContext, prelude::*,
     },
     rust_i18n::t,
     std::{collections::HashMap, rc::Rc},
-    thiserror::Error,
     zbus::zvariant::OwnedValue,
 };
-
-#[derive(Debug, Error)]
-pub enum UsbError {
-    #[error("Operation could not be started")]
-    Closed,
-    #[error("Operation was rejected")]
-    Rejected,
-}
 
 #[derive(Debug, Clone)]
 pub struct UsbDevice {
@@ -39,50 +30,41 @@ pub struct UsbResult {
 }
 
 impl UsbUi {
-    pub async fn run(self, proxy: &UiProxy) -> Result<UsbResult, UsbError> {
-        let (send, recv) = async_channel::bounded(1);
-        let (_send, close_on_close) = async_channel::bounded(1);
-        let context = proxy.context.clone();
-        proxy
-            .context
-            .invoke(move || self.run_impl(send, context, close_on_close));
-        recv.recv().await.map_err(|_| UsbError::Closed)?
+    pub async fn run(self, proxy: &UiProxy) -> Result<UsbResult, UiError> {
+        crate::gui::run_ui_task(
+            proxy,
+            |send, context, close_on_close| self.run_impl(send, context, close_on_close),
+            || UiError::Closed,
+        )
+        .await
     }
 
     fn run_impl(
         self,
-        send: Sender<Result<UsbResult, UsbError>>,
+        send: Sender<Result<UsbResult, UiError>>,
         context: MainContext,
         close_on_close: Receiver<()>,
     ) {
-        let dialog = gtk4::Dialog::builder()
-            .title(t!("allow_usb_access").to_string())
-            .modal(true)
-            .default_width(400)
-            .default_height(400)
-            .build();
+        let dialog = crate::gui::dialog::CustomDialog::new(&t!("allow_usb_access"), true);
 
-        dialog.add_button(&t!("cancel_action"), ResponseType::Cancel);
-        let ok_button = dialog.add_button(&t!("allow_action"), ResponseType::Ok);
+        let cancel_button = Button::with_label(&t!("cancel_action"));
+        let ok_button = Button::with_label(&t!("allow_action"));
         ok_button.set_sensitive(false);
+        ok_button.add_css_class("suggested-action");
 
-        let content_area = dialog.content_area();
-        content_area.set_margin_top(12);
-        content_area.set_margin_bottom(12);
-        content_area.set_margin_start(12);
-        content_area.set_margin_end(12);
-        content_area.set_spacing(12);
+        dialog.action_area.append(&cancel_button);
+        dialog.action_area.append(&ok_button);
 
         let label_text = format!("{} {}", self.app_id, t!("wants_to_access_usb_devices"));
         let label = Label::builder().label(&label_text).wrap(true).build();
-        content_area.append(&label);
+        dialog.content_area.append(&label);
 
         let scrolled_window = ScrolledWindow::builder()
             .hscrollbar_policy(gtk4::PolicyType::Never)
             .vscrollbar_policy(gtk4::PolicyType::Automatic)
             .vexpand(true)
             .build();
-        content_area.append(&scrolled_window);
+        dialog.content_area.append(&scrolled_window);
 
         let list_box = ListBox::new();
         list_box.set_selection_mode(gtk4::SelectionMode::None);
@@ -139,36 +121,45 @@ impl UsbUi {
 
         let checks_final = checks.clone();
         let devices = self.devices;
-        dialog.connect_response(move |d, r| {
-            let res = match r {
-                ResponseType::Ok => {
-                    let mut selected = Vec::new();
-                    for (i, check) in checks_final.iter().enumerate() {
-                        if check.is_active() {
-                            selected
-                                .push((devices[i].id.clone(), devices[i].access_options.clone()));
-                        }
-                    }
-                    if selected.is_empty() {
-                        Err(UsbError::Rejected)
-                    } else {
-                        Ok(UsbResult { devices: selected })
-                    }
-                }
-                _ => Err(UsbError::Rejected),
-            };
-            let _ = send.send_blocking(res);
-            d.close();
+        let window = dialog.window.clone();
+
+        let send_close = send.clone();
+        window.connect_close_request(move |_| {
+            let _ = send_close.send_blocking(Err(UiError::Rejected));
+            gtk4::glib::Propagation::Proceed
         });
 
-        if let Some(w) = dialog.upcast_ref::<Widget>().downcast_ref::<gtk4::Window>() {
-            set_wayland_parent(w.upcast_ref::<Widget>(), &self.parent_window);
-        }
+        let send_cancel = send.clone();
+        let w_cancel = window.clone();
+        cancel_button.connect_clicked(move |_| {
+            let _ = send_cancel.send_blocking(Err(UiError::Rejected));
+            w_cancel.close();
+        });
 
-        dialog.show();
+        let send_ok = send.clone();
+        let w_ok = window.clone();
+        ok_button.connect_clicked(move |_| {
+            let mut selected = Vec::new();
+            for (i, check) in checks_final.iter().enumerate() {
+                if check.is_active() {
+                    selected.push((devices[i].id.clone(), devices[i].access_options.clone()));
+                }
+            }
+            let res = if selected.is_empty() {
+                Err(UiError::Rejected)
+            } else {
+                Ok(UsbResult { devices: selected })
+            };
+            let _ = send_ok.send_blocking(res);
+            w_ok.close();
+        });
+
+        crate::gui::setup_wayland(&window, &self.parent_window);
+
+        window.show();
         context.spawn_local(async move {
             let _ = close_on_close.recv().await;
-            dialog.close();
+            window.close();
         });
     }
 }

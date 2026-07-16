@@ -1,7 +1,7 @@
 use {
     super::{
         gui as file_chooser,
-        gui::{ChoiceVariant, FileChooserError, FileChooserUi, Filter, FilterKind, FinalChoice},
+        gui::{ChoiceVariant, FileChooserUi, Filter, FilterKind, FinalChoice},
     },
     crate::{
         core::{request::run_request, response::Response},
@@ -128,7 +128,7 @@ enum SaveFilesError {
     #[error("The computed unique path is not a valid URI")]
     UniqueNotValidUrl,
     #[error(transparent)]
-    Ui(FileChooserError),
+    Ui(crate::gui::UiError),
 }
 
 impl FileChooser {

@@ -1,8 +1,8 @@
 use {
-    super::gui::{UsbDevice, UsbError, UsbUi},
+    super::gui::{UsbDevice, UsbUi},
     crate::{
         core::{request::run_request, response::Response},
-        gui::UiProxy,
+        gui::{UiError, UiProxy},
     },
     std::collections::HashMap,
     zbus::{
@@ -102,7 +102,7 @@ impl UsbPortal {
                 };
                 Response::success(res)
             }
-            Err(UsbError::Closed) | Err(UsbError::Rejected) => Response::cancelled(),
+            Err(UiError::Closed) | Err(UiError::Rejected) => Response::cancelled(),
         }
     }
 }
