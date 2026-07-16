@@ -1,6 +1,6 @@
 use gtk4::{
     glib,
-    glib::{MainContext, MainLoop},
+    glib::{MainContext, MainContextAcquireGuard, MainLoop},
 };
 
 /// Encapsulates the GTK application state and main event loop.
@@ -26,6 +26,26 @@ impl Ui {
             std::process::exit(1);
         }
         glib::set_prgname(Some("xdg-desktop-portal-gtk4"));
+    }
+
+    /// Acquires the `MainContext`, preventing other threads from running
+    /// closures inline via `context.invoke()`.
+    ///
+    /// When the `MainContext` has no owner, any thread calling `invoke()` can
+    /// acquire it and execute the closure synchronously on that thread. This is
+    /// dangerous during the startup window between `Portal::create()` (which
+    /// registers D-Bus interfaces) and `init_gtk()` (which initializes GTK):
+    /// an incoming D-Bus request could trigger `invoke()` on the zbus executor
+    /// thread, running GTK widget code before GTK is initialized.
+    ///
+    /// By holding this guard, `invoke()` from other threads always queues
+    /// closures as idle sources. They will only execute once `main_loop.run()`
+    /// starts processing the loop (which happens after `init_gtk()`).
+    pub fn hold_context(&self) -> MainContextAcquireGuard<'_> {
+        self.proxy
+            .context
+            .acquire()
+            .expect("MainContext should not already be owned")
     }
 
     pub fn run(&self) {

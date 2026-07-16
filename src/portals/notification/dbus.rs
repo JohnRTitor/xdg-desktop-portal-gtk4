@@ -187,14 +187,14 @@ impl Notification {
         self.init_once.call_once(move || {
             let rm1 = reverse_map_clone.clone();
             let s1 = server_clone.clone();
-            gtk4::glib::MainContext::default().spawn_local(async move {
+            gtk4::glib::MainContext::default().spawn(async move {
                 if let Err(e) = listen_for_action_invoked(rm1, s1).await {
                     log::error!("Action invoked listener failed: {}", anyhow::Error::new(e));
                 }
             });
 
             let rm2 = reverse_map_clone.clone();
-            gtk4::glib::MainContext::default().spawn_local(async move {
+            gtk4::glib::MainContext::default().spawn(async move {
                 if let Err(e) = listen_for_notification_closed(rm2).await {
                     log::error!(
                         "Notification closed listener failed: {}",

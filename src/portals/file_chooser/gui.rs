@@ -77,7 +77,6 @@ struct DialogData {
     dialog: FileChooserDialog,
     read_only_choice: String,
     filters: HashMap<FileFilter, Filter>,
-    dummy_parent: gtk4::Window,
 }
 
 impl FileChooserUi {
@@ -100,7 +99,6 @@ impl FileChooserUi {
             dialog,
             read_only_choice,
             filters,
-            dummy_parent,
         } = self.build_dialog();
         let current_filter = Rc::new(Cell::new(dialog.filter()));
         let cf = current_filter.clone();
@@ -154,12 +152,15 @@ impl FileChooserUi {
             };
             let _ = send.send_blocking(res);
             dialog.close();
-            dummy_parent.destroy();
         });
         dialog.show();
         context.spawn_local(async move {
             let _ = close_on_close.recv().await;
-            dialog.close();
+            // Delay destruction to work around GTK4 FileChooserWidget bugs where
+            // background GIO tasks (like directory loading) can complete after
+            // the dialog is disposed, causing use-after-free SEGVs (thaw_updates).
+            gtk4::glib::timeout_future(std::time::Duration::from_secs(5)).await;
+            dialog.destroy();
         });
     }
 
@@ -181,14 +182,9 @@ impl FileChooserUi {
             (&t!("cancel_action"), ResponseType::Cancel),
         ];
 
-        // We create a dummy invisible parent window for the FileChooserDialog.
-        // This is a workaround because `FileChooserDialog` requires a transient parent
-        // to behave correctly in some compositors, and we will export this dummy window
-        // to Wayland via `xdg-foreign` below.
-        let dummy_parent = gtk4::Window::new();
         let dialog = FileChooserDialog::new(
             Some(self.title.clone()),
-            Some(&dummy_parent),
+            None::<&gtk4::Window>,
             action,
             &buttons,
         );
@@ -255,7 +251,6 @@ impl FileChooserUi {
             dialog,
             read_only_choice: read_only_id,
             filters: filters_map,
-            dummy_parent,
         }
     }
 }

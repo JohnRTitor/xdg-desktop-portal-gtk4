@@ -54,8 +54,7 @@ impl PrintUi {
         context: MainContext,
         close_on_close: Receiver<()>,
     ) {
-        let dummy_parent = gtk4::Window::new();
-        let dialog = PrintUnixDialog::new(Some(&self.title), Some(&dummy_parent));
+        let dialog = PrintUnixDialog::new(Some(&self.title), None::<&gtk4::Window>);
         dialog.set_modal(true);
 
         crate::gui::windowing::external_window::setup_window(
@@ -128,13 +127,13 @@ impl PrintUi {
             };
             let _ = send.send_blocking(res);
             d.close();
-            dummy_parent.destroy();
         });
 
         dialog.show();
         context.spawn_local(async move {
             let _ = close_on_close.recv().await;
-            dialog.close();
+            gtk4::glib::timeout_future(std::time::Duration::from_secs(5)).await;
+            dialog.destroy();
         });
     }
 }
