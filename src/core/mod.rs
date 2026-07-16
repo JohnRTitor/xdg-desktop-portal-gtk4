@@ -39,6 +39,9 @@ pub struct Portal {
 }
 
 impl Portal {
+    /// Creates the D-Bus interfaces and attempts to acquire the portal name.
+    /// 
+    /// This method registers all specific portal implementations on the session bus.
     pub async fn create(proxy: &UiProxy, replace: bool) -> Result<Self, PortalError> {
         let session = Connection::session()
             .await
@@ -74,6 +77,9 @@ impl Portal {
             .map_err(PortalError::SubscribeNameLost)?;
 
         let context = proxy.context.clone();
+        // Spawn a background task on the GTK MainContext to listen for name lost events.
+        // If another process acquires our D-Bus name (e.g., another instance started with --replace),
+        // we must exit cleanly. The portal specification expects the portal to go away if it loses its name.
         context.spawn_local(async move {
             use futures_util::stream::StreamExt;
             if name_lost_iterator.next().await.is_some() {
@@ -82,6 +88,9 @@ impl Portal {
             }
         });
 
+        // Request the D-Bus name.
+        // `AllowReplacement` means another instance can steal the name from us if it specifies `ReplaceExisting`.
+        // `DoNotQueue` means we fail immediately if the name is already taken, instead of waiting in a queue.
         let mut flags = RequestNameFlags::AllowReplacement | RequestNameFlags::DoNotQueue;
         if replace {
             flags |= RequestNameFlags::ReplaceExisting;

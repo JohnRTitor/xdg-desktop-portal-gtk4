@@ -109,6 +109,8 @@ impl AccountUi {
         let send_ok = send.clone();
         let w_ok = window.clone();
         ok_button.connect_clicked(move |_| {
+            // If the user selected an icon, we must convert it to a file:// URI
+            // as required by the portal specification.
             let image_uri = if !icon_file.is_empty() {
                 if let Ok(uri) = glib::filename_to_uri(&icon_file, None) {
                     uri.to_string()
@@ -119,6 +121,9 @@ impl AccountUi {
                 String::new()
             };
 
+            // The user can edit their name in the entries before sharing,
+            // so we return the contents of the Entry widgets rather than
+            // the original self.user_name / self.real_name.
             let res = Ok(AccountResult {
                 user_name: user_name_entry.text().to_string(),
                 real_name: real_name_entry.text().to_string(),

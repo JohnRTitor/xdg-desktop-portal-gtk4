@@ -39,14 +39,18 @@ impl Email {
         _parent_window: String,
         options: ComposeEmailOptions,
     ) -> Response<EmailResults> {
+        // The Email portal doesn't show its own UI; instead, it delegates to the host's
+        // default mail client using a `mailto:` URI.
         let url = build_mailto_url(&options);
 
         let launch_context = gtk4::gio::AppLaunchContext::new();
         if let Some(token) = &options.activation_token {
+            // Pass the Wayland/X11 activation token so the mail client can raise its window.
             launch_context.setenv("DESKTOP_STARTUP_ID", token);
             launch_context.setenv("XDG_ACTIVATION_TOKEN", token);
         }
 
+        // We rely on GIO to determine the default application for `mailto:` URIs.
         match AppInfo::launch_default_for_uri(&url, Some(&launch_context)) {
             Ok(_) => Response::success(EmailResults::default()),
             Err(e) => {
@@ -115,6 +119,9 @@ fn build_mailto_url(options: &ComposeEmailOptions) -> String {
     url
 }
 
+/// The D-Bus interface implementation for `org.freedesktop.impl.portal.Email`.
+///
+/// Provides a way for sandboxed applications to compose emails.
 #[interface(name = "org.freedesktop.impl.portal.Email")]
 impl Email {
     async fn compose_email(

@@ -10,6 +10,8 @@ use {
     },
 };
 
+// Proxy for the org.freedesktop.Accounts.User D-Bus interface.
+// This is provided by AccountsService, which manages user accounts on Linux.
 #[zbus::proxy(
     interface = "org.freedesktop.Accounts.User",
     default_service = "org.freedesktop.Accounts"
@@ -91,6 +93,10 @@ impl Account {
     }
 }
 
+/// The D-Bus interface implementation for `org.freedesktop.impl.portal.Account`.
+///
+/// This portal allows sandboxed apps to get basic user information (name, avatar)
+/// after prompting the user for confirmation.
 #[interface(name = "org.freedesktop.impl.portal.Account")]
 impl Account {
     async fn get_user_information(
@@ -110,8 +116,12 @@ impl Account {
     }
 }
 
+/// Fetches the current user's profile information from AccountsService via D-Bus.
 async fn fetch_user_data() -> zbus::Result<(String, String, String)> {
+    // We assume the portal is running as the user invoking the application.
     let uid = unsafe { libc::getuid() };
+    
+    // AccountsService exposes user objects at paths like `/org/freedesktop/Accounts/User1000`.
     let path = format!("/org/freedesktop/Accounts/User{}", uid);
     let obj_path = zbus::zvariant::ObjectPath::try_from(path)?;
 

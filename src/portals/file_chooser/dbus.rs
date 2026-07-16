@@ -217,9 +217,12 @@ impl FileChooser {
         options: SaveFilesOptions,
     ) -> Result<SaveFilesResults, SaveFilesError> {
         let files = options.files.as_ref().map(|v| v.as_slice()).unwrap_or(&[]);
+        
+        // Security checks: The client provides paths to save, but we must ensure
+        // they don't contain absolute paths or directory traversal attacks, because
+        // we will combine these with a user-selected directory.
         for file in files {
             let file = Path::new(&file.0);
-            // none of the following can be used securely with the current UI
             if file.is_absolute() {
                 return Err(SaveFilesError::AbsolutePath);
             }
@@ -307,6 +310,10 @@ impl FileChooser {
     }
 }
 
+/// The D-Bus interface implementation for `org.freedesktop.impl.portal.FileChooser`.
+///
+/// This portal handles `OpenFile`, `SaveFile`, and `SaveFiles` requests.
+/// It wraps GTK's native `FileChooserDialog`.
 #[interface(name = "org.freedesktop.impl.portal.FileChooser")]
 impl FileChooser {
     async fn open_file(

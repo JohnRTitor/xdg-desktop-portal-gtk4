@@ -60,6 +60,7 @@ impl DynamicLauncherUi {
         dialog.content_area.append(&hbox);
 
         if let Some(bytes) = &self.icon_data {
+            // Convert raw bytes to a GTK `BytesIcon`
             let bytes_glib = gtk4::glib::Bytes::from(bytes);
             let icon = gtk4::gio::BytesIcon::new(&bytes_glib);
             let image = Image::from_gicon(&icon);
@@ -70,6 +71,7 @@ impl DynamicLauncherUi {
             image.set_pixel_size(64);
             hbox.append(&image);
         } else {
+            // Fallback icon if none provided
             let image = Image::from_icon_name("application-x-executable");
             image.set_pixel_size(64);
             hbox.append(&image);

@@ -9,27 +9,41 @@ use {
     },
 };
 
+/// Exports a `Request` object on D-Bus and waits for it to be closed.
+/// 
+/// The `xdg-desktop-portal` frontend creates a request path and expects the backend 
+/// (us) to export an object at that path. The frontend can then call `Close()` on 
+/// this object to cancel the request.
 async fn export_request(server: &ObjectServer, path: OwnedObjectPath) {
     let (send, recv) = async_channel::bounded(1);
     if let Err(e) = server.at(&path, Request { send }).await {
         log::error!("Could not export request object: {}", anyhow::Error::new(e));
         return;
     }
+    // Wait until the frontend calls Close(), which sends a message through the channel.
     let _ = recv.recv().await;
+    // Cleanup: remove the request object from the bus once closed.
     let _ = server.remove::<Request, _>(&path).await;
 }
 
 /// Runs the future to completion or exits early if the request is closed.
 ///
+/// This function sets up a race between the actual portal work (`f`) and the
+/// cancellation listener (`export_request`). Whichever finishes first determines
+/// the outcome. If cancellation wins, we return `Response::cancelled()`.
+///
 /// This is inherently racy because the request might get cancelled before we export the
-/// path.
+/// path. However, the portal frontend usually waits for the method reply before considering
+/// the request fully established, so the race window is small.
 pub async fn run_request<T, F>(server: &ObjectServer, handle: OwnedObjectPath, f: F) -> Response<T>
 where
     T: Default + Type,
     F: Future<Output = Response<T>>,
 {
     select! {
+        // The actual work finished successfully or with an internal error.
         v = f.fuse() => v,
+        // The frontend explicitly cancelled the request.
         _ = export_request(server, handle).fuse() => Response::cancelled(),
     }
 }
@@ -37,9 +51,13 @@ where
 struct Request {
     send: Sender<()>,
 }
+
+/// The implementation of the `org.freedesktop.impl.portal.Request` D-Bus interface.
 #[interface(name = "org.freedesktop.impl.portal.Request")]
 impl Request {
+    /// Called by the portal frontend to cancel the ongoing request.
     async fn close(&self) {
+        // Notify the `export_request` task that cancellation was requested.
         let _ = self.send.send(()).await;
     }
 }

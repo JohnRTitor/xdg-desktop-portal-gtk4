@@ -14,7 +14,17 @@ use {
 };
 
 /// Runs a closure on the GTK main thread and waits for its result.
-/// This abstracts the `async-channel` setup and `context.invoke` logic.
+/// 
+/// D-Bus methods handle requests asynchronously and may execute on background threads 
+/// managed by `zbus`. However, GTK objects (`gtk4::Widget`, `gtk4::Window`, etc.) are 
+/// strictly `!Send` and `!Sync`, meaning they must be created and accessed exclusively 
+/// on the GTK main thread.
+///
+/// This function abstracts the `async-channel` setup and `context.invoke` logic. It:
+/// 1. Takes a closure `f` that will run on the GTK main thread.
+/// 2. Passes a `Sender` to `f` so it can send the result back.
+/// 3. Passes a `Receiver` to `f` so it can be notified if the request is cancelled (`close_on_close`).
+/// 4. Waits for the result on the current (background) thread.
 pub async fn run_ui_task<T, E, F, C>(proxy: &UiProxy, f: F, on_closed: C) -> Result<T, E>
 where
     T: Send + 'static,
@@ -34,6 +44,14 @@ where
 }
 
 /// Realizes the widget and assigns the Wayland parent handle.
+///
+/// Under Wayland, standard window parenting (e.g., `set_transient_for`) only works
+/// if the child and parent windows are part of the same application. Since portals
+/// display dialogs on behalf of other applications, we must use the `xdg-foreign`
+/// protocol via a specialized Wayland handle to establish the transient relationship.
+///
+/// Note: The widget MUST be realized before `set_wayland_parent` is called, because
+/// the underlying `wl_surface` must exist to export/import the handle.
 pub fn setup_wayland<W: IsA<gtk4::Widget>>(widget: &W, parent_handle: &str) {
     widget.realize();
     set_wayland_parent(widget.upcast_ref::<gtk4::Widget>(), parent_handle);

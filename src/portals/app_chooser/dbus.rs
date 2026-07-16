@@ -32,6 +32,10 @@ pub struct ChooseApplicationResults {
 
 pub struct AppChooser {
     proxy: UiProxy,
+    // The AppChooser portal allows the frontend to update the list of choices
+    // while the dialog is open (e.g., if it finds new apps). We maintain a map
+    // of active request handles to channel senders so we can pipe these updates
+    // to the running GTK dialogs.
     active_dialogs: Mutex<HashMap<OwnedObjectPath, Sender<Vec<String>>>>,
 }
 
@@ -85,6 +89,10 @@ impl AppChooser {
     }
 }
 
+/// The D-Bus interface implementation for `org.freedesktop.impl.portal.AppChooser`.
+///
+/// This portal provides a UI for the user to select an application to open a file
+/// or handle a specific content type.
 #[interface(name = "org.freedesktop.impl.portal.AppChooser")]
 impl AppChooser {
     #[zbus(name = "ChooseApplication")]
@@ -112,6 +120,8 @@ impl AppChooser {
         choices: Vec<String>,
     ) -> zbus::fdo::Result<()> {
         log::info!("UpdateChoices called for handle: {}", handle.as_str());
+        // Look up the channel sender for this specific request handle.
+        // If found, send the new list of choices to the GTK task.
         if let Ok(lock) = self.active_dialogs.lock() {
             if let Some(sender) = lock.get(&handle) {
                 let _ = sender.try_send(choices);

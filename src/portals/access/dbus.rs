@@ -12,6 +12,7 @@ use {
 };
 
 pub struct Access {
+    // Keep a cloned UI proxy to dispatch GTK tasks.
     proxy: UiProxy,
 }
 
@@ -44,6 +45,10 @@ struct AccessResults {
 }
 
 impl Access {
+    /// Internal implementation for the AccessDialog request.
+    ///
+    /// This converts the D-Bus dictionary parameters into a strongly-typed `AccessUi` struct
+    /// and dispatches the dialog creation to the GTK main thread.
     async fn access_dialog_impl(
         &self,
         app_id: String,
@@ -100,6 +105,10 @@ impl Access {
     }
 }
 
+/// The D-Bus interface implementation for `org.freedesktop.impl.portal.Access`.
+/// 
+/// This portal is used by flatpak and other systems to request permissions from the user,
+/// such as accessing the camera, microphone, or location.
 #[interface(name = "org.freedesktop.impl.portal.Access")]
 impl Access {
     async fn access_dialog(
@@ -113,6 +122,9 @@ impl Access {
         options: AccessDialogOptions,
         #[zbus(object_server)] server: &ObjectServer,
     ) -> Response<AccessResults> {
+        // Run the request concurrently with a cancellation listener.
+        // If the frontend calls `Close()` on the request object path, `run_request`
+        // will return `Response::cancelled()` and drop the future.
         run_request(
             server,
             handle,

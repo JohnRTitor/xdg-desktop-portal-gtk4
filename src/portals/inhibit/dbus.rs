@@ -68,6 +68,11 @@ impl Inhibit {
     }
 }
 
+/// The D-Bus interface implementation for `org.freedesktop.impl.portal.Inhibit`.
+///
+/// This portal allows applications to inhibit session state changes like sleep, 
+/// logout, or idle (screensaver) on behalf of the user. It also allows applications
+/// to monitor these states.
 #[interface(name = "org.freedesktop.impl.portal.Inhibit")]
 impl Inhibit {
     async fn inhibit(
@@ -116,7 +121,8 @@ impl Inhibit {
 
                 let reason_str = options.reason.as_deref().unwrap_or("Portal inhibit");
 
-                // Try logind first for sleep/shutdown/idle
+                // Try logind first for sleep/shutdown/idle.
+                // logind provides a robust system-level inhibition API via file descriptors.
                 if !inhibit_what.is_empty() {
                     if let Ok(system_bus) = &system_bus_res {
                         if let Ok(logind_proxy) = Login1ManagerProxy::new(system_bus).await {
@@ -126,6 +132,7 @@ impl Inhibit {
                                 .await
                             {
                                 Ok(fd) => {
+                                    // The lock is held as long as the FD is kept open.
                                     logind_fd = Some(fd);
                                     log::debug!("Acquired logind inhibit lock for {}", what_str);
                                 }
@@ -137,7 +144,9 @@ impl Inhibit {
                     }
                 }
 
-                // If Idle is requested, try ScreenSaver as a fallback or in addition (since logind idle is sometimes ignored by DEs)
+                // If Idle is requested, try ScreenSaver as a fallback or in addition.
+                // Some desktop environments (like GNOME) don't fully honor logind idle locks 
+                // for screen blanking, so using the standard D-Bus ScreenSaver API is recommended.
                 if reason & 8 != 0 {
                     if let Ok(session_bus) = &session_bus_res {
                         if let Ok(ss_proxy) = ScreenSaverProxy::new(session_bus).await {
@@ -164,7 +173,8 @@ impl Inhibit {
                     let _ = proxy.un_inhibit(cookie).await;
                 }
 
-                // logind_fd is automatically released when dropped
+                // logind_fd is automatically released when dropped, which closes the FD
+                // and tells logind to lift the inhibition.
                 drop(logind_fd);
 
                 // Unexport the Request

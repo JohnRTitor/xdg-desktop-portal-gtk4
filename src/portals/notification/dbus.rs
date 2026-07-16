@@ -49,7 +49,11 @@ struct PortalNotification {
 }
 
 pub struct Notification {
+    // Maps portal-assigned ID (`app_id::id`) to the system D-Bus notification ID.
+    // This allows us to track notifications so we can replace or close them later.
     active_notifications: std::sync::Arc<Mutex<HashMap<String, u32>>>,
+    // Maps system D-Bus notification ID back to the portal app_id, portal_id, and action targets.
+    // This is needed so we can correctly propagate the `ActionInvoked` signal back to the sandboxed app.
     reverse_map: std::sync::Arc<Mutex<HashMap<u32, (String, String, HashMap<String, OwnedValue>)>>>,
     init_once: std::sync::Once,
 }
@@ -68,6 +72,11 @@ impl Notification {
     }
 }
 
+/// The D-Bus interface implementation for `org.freedesktop.impl.portal.Notification`.
+///
+/// This portal acts as a proxy between sandboxed applications and the host system's
+/// `org.freedesktop.Notifications` D-Bus service. It translates action invocations
+/// back to the sandboxed app.
 #[interface(name = "org.freedesktop.impl.portal.Notification")]
 impl Notification {
     async fn add_notification(
@@ -239,6 +248,9 @@ impl Notification {
     }
 }
 
+// Spawns a background task that listens to `ActionInvoked` signals from the system notification daemon.
+// When an action is invoked on a notification created through this portal, it looks up the original
+// portal app_id and notification id in the `reverse_map` and emits the portal's `ActionInvoked` signal.
 async fn listen_for_action_invoked(
     reverse_map: std::sync::Arc<Mutex<HashMap<u32, (String, String, HashMap<String, OwnedValue>)>>>,
     server: ObjectServer,

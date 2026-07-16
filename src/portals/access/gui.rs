@@ -59,6 +59,8 @@ impl AccessUi {
         context: MainContext,
         close_on_close: Receiver<()>,
     ) {
+        // We use our CustomDialog which wraps a standard GtkWindow instead of a GtkDialog.
+        // GtkDialog is deprecated in GTK4.
         let dialog = crate::gui::dialog::CustomDialog::new(&self.title, self.modal);
 
         let deny_label = self
@@ -149,9 +151,11 @@ impl AccessUi {
         let choices_cfg = self.choices.is_some();
         let window = dialog.window.clone();
 
+        // Handle the user clicking the "X" button or pressing Escape.
         let send_close = send.clone();
         window.connect_close_request(move |_| {
             let _ = send_close.send_blocking(Err(UiError::Rejected));
+            // Let GTK handle the actual window destruction.
             gtk4::glib::Propagation::Proceed
         });
 
@@ -192,9 +196,13 @@ impl AccessUi {
             w_grant.close();
         });
 
+        // Bind the dialog to the calling application's window if running under Wayland.
         crate::gui::setup_wayland(&window, &self.parent_window);
 
         window.show();
+        
+        // Spawn a background task to close the window if the D-Bus request is cancelled.
+        // This task runs on the GTK MainContext, so it can safely manipulate the `window`.
         context.spawn_local(async move {
             let _ = close_on_close.recv().await;
             window.close();

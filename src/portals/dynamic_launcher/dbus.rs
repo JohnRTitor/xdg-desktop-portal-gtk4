@@ -91,6 +91,10 @@ impl DynamicLauncher {
     }
 }
 
+/// The D-Bus interface implementation for `org.freedesktop.impl.portal.DynamicLauncher`.
+///
+/// This portal allows applications to create desktop entries (launchers) dynamically,
+/// for example, for web apps or installed games.
 #[interface(name = "org.freedesktop.impl.portal.DynamicLauncher")]
 impl DynamicLauncher {
     async fn prepare_install(
@@ -123,7 +127,8 @@ impl DynamicLauncher {
         app_id: String,
         _options: RequestInstallTokenOptions,
     ) -> u32 {
-        // Blanket allow certain apps to create app entries. Ported from GTK portal.
+        // Blanket allow certain trusted software centers to create app entries without
+        // prompting the user. This matches the behavior of the GTK and GNOME portals.
         let allowed_ids = [
             "org.gnome.Software",
             "org.gnome.SoftwareDevel",
@@ -134,7 +139,7 @@ impl DynamicLauncher {
         if allowed_ids.contains(&app_id.as_str()) {
             0 // Allowed
         } else {
-            2 // Access denied
+            2 // Access denied (forces a fallback to PrepareInstall UI flow)
         }
     }
 
@@ -149,6 +154,10 @@ impl DynamicLauncher {
     }
 }
 
+/// Parses the `icon_v` variant passed by the portal frontend.
+/// 
+/// The portal specification allows the icon to be passed as a string (icon name),
+/// a byte array (serialized image data), or a themed icon struct.
 fn parse_icon(icon_v: &OwnedValue) -> (Option<String>, Option<Vec<u8>>) {
     if let Ok(s) = <&str>::try_from(&**icon_v) {
         return (Some(s.to_string()), None);

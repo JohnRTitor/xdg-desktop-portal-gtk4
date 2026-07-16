@@ -76,6 +76,8 @@ impl AppChooserUi {
 
         populate_list_box(&list_box, &self.choices, self.content_type.as_deref());
 
+        // Spawn a task to listen for `UpdateChoices` D-Bus calls.
+        // It runs on the main thread, so it can safely call `populate_list_box` to update GTK widgets.
         let list_box_clone2 = list_box.clone();
         let content_type = self.content_type.clone();
         context.spawn_local(async move {
@@ -110,6 +112,9 @@ impl AppChooserUi {
         let w_ok = window.clone();
         ok_button.connect_clicked(move |_| {
             let res = if let Some(row) = list_box_clone.selected_row() {
+                // If the user selected an app, generate a startup notification token.
+                // This allows the desktop environment to show a "starting" animation
+                // or focus the new window once it appears.
                 let launch_context = gtk4::gio::AppLaunchContext::new();
                 let token = launch_context
                     .startup_notify_id(None::<&gtk4::gio::AppInfo>, &[])
@@ -136,6 +141,7 @@ impl AppChooserUi {
 }
 
 fn populate_list_box(list_box: &ListBox, choices: &[String], content_type: Option<&str>) {
+    // Clear existing children
     while let Some(child) = list_box.first_child() {
         list_box.remove(&child);
     }
@@ -144,6 +150,8 @@ fn populate_list_box(list_box: &ListBox, choices: &[String], content_type: Optio
     let mut apps_to_show = Vec::new();
 
     if !choices.is_empty() {
+        // If the frontend provided specific choices (e.g., from its own history or cache),
+        // we only show those.
         for app in all_apps {
             if let Some(id) = app.id() {
                 if choices.contains(&id.to_string()) {
@@ -152,8 +160,10 @@ fn populate_list_box(list_box: &ListBox, choices: &[String], content_type: Optio
             }
         }
     } else if let Some(ct) = content_type {
+        // Otherwise, if a content type was provided, we ask GIO for recommended apps.
         apps_to_show = AppInfo::recommended_for_type(ct);
         if apps_to_show.is_empty() {
+            // Fallback to all apps if no specific recommendations exist.
             apps_to_show = AppInfo::all();
         }
     } else {

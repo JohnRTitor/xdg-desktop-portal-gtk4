@@ -14,6 +14,9 @@ impl SettingsPortal {
     pub fn new(server: zbus::ObjectServer) -> Self {
         let settings = Self::get_gnome_interface_static();
 
+        // If the `org.gnome.desktop.interface` schema is available, we attach a `changed`
+        // signal listener to it. This allows us to proxy GTK settings changes to sandboxed
+        // apps in real-time, emitting the portal `SettingChanged` signal.
         if let Some(s) = settings {
             let s_clone = s.clone();
             s.connect_changed(None, move |_, key| {
@@ -42,6 +45,9 @@ impl SettingsPortal {
                     });
                 }
 
+                // The freedesktop appearance namespace defines cross-desktop standards for 
+                // dark mode, high contrast, and reduced motion.
+                // We map GTK-specific setting keys to these standardized names.
                 if key_str == "color-scheme"
                     || key_str == "high-contrast"
                     || key_str == "gtk-enable-animations"
@@ -167,6 +173,10 @@ pub(crate) fn map_color_scheme(val: &str) -> u32 {
     }
 }
 
+/// The D-Bus interface implementation for `org.freedesktop.impl.portal.Settings`.
+///
+/// This portal allows sandboxed applications to read system settings, such as 
+/// dark mode preferences, accessibility toggles, and font configurations.
 #[interface(name = "org.freedesktop.impl.portal.Settings")]
 impl SettingsPortal {
     async fn read(&self, namespace: String, key: String) -> Result<OwnedValue, zbus::fdo::Error> {

@@ -62,6 +62,7 @@ impl UsbPortal {
                 properties = props.clone();
             }
 
+            // Udev properties are often hex-escaped (e.g., `\x20` for spaces).
             let vendor = Self::extract_property(
                 &properties,
                 &["ID_VENDOR_FROM_DATABASE", "ID_VENDOR_ENC", "ID_VENDOR_ID"],
@@ -107,6 +108,11 @@ impl UsbPortal {
     }
 }
 
+/// The D-Bus interface implementation for `org.freedesktop.impl.portal.Usb`.
+///
+/// This portal allows a sandboxed application to request access to USB devices.
+/// The frontend daemon (xdg-desktop-portal) passes a list of available devices,
+/// and the user selects which ones the app can access.
 #[interface(name = "org.freedesktop.impl.portal.Usb")]
 impl UsbPortal {
     #[zbus(name = "AcquireDevices")]

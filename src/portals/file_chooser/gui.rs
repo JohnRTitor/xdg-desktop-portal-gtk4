@@ -116,6 +116,8 @@ impl FileChooserUi {
                         .filter_map(|f| f.ok().and_then(|f| f.downcast::<gtk4::gio::File>().ok()))
                         .map(|f| {
                             let uri = f.uri();
+                            // If the path is not a local file:// URI, but has a local path,
+                            // force it to a file:// URI. This ensures compatibility with sandboxed apps.
                             if !uri.starts_with("file://") {
                                 if let Some(path) = f.path() {
                                     return gtk4::gio::File::for_path(path).uri().into();
@@ -179,6 +181,11 @@ impl FileChooserUi {
             ),
             (&t!("cancel_action"), ResponseType::Cancel),
         ];
+        
+        // We create a dummy invisible parent window for the FileChooserDialog.
+        // This is a workaround because `FileChooserDialog` requires a transient parent
+        // to behave correctly in some compositors, and we will export this dummy window
+        // to Wayland via `xdg-foreign` below.
         let dummy_parent = gtk4::Window::new();
         let dialog = FileChooserDialog::new(
             Some(self.title.clone()),
@@ -212,6 +219,9 @@ impl FileChooserUi {
         }
         let mut read_only_id = String::new();
         if action == FileChooserAction::Open {
+            // The portal spec specifies that an 'Open' dialog should let the user
+            // choose whether the file is opened read-only. We inject this choice
+            // dynamically into the GTK dialog if it's an Open action.
             let choice_ids: HashSet<_> = self
                 .choices
                 .as_deref()
@@ -220,6 +230,7 @@ impl FileChooserUi {
                 .map(|c| c.id.as_str())
                 .collect();
             read_only_id = "_read_only".to_string();
+            // Ensure our injected choice ID doesn't collide with one provided by the frontend.
             while choice_ids.contains(read_only_id.as_str()) {
                 read_only_id.push('_');
             }

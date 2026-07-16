@@ -18,6 +18,9 @@ pub struct CachedPrintJob {
     pub page_setup: gtk4::PageSetup,
 }
 
+// Since `gtk4::Printer` and related objects are `!Send`, we must cache the print jobs
+// on the GTK main thread. When the frontend later calls the `Print` method with a token,
+// we retrieve the job from this thread-local map and execute it.
 thread_local! {
     pub static PRINT_JOBS: RefCell<HashMap<u32, CachedPrintJob>> = RefCell::new(HashMap::new());
 }
@@ -90,6 +93,8 @@ impl PrintUi {
                     if let Some(printer) = printer {
                         let settings_obj = d.settings();
                         let page_setup_obj = d.page_setup();
+                        
+                        // Generate a random token to identify this job in the subsequent `Print` call.
                         let token: u32 = rand::random();
                         PRINT_JOBS.with(|jobs| {
                             jobs.borrow_mut().insert(

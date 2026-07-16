@@ -103,9 +103,10 @@ impl Print {
         use std::os::fd::AsRawFd;
         let token = options.token.unwrap_or(0);
 
-        // The fd needs to be duplicated if the portal daemon closes it,
-        // but since we await the GTK thread synchronously, the raw_fd is valid.
-        // Actually, GTK internally dups the FD according to C docs!
+        // The file descriptor provided by the portal daemon must be passed to the print system.
+        // The D-Bus library (zbus) internally dup's the fd during deserialization.
+        // Because we process this on the GTK main thread synchronously (awaiting the channel),
+        // it is safe to extract the raw_fd here and pass it down.
         let raw_fd = fd.as_raw_fd();
 
         let res = ExecutePrintUi { token, fd: raw_fd }.run(&self.proxy).await;
@@ -120,6 +121,13 @@ impl Print {
     }
 }
 
+/// The D-Bus interface implementation for `org.freedesktop.impl.portal.Print`.
+///
+/// This portal implements a two-step printing process:
+/// 1. `PreparePrint`: Displays the print dialog, allowing the user to select a printer and settings.
+///    It returns a unique token to the frontend.
+/// 2. `Print`: The frontend provides the document data via a file descriptor, along with the token.
+///    The portal matches the token to the cached print settings and submits the job to CUPS.
 #[interface(name = "org.freedesktop.impl.portal.Print")]
 impl Print {
     async fn prepare_print(

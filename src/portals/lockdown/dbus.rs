@@ -8,6 +8,14 @@ impl LockdownPortal {
     }
 }
 
+/// The D-Bus interface implementation for `org.freedesktop.impl.portal.Lockdown`.
+///
+/// This portal allows system administrators or desktop environments to restrict
+/// certain features (like printing, saving files, or using devices) for sandboxed apps.
+/// 
+/// Currently, this implementation defaults to allowing everything (returning `false` for all
+/// `disable-*` properties). A more complete implementation might read these settings from
+/// GSettings or a configuration file.
 #[interface(name = "org.freedesktop.impl.portal.Lockdown")]
 impl LockdownPortal {
     #[zbus(property, name = "disable-printing")]
@@ -15,6 +23,7 @@ impl LockdownPortal {
         false
     }
 
+    // The properties are read-only for sandboxed apps, so setters always return NotSupported.
     #[zbus(property, name = "disable-printing")]
     async fn set_disable_printing(&self, _value: bool) -> zbus::fdo::Result<()> {
         Err(zbus::fdo::Error::NotSupported(
