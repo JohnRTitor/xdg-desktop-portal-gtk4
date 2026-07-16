@@ -17,7 +17,11 @@ fn main() {
 
     let args = Cli::parse();
     let ui = Ui::new();
-    let _portal = match Portal::create(ui.proxy(), args.replace) {
+    let _portal = match ui
+        .proxy()
+        .context
+        .block_on(async { Portal::create(ui.proxy(), args.replace).await })
+    {
         Ok(p) => p,
         Err(e) => {
             log::error!("Could not create the portal: {}", anyhow::Error::new(e));

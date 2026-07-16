@@ -89,8 +89,8 @@ impl Inhibit {
 
         let server_clone = server.clone();
 
-        std::thread::spawn(move || {
-            zbus::block_on(async move {
+        gtk4::glib::MainContext::default().spawn_local(async move {
+            {
                 let session_bus_res = Connection::session().await;
                 let mut screen_saver_cookie = None;
                 let mut logind_fd = None;
@@ -169,7 +169,7 @@ impl Inhibit {
 
                 // Unexport the Request
                 let _ = server_clone.remove::<InhibitRequest, _>(handle).await;
-            });
+            }
         });
 
         Ok(())
@@ -198,8 +198,8 @@ impl Inhibit {
         let monitors_clone = self.active_monitors.clone();
 
         self.init_once.call_once(move || {
-            std::thread::spawn(move || {
-                zbus::block_on(async move {
+            gtk4::glib::MainContext::default().spawn_local(async move {
+                {
                     if let Ok(session_bus) = Connection::session().await {
                         if let Ok(proxy) = ScreenSaverProxy::new(&session_bus).await {
                             if let Ok(mut stream) = proxy.receive_active_changed().await {
@@ -239,7 +239,7 @@ impl Inhibit {
                             }
                         }
                     }
-                });
+                }
             });
         });
 
