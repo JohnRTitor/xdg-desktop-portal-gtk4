@@ -126,6 +126,7 @@ impl PrintUi {
                 _ => Err(UiError::Rejected),
             };
             let _ = send.send_blocking(res);
+            d.close();
         });
 
         dialog.show();

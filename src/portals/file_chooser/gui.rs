@@ -151,6 +151,7 @@ impl FileChooserUi {
                 _ => Err(UiError::Rejected),
             };
             let _ = send.send_blocking(res);
+            dialog.close();
         });
         dialog.show();
         context.spawn_local(async move {
