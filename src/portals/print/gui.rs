@@ -126,13 +126,13 @@ impl PrintUi {
                 _ => Err(UiError::Rejected),
             };
             let _ = send.send_blocking(res);
-            d.close();
         });
 
         dialog.show();
         context.spawn_local(async move {
             let _ = close_on_close.recv().await;
-            dialog.close();
+            gtk4::glib::timeout_future(std::time::Duration::from_secs(5)).await;
+            dialog.destroy();
         });
     }
 }

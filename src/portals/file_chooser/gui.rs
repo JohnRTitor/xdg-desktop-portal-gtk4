@@ -151,12 +151,15 @@ impl FileChooserUi {
                 _ => Err(UiError::Rejected),
             };
             let _ = send.send_blocking(res);
-            dialog.close();
         });
         dialog.show();
         context.spawn_local(async move {
             let _ = close_on_close.recv().await;
-            dialog.close();
+            // Delay destruction to work around GTK4 FileChooserWidget bugs where
+            // background GIO tasks (like directory loading) can complete after
+            // the dialog is disposed, causing use-after-free SEGVs (thaw_updates).
+            gtk4::glib::timeout_future(std::time::Duration::from_secs(5)).await;
+            dialog.destroy();
         });
     }
 
