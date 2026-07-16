@@ -14,8 +14,15 @@
   };
 
   outputs =
-    inputs@{ flake-parts, ... }:
-    flake-parts.lib.mkFlake { inherit inputs; } {
+    inputs@{ self, ... }:
+    let
+      cargoToml = builtins.fromTOML (builtins.readFile ./Cargo.toml);
+
+      rev =
+        self.shortRev or self.dirtyShortRev or (inputs.nixpkgs.lib.substring 0 8 self.lastModifiedDate);
+      version = "${cargoToml.package.version}+${rev}";
+    in
+    inputs.flake-parts.lib.mkFlake { inherit inputs; } {
       systems = [
         "x86_64-linux"
         "aarch64-linux"
@@ -31,8 +38,8 @@
           ...
         }:
         {
-          packages.xdg-desktop-portal-gtk4 = pkgs.callPackage ./contrib/build.nix { };
-          packages.xdg-desktop-portal-gtk4-test = pkgs.callPackage ./contrib/build.nix {
+          packages.xdg-desktop-portal-gtk4 = pkgs.callPackage ./contrib/build.nix { version = version; };
+          packages.xdg-desktop-portal-gtk4-test = config.packages.xdg-desktop-portal-gtk4.override {
             withDbusTests = true;
           };
 

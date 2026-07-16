@@ -8,12 +8,13 @@
   meson,
   dbus,
   ninja,
+  version ? "unstable",
   withDbusTests ? false,
 }:
 
 rustPlatform.buildRustPackage {
   pname = "xdg-desktop-portal-gtk4";
-  version = "unstable";
+  inherit version;
 
   src = lib.fileset.toSource {
     root = ../.;
@@ -68,7 +69,7 @@ rustPlatform.buildRustPackage {
     # Let meson handle substituting templates and installing all files
     # Note: mesonConfigurePhase cd's into the build directory
     mesonConfigurePhase
-    
+
     # Run meson install directly to avoid mesonInstallPhase recursively triggering postInstall
     meson install --no-rebuild
   '';
