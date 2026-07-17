@@ -16,6 +16,7 @@ use {
 pub mod request;
 pub mod response;
 pub mod session;
+pub mod session_manager;
 
 const NAME: &str = "org.freedesktop.impl.portal.desktop.gtk4";
 const PATH: &str = "/org/freedesktop/portal/desktop";
@@ -47,6 +48,16 @@ impl Portal {
             .await
             .map_err(PortalError::Connection)?;
 
+        let session_manager = crate::core::session_manager::SessionManager::new(session.clone(), 10);
+        let session_manager_clone = session_manager.clone();
+        let context = proxy.context.clone();
+        
+        context.spawn_local(async move {
+            if let Err(e) = session_manager_clone.run().await {
+                log::error!("SessionManager failed: {}", e);
+            }
+        });
+
         macro_rules! add {
             ($interface:expr) => {
                 session
@@ -63,7 +74,7 @@ impl Portal {
         add!(Notification::new());
         add!(DynamicLauncher::new(proxy));
         add!(Print::new(proxy));
-        add!(Inhibit::new());
+        add!(Inhibit::new(session_manager.clone()));
         add!(SettingsPortal::new(session.object_server().clone()));
         add!(LockdownPortal::new());
         add!(AppChooser::new(proxy));
@@ -76,7 +87,6 @@ impl Portal {
             .await
             .map_err(PortalError::SubscribeNameLost)?;
 
-        let context = proxy.context.clone();
         // Spawn a background task on the GTK MainContext to listen for name lost events.
         // If another process acquires our D-Bus name (e.g., another instance started with --replace),
         // we must exit cleanly. The portal specification expects the portal to go away if it loses its name.

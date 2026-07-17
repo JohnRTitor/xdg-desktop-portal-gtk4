@@ -119,4 +119,4 @@ License v2.1.
 
 [^1]: https://github.com/KDE/xdg-desktop-portal-kde
 
-[^2]: https://github.com/KDE/xdg-desktop-portal-kde
+[^2]: https://gitlab.gnome.org/GNOME/xdg-desktop-portal-gnome

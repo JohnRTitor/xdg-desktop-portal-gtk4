@@ -57,13 +57,15 @@ impl InhibitRequest {
 pub struct Inhibit {
     active_monitors: std::sync::Arc<Mutex<HashMap<OwnedObjectPath, OwnedObjectPath>>>,
     init_once: std::sync::Once,
+    session_manager: crate::core::session_manager::SessionManager,
 }
 
 impl Inhibit {
-    pub fn new() -> Self {
+    pub fn new(session_manager: crate::core::session_manager::SessionManager) -> Self {
         Self {
             active_monitors: std::sync::Arc::new(Mutex::new(HashMap::new())),
             init_once: std::sync::Once::new(),
+            session_manager,
         }
     }
 }
@@ -77,6 +79,7 @@ impl Inhibit {
 impl Inhibit {
     async fn inhibit(
         &self,
+        #[zbus(header)] header: zbus::message::Header<'_>,
         handle: OwnedObjectPath,
         app_id: String,
         _window: String,
@@ -85,14 +88,27 @@ impl Inhibit {
         #[zbus(object_server)] server: &ObjectServer,
     ) -> zbus::fdo::Result<()> {
         let (send, recv) = async_channel::bounded(1);
-        let request = InhibitRequest { send };
+        let request = InhibitRequest { send: send.clone() };
 
         if let Err(e) = server.at(handle.clone(), request).await {
             log::error!("Failed to export Inhibit Request {}: {}", handle, e);
             return Err(zbus::fdo::Error::Failed("Failed to export Request".into()));
         }
 
+        let sender = header
+            .sender()
+            .map(|s| s.as_str().to_string())
+            .ok_or_else(|| zbus::fdo::Error::Failed("Missing sender".into()))?;
+
+        if let Err(e) = self.session_manager.register(&app_id, &sender, handle.as_str(), send.clone()) {
+            let _ = server.remove::<InhibitRequest, _>(handle.clone()).await;
+            return Err(zbus::fdo::Error::Failed(format!("Session limit exceeded: {}", e)));
+        }
+
         let server_clone = server.clone();
+        let session_manager_clone = self.session_manager.clone();
+        let app_id_clone = app_id.clone();
+        let handle_clone = handle.clone();
 
         gtk4::glib::MainContext::default().spawn(async move {
             {
@@ -178,7 +194,8 @@ impl Inhibit {
                 drop(logind_fd);
 
                 // Unexport the Request
-                let _ = server_clone.remove::<InhibitRequest, _>(handle).await;
+                let _ = server_clone.remove::<InhibitRequest, _>(handle_clone.clone()).await;
+                session_manager_clone.unregister(&app_id_clone, &sender, handle_clone.as_str());
             }
         });
 
@@ -187,16 +204,30 @@ impl Inhibit {
 
     async fn create_monitor(
         &self,
+        #[zbus(header)] header: zbus::message::Header<'_>,
         handle: OwnedObjectPath,
         session_handle: OwnedObjectPath,
-        _app_id: String,
+        app_id: String,
         _window: String,
         #[zbus(object_server)] server: &ObjectServer,
     ) -> zbus::fdo::Result<u32> {
         let (tx, rx) = async_channel::unbounded();
+        let (cancel_tx, cancel_rx) = async_channel::unbounded();
+
+        let sender = match header.sender() {
+            Some(s) => s.as_str().to_string(),
+            None => return Ok(2),
+        };
+
+        if let Err(e) = self.session_manager.register(&app_id, &sender, session_handle.as_str(), cancel_tx) {
+            log::warn!("Session limit exceeded for monitor: {}", e);
+            return Ok(2);
+        }
+
         let session = Session::new(session_handle.as_str().to_string(), Some(tx));
         if let Err(e) = server.at(session_handle.clone(), session).await {
             log::error!("Failed to export monitor session: {}", e);
+            self.session_manager.unregister(&app_id, &sender, session_handle.as_str());
             return Ok(2); // Returning 2 as general error for create_monitor according to xdp-gtk
         }
 
@@ -205,12 +236,31 @@ impl Inhibit {
         }
 
         let handle_clone = handle.clone();
+        let session_handle_clone = session_handle.clone();
         let monitors_clone2 = self.active_monitors.clone();
+        let session_manager_clone = self.session_manager.clone();
+        let app_id_clone = app_id.clone();
+        let sender_clone = sender.clone();
         gtk4::glib::MainContext::default().spawn(async move {
             if let Ok(_) = rx.recv().await {
                 if let Ok(mut lock) = monitors_clone2.lock() {
                     lock.remove(&handle_clone);
                 }
+                session_manager_clone.unregister(&app_id_clone, &sender_clone, session_handle_clone.as_str());
+            }
+        });
+
+        let handle_clone2 = handle.clone();
+        let session_handle_clone2 = session_handle.clone();
+        let monitors_clone3 = self.active_monitors.clone();
+        let session_manager_clone2 = self.session_manager.clone();
+        
+        gtk4::glib::MainContext::default().spawn(async move {
+            if let Ok(_) = cancel_rx.recv().await {
+                if let Ok(mut lock) = monitors_clone3.lock() {
+                    lock.remove(&handle_clone2);
+                }
+                session_manager_clone2.unregister(&app_id, &sender, session_handle_clone2.as_str());
             }
         });
 
