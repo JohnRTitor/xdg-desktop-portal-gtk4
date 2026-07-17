@@ -73,6 +73,9 @@ impl UsbUi {
 
         let checks: Rc<Vec<CheckButton>> =
             Rc::new(self.devices.iter().map(|_| CheckButton::new()).collect());
+            
+        let weak_checks: Rc<Vec<gtk4::glib::WeakRef<CheckButton>>> = 
+            Rc::new(checks.iter().map(|c| c.downgrade()).collect());
 
         for (i, device) in self.devices.iter().enumerate() {
             let row = ListBoxRow::new();
@@ -113,9 +116,9 @@ impl UsbUi {
             list_box.append(&row);
 
             let ok_button_clone = ok_button.clone();
-            let checks_clone = checks.clone();
+            let weak_checks_clone = weak_checks.clone();
             check.connect_toggled(move |_| {
-                let any_checked = checks_clone.iter().any(|c| c.is_active());
+                let any_checked = weak_checks_clone.iter().filter_map(|w| w.upgrade()).any(|c| c.is_active());
                 ok_button_clone.set_sensitive(any_checked);
             });
         }

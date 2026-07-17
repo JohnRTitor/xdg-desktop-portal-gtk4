@@ -15,7 +15,8 @@ impl CustomDialog {
             .title(title)
             .modal(modal)
             .hide_on_close(true)
-            .default_width(400)
+            .default_width(420)
+            .default_height(400)
             .build();
 
         window.add_css_class("dialog");
@@ -27,15 +28,14 @@ impl CustomDialog {
         main_box.set_margin_end(12);
 
         let content_area = gtk4::Box::new(gtk4::Orientation::Vertical, 6);
+        // Allow the content area (e.g. a ScrolledWindow inside it) to grow
+        // and fill available vertical space so buttons never get pushed off-screen.
+        content_area.set_vexpand(true);
+
         let action_area = gtk4::Box::new(gtk4::Orientation::Horizontal, 6);
         action_area.set_halign(gtk4::Align::End);
 
         main_box.append(&content_area);
-
-        let spacer = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
-        spacer.set_vexpand(true);
-        main_box.append(&spacer);
-
         main_box.append(&action_area);
 
         window.set_child(Some(&main_box));

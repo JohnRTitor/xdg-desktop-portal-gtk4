@@ -54,13 +54,25 @@ pub fn setup_window<W: IsA<gtk4::Window> + IsA<gtk4::Widget>>(
                 // If the portal is on Wayland, but the client is XWayland (x11 handle),
                 // we open an X11 display explicitly so the dialog runs as an XWayland client,
                 // allowing us to properly use XSetTransientForHint.
-                if let Some(x11_display) = X11Display::open(None) {
-                    window.set_display(&x11_display);
-                    window.realize();
-                    set_x11_parent(window.upcast_ref::<gtk4::Widget>(), xid);
-                } else {
-                    log::warn!("Failed to open X11 display for XWayland fallback.");
+                thread_local! {
+                    static X11_FALLBACK_DISPLAY: std::cell::RefCell<Option<X11Display>> = std::cell::RefCell::new(None);
                 }
+
+                X11_FALLBACK_DISPLAY.with(|cache| {
+                    let mut display_opt = cache.borrow_mut();
+                    if display_opt.is_none() {
+                        *display_opt = X11Display::open(None)
+                            .and_then(|d| d.downcast::<X11Display>().ok());
+                    }
+                    
+                    if let Some(x11_display) = display_opt.as_ref() {
+                        window.set_display(x11_display);
+                        window.realize();
+                        set_x11_parent(window.upcast_ref::<gtk4::Widget>(), xid);
+                    } else {
+                        log::warn!("Failed to open X11 display for XWayland fallback.");
+                    }
+                });
             } else {
                 log::warn!("X11 parent handle provided but portal backend is unsupported.");
             }

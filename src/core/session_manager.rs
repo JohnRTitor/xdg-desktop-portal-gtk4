@@ -13,8 +13,8 @@ pub enum SessionError {
 
 #[derive(Default)]
 pub struct SessionManagerState {
-    // Maps sender -> list of (object_path, cancel_sender)
-    sender_objects: HashMap<String, Vec<(String, Sender<()>)>>,
+    // Maps sender -> list of (object_path, app_id, cancel_sender)
+    sender_objects: HashMap<String, Vec<(String, String, Sender<()>)>>,
 
     // Maps app_id -> count of active sessions
     app_sessions: HashMap<String, usize>,
@@ -58,7 +58,7 @@ impl SessionManager {
             .sender_objects
             .entry(sender.to_string())
             .or_default()
-            .push((object_path.to_string(), cancel));
+            .push((object_path.to_string(), app_id.to_string(), cancel));
 
         Ok(())
     }
@@ -75,7 +75,7 @@ impl SessionManager {
         }
 
         if let Some(objects) = state.sender_objects.get_mut(sender) {
-            objects.retain(|(p, _)| p != object_path);
+            objects.retain(|(p, _, _)| p != object_path);
             if objects.is_empty() {
                 state.sender_objects.remove(sender);
             }
@@ -95,10 +95,20 @@ impl SessionManager {
 
                 let objects_to_close = {
                     let mut state = self.state.lock().unwrap();
-                    state.sender_objects.remove(name).unwrap_or_default()
+                    let closed = state.sender_objects.remove(name).unwrap_or_default();
+                    
+                    for (_, app_id, _) in &closed {
+                        if let Some(count) = state.app_sessions.get_mut(app_id) {
+                            *count = count.saturating_sub(1);
+                            if *count == 0 {
+                                state.app_sessions.remove(app_id);
+                            }
+                        }
+                    }
+                    closed
                 };
 
-                for (path, cancel) in objects_to_close {
+                for (path, _, cancel) in objects_to_close {
                     log::info!("Client {} disconnected, cancelling {}", name, path);
                     let _ = cancel.send(()).await;
                 }

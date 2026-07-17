@@ -49,9 +49,7 @@ struct PortalNotification {
 }
 
 pub struct Notification {
-    // Maps portal-assigned ID (`app_id::id`) to the system D-Bus notification ID.
-    // This allows us to track notifications so we can replace or close them later.
-    active_notifications: std::sync::Arc<Mutex<HashMap<String, u32>>>,
+    active_notifications: std::sync::Arc<Mutex<HashMap<(String, String), u32>>>,
     // Maps system D-Bus notification ID back to the portal app_id, portal_id, and action targets.
     // This is needed so we can correctly propagate the `ActionInvoked` signal back to the sandboxed app.
     reverse_map: std::sync::Arc<Mutex<HashMap<u32, (String, String, HashMap<String, OwnedValue>)>>>,
@@ -65,10 +63,6 @@ impl Notification {
             reverse_map: std::sync::Arc::new(Mutex::new(HashMap::new())),
             init_once: std::sync::Once::new(),
         }
-    }
-
-    fn get_key(app_id: &str, id: &str) -> String {
-        format!("{}::{}", app_id, id)
     }
 }
 
@@ -147,7 +141,7 @@ impl Notification {
 
         if let Ok(system_bus) = Connection::session().await {
             if let Ok(proxy) = NotificationsProxy::new(&system_bus).await {
-                let key = Self::get_key(&app_id, &id);
+                let key = (app_id.clone(), id.clone());
                 let replaces_id = {
                     let mut lock = self
                         .active_notifications
@@ -155,6 +149,12 @@ impl Notification {
                         .unwrap_or_else(|e| e.into_inner());
                     *lock.entry(key.clone()).or_insert(0)
                 };
+
+                if replaces_id != 0 {
+                    if let Ok(mut lock) = self.reverse_map.lock() {
+                        lock.remove(&replaces_id);
+                    }
+                }
 
                 let hints = HashMap::new(); // desktop-entry could be added
 
@@ -208,7 +208,7 @@ impl Notification {
     }
 
     async fn remove_notification(&self, app_id: String, id: String) {
-        let key = Self::get_key(&app_id, &id);
+        let key = (app_id, id);
         let fdo_id = if let Ok(mut lock) = self.active_notifications.lock() {
             lock.remove(&key)
         } else {
@@ -295,7 +295,7 @@ async fn listen_for_action_invoked(
 
 async fn listen_for_notification_closed(
     reverse_map: std::sync::Arc<Mutex<HashMap<u32, (String, String, HashMap<String, OwnedValue>)>>>,
-    active_notifications: std::sync::Arc<Mutex<HashMap<String, u32>>>,
+    active_notifications: std::sync::Arc<Mutex<HashMap<(String, String), u32>>>,
 ) -> zbus::Result<()> {
     let session_bus = Connection::session().await?;
     let proxy = NotificationsProxy::new(&session_bus).await?;
@@ -307,7 +307,7 @@ async fn listen_for_notification_closed(
         
         let removed_key = if let Ok(mut lock) = reverse_map.lock() {
             if let Some((app_id, portal_id, _)) = lock.remove(&id) {
-                Some(Notification::get_key(&app_id, &portal_id))
+                Some((app_id, portal_id))
             } else {
                 None
             }
@@ -327,16 +327,6 @@ async fn listen_for_notification_closed(
 #[cfg(test)]
 mod tests {
     use {super::*, zbus::zvariant::Type};
-
-    #[test]
-    fn test_get_key() {
-        assert_eq!(Notification::get_key("org.app", "123"), "org.app::123");
-    }
-
-    #[test]
-    fn test_get_key_empty() {
-        assert_eq!(Notification::get_key("", ""), "::");
-    }
 
     #[test]
     fn test_portal_notification_signature() {

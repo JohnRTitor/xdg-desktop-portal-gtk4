@@ -242,12 +242,11 @@ impl Inhibit {
         let app_id_clone = app_id.clone();
         let sender_clone = sender.clone();
         gtk4::glib::MainContext::default().spawn(async move {
-            if let Ok(_) = rx.recv().await {
-                if let Ok(mut lock) = monitors_clone2.lock() {
-                    lock.remove(&handle_clone);
-                }
-                session_manager_clone.unregister(&app_id_clone, &sender_clone, session_handle_clone.as_str());
+            let _ = rx.recv().await;
+            if let Ok(mut lock) = monitors_clone2.lock() {
+                lock.remove(&handle_clone);
             }
+            session_manager_clone.unregister(&app_id_clone, &sender_clone, session_handle_clone.as_str());
         });
 
         let handle_clone2 = handle.clone();

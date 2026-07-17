@@ -75,15 +75,26 @@ impl AppChooserUi {
         list_box.set_selection_mode(gtk4::SelectionMode::Single);
         scrolled_window.set_child(Some(&list_box));
 
-        populate_list_box(&list_box, &self.choices, self.content_type.as_deref());
+        let all_apps = AppInfo::all();
+        let recommended_apps = if let Some(ct) = self.content_type.as_deref() {
+            let recommended = AppInfo::recommended_for_type(ct);
+            if recommended.is_empty() {
+                all_apps.clone()
+            } else {
+                recommended
+            }
+        } else {
+            all_apps.clone()
+        };
+
+        populate_list_box(&list_box, &self.choices, &all_apps, &recommended_apps);
 
         // Spawn a task to listen for `UpdateChoices` D-Bus calls.
         // It runs on the main thread, so it can safely call `populate_list_box` to update GTK widgets.
         let list_box_clone2 = list_box.clone();
-        let content_type = self.content_type.clone();
         context.spawn_local(async move {
             while let Ok(new_choices) = update_receiver.recv().await {
-                populate_list_box(&list_box_clone2, &new_choices, content_type.as_deref());
+                populate_list_box(&list_box_clone2, &new_choices, &all_apps, &recommended_apps);
             }
         });
 
@@ -149,13 +160,12 @@ impl AppChooserUi {
     }
 }
 
-fn populate_list_box(list_box: &ListBox, choices: &[String], content_type: Option<&str>) {
+fn populate_list_box(list_box: &ListBox, choices: &[String], all_apps: &[AppInfo], recommended_apps: &[AppInfo]) {
     // Clear existing children
     while let Some(child) = list_box.first_child() {
         list_box.remove(&child);
     }
 
-    let all_apps = AppInfo::all();
     let mut apps_to_show = Vec::new();
 
     if !choices.is_empty() {
@@ -164,19 +174,12 @@ fn populate_list_box(list_box: &ListBox, choices: &[String], content_type: Optio
         for app in all_apps {
             if let Some(id) = app.id() {
                 if choices.contains(&id.to_string()) {
-                    apps_to_show.push(app);
+                    apps_to_show.push(app.clone());
                 }
             }
         }
-    } else if let Some(ct) = content_type {
-        // Otherwise, if a content type was provided, we ask GIO for recommended apps.
-        apps_to_show = AppInfo::recommended_for_type(ct);
-        if apps_to_show.is_empty() {
-            // Fallback to all apps if no specific recommendations exist.
-            apps_to_show = AppInfo::all();
-        }
     } else {
-        apps_to_show = all_apps;
+        apps_to_show = recommended_apps.to_vec();
     }
 
     apps_to_show.sort_by(|a, b| a.name().cmp(&b.name()));
