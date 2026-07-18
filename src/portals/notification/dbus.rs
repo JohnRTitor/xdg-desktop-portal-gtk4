@@ -83,13 +83,11 @@ impl Notification {
         let title = notification
             .get("title")
             .and_then(|v| <&str>::try_from(v).ok())
-            .unwrap_or("")
-            .to_string();
+            .unwrap_or("");
         let body = notification
             .get("body")
             .and_then(|v| <&str>::try_from(v).ok())
-            .unwrap_or("")
-            .to_string();
+            .unwrap_or("");
 
         let icon = if let Some(v) = notification.get("icon") {
             if let Ok(s) = <&str>::try_from(v) {
@@ -163,8 +161,8 @@ impl Notification {
                         &app_id,
                         replaces_id,
                         icon,
-                        &title,
-                        &body,
+                        title,
+                        body,
                         &actions,
                         &hints,
                         -1,
@@ -216,6 +214,9 @@ impl Notification {
             None
         };
         if let Some(fdo_id) = fdo_id {
+            if let Ok(mut lock) = self.reverse_map.lock() {
+                lock.remove(&fdo_id);
+            }
             if let Ok(system_bus) = Connection::session().await {
                 if let Ok(proxy) = NotificationsProxy::new(&system_bus).await {
                     let _ = proxy.close_notification(fdo_id).await;
@@ -304,7 +305,7 @@ async fn listen_for_notification_closed(
     while let Some(signal) = stream.next().await {
         let args = signal.args()?;
         let id = args.id;
-        
+
         let removed_key = if let Ok(mut lock) = reverse_map.lock() {
             if let Some((app_id, portal_id, _)) = lock.remove(&id) {
                 Some((app_id, portal_id))
@@ -314,7 +315,7 @@ async fn listen_for_notification_closed(
         } else {
             None
         };
-        
+
         if let Some(key) = removed_key {
             if let Ok(mut lock) = active_notifications.lock() {
                 lock.remove(&key);

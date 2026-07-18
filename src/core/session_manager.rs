@@ -1,8 +1,11 @@
 use {
     async_channel::Sender,
     futures_util::stream::StreamExt,
-    std::{collections::HashMap, sync::{Arc, Mutex}},
-    zbus::{fdo::DBusProxy, Connection},
+    std::{
+        collections::HashMap,
+        sync::{Arc, Mutex},
+    },
+    zbus::{Connection, fdo::DBusProxy},
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -46,19 +49,25 @@ impl SessionManager {
     ) -> Result<(), SessionError> {
         let mut state = self.state.lock().unwrap();
 
-        let count = state.app_sessions.entry(app_id.to_string()).or_insert(0);
-        if *count >= self.max_sessions_per_app {
+        let current_count = state.app_sessions.get(app_id).copied().unwrap_or(0);
+        if current_count >= self.max_sessions_per_app {
             return Err(SessionError::LimitExceeded {
                 app_id: app_id.to_string(),
             });
         }
 
-        *count += 1;
-        state
-            .sender_objects
-            .entry(sender.to_string())
-            .or_default()
-            .push((object_path.to_string(), app_id.to_string(), cancel));
+        if let Some(count) = state.app_sessions.get_mut(app_id) {
+            *count += 1;
+        } else {
+            state.app_sessions.insert(app_id.to_string(), 1);
+        }
+
+        let sender_list = if state.sender_objects.contains_key(sender) {
+            state.sender_objects.get_mut(sender).unwrap()
+        } else {
+            state.sender_objects.entry(sender.to_string()).or_default()
+        };
+        sender_list.push((object_path.to_string(), app_id.to_string(), cancel));
 
         Ok(())
     }
@@ -90,13 +99,17 @@ impl SessionManager {
         while let Some(signal) = name_owner_changed.next().await {
             let args = signal.args()?;
             // If new_owner is empty, it means the name was lost (disconnected)
-            if args.new_owner().as_ref().map_or(true, |n| n.as_str().is_empty()) {
+            if args
+                .new_owner()
+                .as_ref()
+                .map_or(true, |n| n.as_str().is_empty())
+            {
                 let name = args.name().as_str();
 
                 let objects_to_close = {
                     let mut state = self.state.lock().unwrap();
                     let closed = state.sender_objects.remove(name).unwrap_or_default();
-                    
+
                     for (_, app_id, _) in &closed {
                         if let Some(count) = state.app_sessions.get_mut(app_id) {
                             *count = count.saturating_sub(1);

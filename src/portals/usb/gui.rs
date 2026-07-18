@@ -73,8 +73,8 @@ impl UsbUi {
 
         let checks: Rc<Vec<CheckButton>> =
             Rc::new(self.devices.iter().map(|_| CheckButton::new()).collect());
-            
-        let weak_checks: Rc<Vec<gtk4::glib::WeakRef<CheckButton>>> = 
+
+        let weak_checks: Rc<Vec<gtk4::glib::WeakRef<CheckButton>>> =
             Rc::new(checks.iter().map(|c| c.downgrade()).collect());
 
         for (i, device) in self.devices.iter().enumerate() {
@@ -115,15 +115,19 @@ impl UsbUi {
             row.set_child(Some(&hbox));
             list_box.append(&row);
 
-            let ok_button_clone = ok_button.clone();
+            let ok_button_weak = ok_button.downgrade();
             let weak_checks_clone = weak_checks.clone();
             check.connect_toggled(move |_| {
-                let any_checked = weak_checks_clone.iter().filter_map(|w| w.upgrade()).any(|c| c.is_active());
-                ok_button_clone.set_sensitive(any_checked);
+                let any_checked = weak_checks_clone
+                    .iter()
+                    .filter_map(|w| w.upgrade())
+                    .any(|c| c.is_active());
+                if let Some(btn) = ok_button_weak.upgrade() {
+                    btn.set_sensitive(any_checked);
+                }
             });
         }
 
-        let checks_final = checks.clone();
         let devices = self.devices;
         let window = dialog.window.clone();
 
@@ -144,11 +148,14 @@ impl UsbUi {
 
         let send_ok = send.clone();
         let w_ok = window.downgrade();
+        let checks_weak_ok = weak_checks.clone();
         ok_button.connect_clicked(move |_| {
             let mut selected = Vec::new();
-            for (i, check) in checks_final.iter().enumerate() {
-                if check.is_active() {
-                    selected.push((devices[i].id.clone(), devices[i].access_options.clone()));
+            for (i, check_weak) in checks_weak_ok.iter().enumerate() {
+                if let Some(check) = check_weak.upgrade() {
+                    if check.is_active() {
+                        selected.push((devices[i].id.clone(), devices[i].access_options.clone()));
+                    }
                 }
             }
             let res = if selected.is_empty() {

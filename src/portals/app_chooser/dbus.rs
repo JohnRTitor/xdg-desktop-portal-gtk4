@@ -36,14 +36,14 @@ pub struct AppChooser {
     // while the dialog is open (e.g., if it finds new apps). We maintain a map
     // of active request handles to channel senders so we can pipe these updates
     // to the running GTK dialogs.
-    active_dialogs: Mutex<HashMap<OwnedObjectPath, Sender<Vec<String>>>>,
+    active_dialogs: std::sync::Arc<Mutex<HashMap<OwnedObjectPath, Sender<Vec<String>>>>>,
 }
 
 impl AppChooser {
     pub fn new(proxy: &UiProxy) -> Self {
         Self {
             proxy: proxy.clone(),
-            active_dialogs: Mutex::new(HashMap::new()),
+            active_dialogs: std::sync::Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -55,11 +55,29 @@ impl AppChooser {
         choices: Vec<String>,
         options: ChooseApplicationOptions,
     ) -> Response<ChooseApplicationResults> {
+        struct ActiveDialogGuard {
+            active_dialogs: std::sync::Arc<Mutex<HashMap<OwnedObjectPath, Sender<Vec<String>>>>>,
+            handle: OwnedObjectPath,
+        }
+
+        impl Drop for ActiveDialogGuard {
+            fn drop(&mut self) {
+                if let Ok(mut lock) = self.active_dialogs.lock() {
+                    lock.remove(&self.handle);
+                }
+            }
+        }
+
         let (update_sender, update_receiver) = async_channel::bounded(10);
 
         if let Ok(mut lock) = self.active_dialogs.lock() {
             lock.insert(handle.clone(), update_sender);
         }
+
+        let _guard = ActiveDialogGuard {
+            active_dialogs: self.active_dialogs.clone(),
+            handle: handle.clone(),
+        };
 
         let ui = AppChooserUi {
             app_id,
@@ -72,10 +90,6 @@ impl AppChooser {
         };
 
         let res = ui.run(&self.proxy, update_receiver).await;
-
-        if let Ok(mut lock) = self.active_dialogs.lock() {
-            lock.remove(&handle);
-        }
 
         match res {
             Ok(result) => {

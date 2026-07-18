@@ -98,9 +98,11 @@ impl AppChooserUi {
             }
         });
 
-        let ok_button_clone = ok_button.clone();
+        let ok_button_weak = ok_button.downgrade();
         list_box.connect_row_selected(move |_, row| {
-            ok_button_clone.set_sensitive(row.is_some());
+            if let Some(btn) = ok_button_weak.upgrade() {
+                btn.set_sensitive(row.is_some());
+            }
         });
 
         let list_box_clone = list_box.clone();
@@ -160,7 +162,12 @@ impl AppChooserUi {
     }
 }
 
-fn populate_list_box(list_box: &ListBox, choices: &[String], all_apps: &[AppInfo], recommended_apps: &[AppInfo]) {
+fn populate_list_box(
+    list_box: &ListBox,
+    choices: &[String],
+    all_apps: &[AppInfo],
+    recommended_apps: &[AppInfo],
+) {
     // Clear existing children
     while let Some(child) = list_box.first_child() {
         list_box.remove(&child);

@@ -16,6 +16,7 @@ pub struct CachedPrintJob {
     pub printer: gtk4::Printer,
     pub settings: gtk4::PrintSettings,
     pub page_setup: gtk4::PageSetup,
+    pub source_id: gtk4::glib::SourceId,
 }
 
 // Since `gtk4::Printer` and related objects are `!Send`, we must cache the print jobs
@@ -63,7 +64,6 @@ impl PrintUi {
             self.activation_token.as_deref(),
         );
 
-        let context_for_closure = context.clone();
         dialog.connect_response(move |d, r| {
             let res = match r {
                 ResponseType::Ok => {
@@ -101,6 +101,19 @@ impl PrintUi {
 
                         // Generate a random token to identify this job in the subsequent `Print` call.
                         let token: u32 = rand::random();
+                        let token_clone = token;
+
+                        // The XDG Desktop Portal Print specification expects the application to call `Print`
+                        // after `PreparePrint` successfully returns a token. We allow a 300-second (5 minute)
+                        // timeout for the application to generate its print document (e.g. PDF) and call `Print`.
+                        // If it takes longer or crashes, we evict the cached job to prevent a memory leak.
+                        let source_id =
+                            gtk4::glib::timeout_add_seconds_local_once(300, move || {
+                                PRINT_JOBS.with(|jobs| {
+                                    jobs.borrow_mut().remove(&token_clone);
+                                });
+                            });
+
                         PRINT_JOBS.with(|jobs| {
                             jobs.borrow_mut().insert(
                                 token,
@@ -110,17 +123,9 @@ impl PrintUi {
                                     printer,
                                     settings: settings_obj,
                                     page_setup: page_setup_obj,
+                                    source_id,
                                 },
                             );
-                        });
-
-                        let token_clone = token;
-                        let context_clone = context_for_closure.clone();
-                        context_clone.spawn_local(async move {
-                            gtk4::glib::timeout_future(std::time::Duration::from_secs(600)).await;
-                            PRINT_JOBS.with(|jobs| {
-                                jobs.borrow_mut().remove(&token_clone);
-                            });
                         });
 
                         Ok(PrintResult {
@@ -162,6 +167,9 @@ impl ExecutePrintUi {
         let job = PRINT_JOBS.with(|jobs| jobs.borrow_mut().remove(&self.token));
 
         if let Some(cached) = job {
+            // Cancel the eviction timeout since we are now executing the print job
+            cached.source_id.remove();
+
             let print_job = gtk4::PrintJob::new(
                 &cached.title,
                 &cached.printer,

@@ -100,9 +100,15 @@ impl Inhibit {
             .map(|s| s.as_str().to_string())
             .ok_or_else(|| zbus::fdo::Error::Failed("Missing sender".into()))?;
 
-        if let Err(e) = self.session_manager.register(&app_id, &sender, handle.as_str(), send.clone()) {
+        if let Err(e) =
+            self.session_manager
+                .register(&app_id, &sender, handle.as_str(), send.clone())
+        {
             let _ = server.remove::<InhibitRequest, _>(handle.clone()).await;
-            return Err(zbus::fdo::Error::Failed(format!("Session limit exceeded: {}", e)));
+            return Err(zbus::fdo::Error::Failed(format!(
+                "Session limit exceeded: {}",
+                e
+            )));
         }
 
         let server_clone = server.clone();
@@ -194,7 +200,9 @@ impl Inhibit {
                 drop(logind_fd);
 
                 // Unexport the Request
-                let _ = server_clone.remove::<InhibitRequest, _>(handle_clone.clone()).await;
+                let _ = server_clone
+                    .remove::<InhibitRequest, _>(handle_clone.clone())
+                    .await;
                 session_manager_clone.unregister(&app_id_clone, &sender, handle_clone.as_str());
             }
         });
@@ -219,7 +227,10 @@ impl Inhibit {
             None => return Ok(2),
         };
 
-        if let Err(e) = self.session_manager.register(&app_id, &sender, session_handle.as_str(), cancel_tx) {
+        if let Err(e) =
+            self.session_manager
+                .register(&app_id, &sender, session_handle.as_str(), cancel_tx)
+        {
             log::warn!("Session limit exceeded for monitor: {}", e);
             return Ok(2);
         }
@@ -227,7 +238,8 @@ impl Inhibit {
         let session = Session::new(session_handle.as_str().to_string(), Some(tx));
         if let Err(e) = server.at(session_handle.clone(), session).await {
             log::error!("Failed to export monitor session: {}", e);
-            self.session_manager.unregister(&app_id, &sender, session_handle.as_str());
+            self.session_manager
+                .unregister(&app_id, &sender, session_handle.as_str());
             return Ok(2); // Returning 2 as general error for create_monitor according to xdp-gtk
         }
 
@@ -237,30 +249,26 @@ impl Inhibit {
 
         let handle_clone = handle.clone();
         let session_handle_clone = session_handle.clone();
-        let monitors_clone2 = self.active_monitors.clone();
+        let monitors_clone = self.active_monitors.clone();
         let session_manager_clone = self.session_manager.clone();
         let app_id_clone = app_id.clone();
         let sender_clone = sender.clone();
+
         gtk4::glib::MainContext::default().spawn(async move {
-            let _ = rx.recv().await;
-            if let Ok(mut lock) = monitors_clone2.lock() {
+            futures_util::future::select(
+                std::pin::pin!(rx.recv()),
+                std::pin::pin!(cancel_rx.recv()),
+            )
+            .await;
+
+            if let Ok(mut lock) = monitors_clone.lock() {
                 lock.remove(&handle_clone);
             }
-            session_manager_clone.unregister(&app_id_clone, &sender_clone, session_handle_clone.as_str());
-        });
-
-        let handle_clone2 = handle.clone();
-        let session_handle_clone2 = session_handle.clone();
-        let monitors_clone3 = self.active_monitors.clone();
-        let session_manager_clone2 = self.session_manager.clone();
-        
-        gtk4::glib::MainContext::default().spawn(async move {
-            if let Ok(_) = cancel_rx.recv().await {
-                if let Ok(mut lock) = monitors_clone3.lock() {
-                    lock.remove(&handle_clone2);
-                }
-                session_manager_clone2.unregister(&app_id, &sender, session_handle_clone2.as_str());
-            }
+            session_manager_clone.unregister(
+                &app_id_clone,
+                &sender_clone,
+                session_handle_clone.as_str(),
+            );
         });
 
         let server_clone = server.clone();

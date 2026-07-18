@@ -3,7 +3,7 @@ use {
     async_channel::{Receiver, Sender},
     gtk4::{
         Button, Entry, Image, Label,
-        glib::{self, clone::Downgrade, MainContext},
+        glib::{self, MainContext, clone::Downgrade},
         prelude::{BoxExt, ButtonExt, EditableExt, GtkWindowExt, WidgetExt},
     },
     rust_i18n::t,

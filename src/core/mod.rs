@@ -48,10 +48,11 @@ impl Portal {
             .await
             .map_err(PortalError::Connection)?;
 
-        let session_manager = crate::core::session_manager::SessionManager::new(session.clone(), 10);
+        let session_manager =
+            crate::core::session_manager::SessionManager::new(session.clone(), 10);
         let session_manager_clone = session_manager.clone();
         let context = proxy.context.clone();
-        
+
         context.spawn_local(async move {
             if let Err(e) = session_manager_clone.run().await {
                 log::error!("SessionManager failed: {}", e);

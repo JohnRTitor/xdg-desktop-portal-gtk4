@@ -61,10 +61,10 @@ pub fn setup_window<W: IsA<gtk4::Window> + IsA<gtk4::Widget>>(
                 X11_FALLBACK_DISPLAY.with(|cache| {
                     let mut display_opt = cache.borrow_mut();
                     if display_opt.is_none() {
-                        *display_opt = X11Display::open(None)
-                            .and_then(|d| d.downcast::<X11Display>().ok());
+                        *display_opt =
+                            X11Display::open(None).and_then(|d| d.downcast::<X11Display>().ok());
                     }
-                    
+
                     if let Some(x11_display) = display_opt.as_ref() {
                         window.set_display(x11_display);
                         window.realize();
