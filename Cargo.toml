@@ -49,6 +49,7 @@ clap = { version = "4.6.2", features = ["derive"] }
 current_locale = "0.1.1"
 env_logger = "0.11.11"
 futures-util = "0.3.32"
+gdk-pixbuf = "0.22.0"
 gdk4-wayland = "0.11.4"
 gdk4-x11 = { version = "0.11.4", features = ["xlib"] }
 gtk4 = "0.11.4"

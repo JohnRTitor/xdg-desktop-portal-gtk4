@@ -1,17 +1,17 @@
 allow_action: _Allow
 allow_usb_access: Allow USB Access
 application_wants_to_access_information: An application wants to access your information
-cancel_action: _Cancel
+cancel_action: Cancel
 choose_an_application: Choose an application
-create_action: _Create
+create_action: Create
 create_web_application: Create Web Application
 deny_access_action: _Deny Access
-deny_action: _Deny
-grant_access_action: _Grant Access
+deny_action: Deny
+grant_access_action: Grant Access
 name: Name
-open_action: _Open
+open_action: Open
 open_files_read_only: Open files read-only
-save_action: _Save
+save_action: Save
 select_application_to_open: Select an application to open
 select_application_to_open_file: Select an application to open the file
 share_action: _Share

@@ -136,12 +136,20 @@ async fn test_settings_read_all_empty_namespaces() -> Result<(), Box<dyn std::er
 #[tokio::test]
 async fn test_inhibit_returns_success() -> Result<(), Box<dyn std::error::Error>> {
     skip_if_dbus_tests_disabled!();
+    let client_conn = zbus::Connection::session().await?;
     let _conn = Builder::session()?
-        .serve_at("/org/freedesktop/portal/desktop", Inhibit::new())?
+        .serve_at(
+            "/org/freedesktop/portal/desktop",
+            Inhibit::new(
+                xdg_desktop_portal_gtk4::core::session_manager::SessionManager::new(
+                    client_conn.clone(),
+                    10,
+                ),
+            ),
+        )?
         .build()
         .await?;
 
-    let client_conn = zbus::Connection::session().await?;
     let proxy = InhibitTestProxy::builder(&client_conn)
         .destination(_conn.unique_name().unwrap().clone())?
         .build()
