@@ -130,3 +130,54 @@ impl SessionManager {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use {super::*, zbus::Connection};
+
+    #[tokio::test]
+    async fn test_session_manager_register_unregister() {
+        let conn_result = Connection::session().await;
+        if conn_result.is_err() {
+            println!("Skipping dbus test because connection failed");
+            return;
+        }
+        let conn = conn_result.unwrap();
+        let manager = SessionManager::new(conn, 2);
+
+        let (send, _) = async_channel::bounded(1);
+
+        assert!(
+            manager
+                .register("app1", "sender1", "/path1", send.clone())
+                .is_ok()
+        );
+        assert!(
+            manager
+                .register("app1", "sender1", "/path2", send.clone())
+                .is_ok()
+        );
+
+        // Third should fail due to limit
+        let res = manager.register("app1", "sender2", "/path3", send.clone());
+        assert!(matches!(res, Err(SessionError::LimitExceeded { .. })));
+
+        // Unregister one
+        manager.unregister("app1", "sender1", "/path1");
+
+        // Now registering should succeed
+        assert!(
+            manager
+                .register("app1", "sender2", "/path3", send.clone())
+                .is_ok()
+        );
+
+        // Unregister remaining
+        manager.unregister("app1", "sender1", "/path2");
+        manager.unregister("app1", "sender2", "/path3");
+
+        let state = manager.state.lock().unwrap();
+        assert!(state.app_sessions.is_empty());
+        assert!(state.sender_objects.is_empty());
+    }
+}

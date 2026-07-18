@@ -47,6 +47,8 @@ rustPlatform.buildRustPackage {
   dontUseNinjaConfigure = true;
   dontUseNinjaBuild = true;
   dontUseNinjaInstall = true;
+  dontUseNinjaCheck = true;
+  dontUseMesonCheck = true;
 
   mesonFlags = [
     "--libexecdir=libexec"
@@ -55,14 +57,41 @@ rustPlatform.buildRustPackage {
 
   nativeCheckInputs = lib.optionals withDbusTests [ dbus ];
 
+  cargoTestFlags = lib.optionals withDbusTests [
+    "--"
+    "--test-threads=1"
+  ];
+
   preCheck = lib.optionalString withDbusTests ''
     export RUN_DBUS_TESTS=1
-    REAL_CARGO=$(command -v cargo)
-    mkdir -p bin
-    echo '#!/bin/sh' > bin/cargo
-    echo "exec dbus-run-session --config-file=${dbus}/share/dbus-1/session.conf -- $REAL_CARGO \"\$@\"" >> bin/cargo
-    chmod +x bin/cargo
-    export PATH=$(pwd)/bin:$PATH
+
+    # 1. Initialize a temporary directory for the D-Bus runtime socket
+    export XDG_RUNTIME_DIR=$(mktemp -d)
+
+    # 2. Launch the system's dbus-daemon in the background and capture its address
+    # We use --print-address=3 to cleanly output the connection string to a file descriptor
+    dbus-daemon --config-file=${dbus}/share/dbus-1/session.conf \
+                --print-address=3 \
+                --nofork \
+                3>dbus-address.txt &
+
+    # Save the process ID so we can cleanly terminate it during postCheck
+    DBUS_PID=$!
+
+    # 3. Wait for the background daemon to finish writing its address string
+    while [ ! -s dbus-address.txt ]; do
+      sleep 0.1
+    done
+
+    # 4. Export the address so Cargo's test runner picks it up natively
+    export DBUS_SESSION_BUS_ADDRESS=$(cat dbus-address.txt)
+  '';
+
+  # Clean up the background process after tests finish or fail
+  postCheck = lib.optionalString withDbusTests ''
+    if [ -n "$DBUS_PID" ]; then
+      kill "$DBUS_PID"
+    fi
   '';
 
   postInstall = ''

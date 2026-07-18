@@ -25,6 +25,7 @@ impl Print {
 
 #[derive(DeserializeDict, Type, Debug, Default)]
 #[zvariant(signature = "dict")]
+
 struct PreparePrintOptions {
     modal: Option<bool>,
     accept_label: Option<String>,
@@ -45,6 +46,7 @@ struct PreparePrintResults {
 
 #[derive(DeserializeDict, Type, Debug, Default)]
 #[zvariant(signature = "dict")]
+
 struct PrintOptions {
     modal: Option<bool>,
     token: Option<u32>,
@@ -193,5 +195,72 @@ mod tests {
     #[test]
     fn test_print_results_signature() {
         assert_eq!(PrintResults::SIGNATURE, "a{sv}");
+    }
+
+    #[test]
+    fn test_prepare_print_options_deserialize() {
+        use {
+            std::collections::HashMap,
+            zbus::zvariant::{Endian, Value, serialized::Context},
+        };
+
+        let mut dict = HashMap::new();
+        dict.insert("modal", Value::from(true));
+        dict.insert("accept_label", Value::from("Print It"));
+
+        let ctxt = Context::new_dbus(Endian::Little, 0);
+        let encoded = zbus::zvariant::to_bytes(ctxt, &dict).unwrap();
+        let options: PreparePrintOptions = encoded.deserialize().unwrap().0;
+
+        assert_eq!(options.modal, Some(true));
+        assert_eq!(options.accept_label.as_deref(), Some("Print It"));
+    }
+
+    #[test]
+    fn test_print_options_deserialize() {
+        use {
+            std::collections::HashMap,
+            zbus::zvariant::{Endian, Value, serialized::Context},
+        };
+
+        let mut dict = HashMap::new();
+        dict.insert("token", Value::from(12345u32));
+
+        let ctxt = Context::new_dbus(Endian::Little, 0);
+        let encoded = zbus::zvariant::to_bytes(ctxt, &dict).unwrap();
+        let options: PrintOptions = encoded.deserialize().unwrap().0;
+
+        assert_eq!(options.token, Some(12345));
+    }
+
+    #[test]
+    fn test_prepare_print_results_serialize() {
+        use {
+            std::collections::HashMap,
+            zbus::zvariant::{Endian, Value, serialized::Context},
+        };
+
+        let results = PreparePrintResults {
+            token: 999,
+            has_current_page: Some(true),
+            ..Default::default()
+        };
+
+        let ctxt = Context::new_dbus(Endian::Little, 0);
+        let encoded = zbus::zvariant::to_bytes(ctxt, &results).unwrap();
+        let decoded: HashMap<String, Value> = encoded.deserialize().unwrap().0;
+
+        assert_eq!(
+            decoded.get("token").unwrap().try_clone().unwrap(),
+            Value::from(999u32)
+        );
+        assert_eq!(
+            decoded
+                .get("has_current_page")
+                .unwrap()
+                .try_clone()
+                .unwrap(),
+            Value::from(true)
+        );
     }
 }

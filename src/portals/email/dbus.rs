@@ -231,4 +231,38 @@ mod tests {
     fn test_email_results_signature() {
         assert_eq!(EmailResults::SIGNATURE, "a{sv}");
     }
+
+    #[test]
+    fn test_compose_email_options_deserialize() {
+        use {
+            std::collections::HashMap,
+            zbus::zvariant::{Endian, Value, serialized::Context},
+        };
+
+        let mut dict = HashMap::new();
+        dict.insert("address", Value::from("test@example.com"));
+        dict.insert("subject", Value::from("Test Subject"));
+
+        let ctxt = Context::new_dbus(Endian::Little, 0);
+        let encoded = zbus::zvariant::to_bytes(ctxt, &dict).unwrap();
+        let options: ComposeEmailOptions = encoded.deserialize().unwrap().0;
+
+        assert_eq!(options.address.as_deref(), Some("test@example.com"));
+        assert_eq!(options.subject.as_deref(), Some("Test Subject"));
+    }
+
+    #[test]
+    fn test_email_results_serialize() {
+        use {
+            std::collections::HashMap,
+            zbus::zvariant::{Endian, Value, serialized::Context},
+        };
+
+        let results = EmailResults::default();
+        let ctxt = Context::new_dbus(Endian::Little, 0);
+        let encoded = zbus::zvariant::to_bytes(ctxt, &results).unwrap();
+        let decoded: HashMap<String, Value> = encoded.deserialize().unwrap().0;
+
+        assert!(decoded.is_empty());
+    }
 }

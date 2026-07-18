@@ -135,3 +135,73 @@ impl Access {
         .await
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use {
+        super::*,
+        std::collections::HashMap,
+        zbus::zvariant::{Endian, Value, serialized::Context},
+    };
+
+    #[test]
+    fn test_choice_signature() {
+        assert_eq!(Choice::SIGNATURE, "(ssa(ss)s)");
+    }
+
+    #[test]
+    fn test_access_dialog_options_deserialize() {
+        let mut dict = HashMap::new();
+        dict.insert("modal", Value::from(false));
+        dict.insert("deny_label", Value::from("No"));
+        dict.insert("grant_label", Value::from("Yes"));
+        dict.insert("icon", Value::from("icon-name"));
+        dict.insert("activation_token", Value::from("token123"));
+
+        let choice = (
+            "choice_id",
+            "choice_label",
+            vec![("variant_id", "variant_label")],
+            "default_variant",
+        );
+
+        dict.insert("choices", Value::from(vec![choice]));
+
+        let ctxt = Context::new_dbus(Endian::Little, 0);
+        let encoded = zbus::zvariant::to_bytes(ctxt, &dict).unwrap();
+        let options: AccessDialogOptions = encoded.deserialize().unwrap().0;
+
+        assert_eq!(options.modal, Some(false));
+        assert_eq!(options.deny_label.as_deref(), Some("No"));
+        assert_eq!(options.grant_label.as_deref(), Some("Yes"));
+        assert_eq!(options.icon.as_deref(), Some("icon-name"));
+        assert_eq!(options.activation_token.as_deref(), Some("token123"));
+        assert!(options.choices.is_some());
+    }
+
+    #[test]
+    fn test_access_dialog_options_empty() {
+        let dict: HashMap<&str, Value> = HashMap::new();
+        let ctxt = Context::new_dbus(Endian::Little, 0);
+        let encoded = zbus::zvariant::to_bytes(ctxt, &dict).unwrap();
+        let options: AccessDialogOptions = encoded.deserialize().unwrap().0;
+
+        assert_eq!(options.modal, None);
+        assert_eq!(options.deny_label, None);
+        assert!(options.choices.is_none());
+    }
+
+    #[test]
+    fn test_access_results_serialize() {
+        let results = AccessResults {
+            choices: Some(vec![("choice_id".to_string(), "variant_id".to_string())]),
+        };
+
+        let ctxt = Context::new_dbus(Endian::Little, 0);
+        let encoded = zbus::zvariant::to_bytes(ctxt, &results).unwrap();
+
+        let decoded: HashMap<String, Value> = encoded.deserialize().unwrap().0;
+        let choices = decoded.get("choices").unwrap();
+        assert_eq!(choices.value_signature(), "a(ss)");
+    }
+}

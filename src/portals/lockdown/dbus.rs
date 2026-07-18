@@ -103,3 +103,55 @@ impl LockdownPortal {
         ))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_lockdown_properties() {
+        let portal = LockdownPortal::new();
+
+        assert_eq!(portal.disable_printing().await, false);
+        assert!(matches!(
+            portal.set_disable_printing(true).await,
+            Err(zbus::fdo::Error::NotSupported(_))
+        ));
+
+        assert_eq!(portal.disable_save_to_disk().await, false);
+        assert!(matches!(
+            portal.set_disable_save_to_disk(true).await,
+            Err(zbus::fdo::Error::NotSupported(_))
+        ));
+
+        assert_eq!(portal.disable_application_handlers().await, false);
+        assert!(matches!(
+            portal.set_disable_application_handlers(true).await,
+            Err(zbus::fdo::Error::NotSupported(_))
+        ));
+
+        assert_eq!(portal.disable_location().await, false);
+        assert!(matches!(
+            portal.set_disable_location(true).await,
+            Err(zbus::fdo::Error::NotSupported(_))
+        ));
+
+        assert_eq!(portal.disable_camera().await, false);
+        assert!(matches!(
+            portal.set_disable_camera(true).await,
+            Err(zbus::fdo::Error::NotSupported(_))
+        ));
+
+        assert_eq!(portal.disable_microphone().await, false);
+        assert!(matches!(
+            portal.set_disable_microphone(true).await,
+            Err(zbus::fdo::Error::NotSupported(_))
+        ));
+
+        assert_eq!(portal.disable_sound_output().await, false);
+        assert!(matches!(
+            portal.set_disable_sound_output(true).await,
+            Err(zbus::fdo::Error::NotSupported(_))
+        ));
+    }
+}

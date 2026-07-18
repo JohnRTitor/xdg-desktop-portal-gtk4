@@ -164,3 +164,30 @@ async fn test_inhibit_returns_success() -> Result<(), Box<dyn std::error::Error>
 
     Ok(())
 }
+
+#[tokio::test]
+async fn test_settings_read_all_wildcard_namespaces() -> Result<(), Box<dyn std::error::Error>> {
+    skip_if_dbus_tests_disabled!();
+    let _conn = zbus::Connection::session().await?;
+    let server = _conn.object_server();
+    server
+        .at(
+            "/org/freedesktop/portal/desktop",
+            SettingsPortal::new(server.clone()),
+        )
+        .await?;
+
+    let client_conn = zbus::Connection::session().await?;
+    let proxy = SettingsProxy::builder(&client_conn)
+        .destination(_conn.unique_name().unwrap().clone())?
+        .build()
+        .await?;
+
+    // Use a wildcard to read all under org.freedesktop.*
+    let res = proxy.read_all(&["org.freedesktop.*"]).await?;
+
+    // Depending on the environment, it may or may not return keys, but it shouldn't error.
+    assert!(res.is_empty() || !res.is_empty());
+
+    Ok(())
+}

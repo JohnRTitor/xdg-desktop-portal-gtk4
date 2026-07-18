@@ -110,7 +110,6 @@ impl Notification {
         notification: PortalNotification,
         #[zbus(object_server)] server: &ObjectServer,
     ) {
-
         let title_ref = notification.title.as_deref().unwrap_or("");
         let body_ref = notification
             .markup_body
@@ -662,5 +661,27 @@ mod tests {
         assert!(options.contains_key("body"));
         assert!(options.contains_key("icon"));
         assert!(options.contains_key("default-action"));
+    }
+
+    #[test]
+    fn test_portal_notification_deserialize() {
+        use {
+            std::collections::HashMap,
+            zbus::zvariant::{Endian, Value, serialized::Context},
+        };
+
+        let mut dict = HashMap::new();
+        dict.insert("title", Value::from("Test Title"));
+        dict.insert("body", Value::from("Test Body"));
+        dict.insert("priority", Value::from("high"));
+
+        let ctxt = Context::new_dbus(Endian::Little, 0);
+        let encoded = zbus::zvariant::to_bytes(ctxt, &dict).unwrap();
+        let notification: PortalNotification = encoded.deserialize().unwrap().0;
+
+        assert_eq!(notification.title.as_deref(), Some("Test Title"));
+        assert_eq!(notification.body.as_deref(), Some("Test Body"));
+        assert_eq!(notification.priority.as_deref(), Some("high"));
+        assert_eq!(notification.category, None);
     }
 }

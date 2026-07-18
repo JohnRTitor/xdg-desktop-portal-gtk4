@@ -29,3 +29,27 @@ impl Session {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_session_close() {
+        let (send, recv) = async_channel::bounded(1);
+        let session = Session::new("test_session_id".to_string(), Some(send));
+
+        assert_eq!(session.id, "test_session_id");
+
+        session.close().await;
+
+        let received = recv.try_recv().unwrap();
+        assert_eq!(received, "test_session_id");
+    }
+
+    #[tokio::test]
+    async fn test_session_close_no_channel() {
+        let session = Session::new("test_session_id".to_string(), None);
+        session.close().await; // Should not panic
+    }
+}

@@ -586,4 +586,142 @@ mod tests {
             .await;
         assert!(matches!(res, Err(SaveFilesError::SpecialPath)));
     }
+
+    #[test]
+    fn test_open_file_options_deserialize() {
+        use {
+            std::collections::HashMap,
+            zbus::zvariant::{Endian, Value, serialized::Context},
+        };
+
+        let mut dict = HashMap::new();
+        dict.insert("modal", Value::from(true));
+        dict.insert("multiple", Value::from(false));
+        dict.insert("directory", Value::from(true));
+
+        let ctxt = Context::new_dbus(Endian::Little, 0);
+        let encoded = zbus::zvariant::to_bytes(ctxt, &dict).unwrap();
+        let options: OpenFileOptions = encoded.deserialize().unwrap().0;
+
+        assert_eq!(options.modal, Some(true));
+        assert_eq!(options.multiple, Some(false));
+        assert_eq!(options.directory, Some(true));
+    }
+
+    #[test]
+    fn test_save_file_options_deserialize() {
+        use {
+            std::collections::HashMap,
+            zbus::zvariant::{Endian, Value, serialized::Context},
+        };
+
+        let mut dict = HashMap::new();
+        dict.insert("modal", Value::from(true));
+        dict.insert("current_name", Value::from("new_file.txt"));
+
+        let ctxt = Context::new_dbus(Endian::Little, 0);
+        let encoded = zbus::zvariant::to_bytes(ctxt, &dict).unwrap();
+        let options: SaveFileOptions = encoded.deserialize().unwrap().0;
+
+        assert_eq!(options.modal, Some(true));
+        assert_eq!(options.current_name.as_deref(), Some("new_file.txt"));
+    }
+
+    #[test]
+    fn test_save_files_options_deserialize() {
+        use {
+            std::collections::HashMap,
+            zbus::zvariant::{Endian, Value, serialized::Context},
+        };
+
+        let mut dict = HashMap::new();
+        dict.insert("modal", Value::from(true));
+        dict.insert("accept_label", Value::from("Save Here"));
+
+        let ctxt = Context::new_dbus(Endian::Little, 0);
+        let encoded = zbus::zvariant::to_bytes(ctxt, &dict).unwrap();
+        let options: SaveFilesOptions = encoded.deserialize().unwrap().0;
+
+        assert_eq!(options.modal, Some(true));
+        assert_eq!(options.accept_label.as_deref(), Some("Save Here"));
+    }
+
+    #[test]
+    fn test_open_file_results_serialize() {
+        use {
+            std::collections::HashMap,
+            zbus::zvariant::{Endian, Value, serialized::Context},
+        };
+
+        let results = OpenFileResults {
+            uris: Some(vec!["file:///tmp/test.txt".to_string()]),
+            choices: Some(vec![("encoding".to_string(), "utf8".to_string())]),
+            current_filter: None,
+            writable: Some(true),
+        };
+
+        let ctxt = Context::new_dbus(Endian::Little, 0);
+        let encoded = zbus::zvariant::to_bytes(ctxt, &results).unwrap();
+        let decoded: HashMap<String, Value> = encoded.deserialize().unwrap().0;
+
+        let uris_val = decoded.get("uris").unwrap();
+        let uris: Vec<String> = uris_val.try_clone().unwrap().try_into().unwrap();
+        assert_eq!(uris, vec!["file:///tmp/test.txt".to_string()]);
+        assert_eq!(
+            decoded.get("writable").unwrap().try_clone().unwrap(),
+            Value::from(true)
+        );
+    }
+
+    #[test]
+    fn test_save_file_results_serialize() {
+        use {
+            std::collections::HashMap,
+            zbus::zvariant::{Endian, Value, serialized::Context},
+        };
+
+        let results = SaveFileResults {
+            uris: Some(vec!["file:///tmp/test.txt".to_string()]),
+            choices: None,
+            current_filter: None,
+        };
+
+        let ctxt = Context::new_dbus(Endian::Little, 0);
+        let encoded = zbus::zvariant::to_bytes(ctxt, &results).unwrap();
+        let decoded: HashMap<String, Value> = encoded.deserialize().unwrap().0;
+
+        let uris_val = decoded.get("uris").unwrap();
+        let uris: Vec<String> = uris_val.try_clone().unwrap().try_into().unwrap();
+        assert_eq!(uris, vec!["file:///tmp/test.txt".to_string()]);
+    }
+
+    #[test]
+    fn test_save_files_results_serialize() {
+        use {
+            std::collections::HashMap,
+            zbus::zvariant::{Endian, Value, serialized::Context},
+        };
+
+        let results = SaveFilesResults {
+            uris: Some(vec![
+                "file:///tmp/test1.txt".to_string(),
+                "file:///tmp/test2.txt".to_string(),
+            ]),
+            choices: None,
+        };
+
+        let ctxt = Context::new_dbus(Endian::Little, 0);
+        let encoded = zbus::zvariant::to_bytes(ctxt, &results).unwrap();
+        let decoded: HashMap<String, Value> = encoded.deserialize().unwrap().0;
+
+        let uris_val = decoded.get("uris").unwrap();
+        let uris: Vec<String> = uris_val.try_clone().unwrap().try_into().unwrap();
+        assert_eq!(
+            uris,
+            vec![
+                "file:///tmp/test1.txt".to_string(),
+                "file:///tmp/test2.txt".to_string()
+            ]
+        );
+    }
 }

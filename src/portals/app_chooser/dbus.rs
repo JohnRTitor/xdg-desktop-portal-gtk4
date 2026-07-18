@@ -14,6 +14,7 @@ use {
 
 #[derive(DeserializeDict, Type, Debug)]
 #[zvariant(signature = "dict")]
+
 pub struct ChooseApplicationOptions {
     last_choice: Option<String>,
     modal: Option<bool>,
@@ -194,5 +195,54 @@ mod tests {
         // Should succeed but do nothing
         let res = chooser.update_choices(path, vec![]).await;
         assert!(res.is_ok());
+    }
+
+    #[test]
+    fn test_choose_application_options_deserialize() {
+        use {
+            std::collections::HashMap,
+            zbus::zvariant::{Endian, Value, serialized::Context},
+        };
+
+        let mut dict = HashMap::new();
+        dict.insert("modal", Value::from(true));
+        dict.insert("uri", Value::from("file:///tmp/test.txt"));
+
+        let ctxt = Context::new_dbus(Endian::Little, 0);
+        let encoded = zbus::zvariant::to_bytes(ctxt, &dict).unwrap();
+        let options: ChooseApplicationOptions = encoded.deserialize().unwrap().0;
+
+        assert_eq!(options.modal, Some(true));
+        assert_eq!(options.uri.as_deref(), Some("file:///tmp/test.txt"));
+    }
+
+    #[test]
+    fn test_choose_application_results_serialize() {
+        use {
+            std::collections::HashMap,
+            zbus::zvariant::{Endian, Value, serialized::Context},
+        };
+
+        let results = ChooseApplicationResults {
+            choice: Some("app.desktop".to_string()),
+            activation_token: Some("token123".to_string()),
+        };
+
+        let ctxt = Context::new_dbus(Endian::Little, 0);
+        let encoded = zbus::zvariant::to_bytes(ctxt, &results).unwrap();
+        let decoded: HashMap<String, Value> = encoded.deserialize().unwrap().0;
+
+        assert_eq!(
+            decoded.get("choice").unwrap().try_clone().unwrap(),
+            Value::from("app.desktop")
+        );
+        assert_eq!(
+            decoded
+                .get("activation_token")
+                .unwrap()
+                .try_clone()
+                .unwrap(),
+            Value::from("token123")
+        );
     }
 }

@@ -24,6 +24,7 @@ impl DynamicLauncher {
 
 #[derive(DeserializeDict, Type, Debug, Default)]
 #[zvariant(signature = "dict")]
+
 struct PrepareInstallOptions {
     modal: Option<bool>,
     launcher_type: Option<u32>,
@@ -316,5 +317,53 @@ mod tests {
         let launcher = DynamicLauncher::new(&proxy);
         assert_eq!(launcher.supported_launcher_types(), 3);
         assert_eq!(launcher.version(), 1);
+    }
+
+    #[test]
+    fn test_prepare_install_options_deserialize() {
+        use {
+            std::collections::HashMap,
+            zbus::zvariant::{Endian, Value, serialized::Context},
+        };
+
+        let mut dict = HashMap::new();
+        dict.insert("modal", Value::from(true));
+        dict.insert("target", Value::from("https://example.com"));
+        dict.insert("launcher_type", Value::from(2u32));
+
+        let ctxt = Context::new_dbus(Endian::Little, 0);
+        let encoded = zbus::zvariant::to_bytes(ctxt, &dict).unwrap();
+        let options: PrepareInstallOptions = encoded.deserialize().unwrap().0;
+
+        assert_eq!(options.modal, Some(true));
+        assert_eq!(options.target.as_deref(), Some("https://example.com"));
+        assert_eq!(options.launcher_type, Some(2));
+        assert_eq!(options.editable_name, None);
+    }
+
+    #[test]
+    fn test_prepare_install_results_serialize() {
+        use {
+            std::collections::HashMap,
+            zbus::zvariant::{Endian, Value, serialized::Context},
+        };
+
+        let results = PrepareInstallResults {
+            name: "My Web App".to_string(),
+            icon_v: OwnedValue::try_from(Value::from("my-icon")).unwrap(),
+        };
+
+        let ctxt = Context::new_dbus(Endian::Little, 0);
+        let encoded = zbus::zvariant::to_bytes(ctxt, &results).unwrap();
+        let decoded: HashMap<String, Value> = encoded.deserialize().unwrap().0;
+
+        assert_eq!(
+            decoded.get("name").unwrap().try_clone().unwrap(),
+            Value::from("My Web App")
+        );
+        assert_eq!(
+            decoded.get("icon").unwrap().try_clone().unwrap(),
+            Value::from("my-icon")
+        );
     }
 }

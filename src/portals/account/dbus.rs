@@ -139,3 +139,64 @@ async fn fetch_user_data() -> zbus::Result<(String, String, String)> {
 
     Ok((user_name, real_name, icon_file))
 }
+
+#[cfg(test)]
+mod tests {
+    use {
+        super::*,
+        std::collections::HashMap,
+        zbus::zvariant::{Endian, Value, serialized::Context},
+    };
+
+    #[test]
+    fn test_get_user_information_options_deserialize() {
+        let mut dict = HashMap::new();
+        dict.insert("reason", Value::from("Because"));
+        dict.insert("activation_token", Value::from("token123"));
+
+        let ctxt = Context::new_dbus(Endian::Little, 0);
+        let encoded = zbus::zvariant::to_bytes(ctxt, &dict).unwrap();
+        let options: GetUserInformationOptions = encoded.deserialize().unwrap().0;
+
+        assert_eq!(options.reason.as_deref(), Some("Because"));
+        assert_eq!(options.activation_token.as_deref(), Some("token123"));
+    }
+
+    #[test]
+    fn test_get_user_information_options_empty() {
+        let dict: HashMap<&str, Value> = HashMap::new();
+        let ctxt = Context::new_dbus(Endian::Little, 0);
+        let encoded = zbus::zvariant::to_bytes(ctxt, &dict).unwrap();
+        let options: GetUserInformationOptions = encoded.deserialize().unwrap().0;
+
+        assert_eq!(options.reason, None);
+        assert_eq!(options.activation_token, None);
+    }
+
+    #[test]
+    fn test_user_information_serialize() {
+        let info = UserInformation {
+            id: "user1".to_string(),
+            name: "User One".to_string(),
+            image: "file:///icon.png".to_string(),
+        };
+
+        let ctxt = Context::new_dbus(Endian::Little, 0);
+        let encoded = zbus::zvariant::to_bytes(ctxt, &info).unwrap();
+
+        let decoded: HashMap<String, Value> = encoded.deserialize().unwrap().0;
+
+        assert_eq!(
+            decoded.get("id").unwrap().try_clone().unwrap(),
+            Value::from("user1")
+        );
+        assert_eq!(
+            decoded.get("name").unwrap().try_clone().unwrap(),
+            Value::from("User One")
+        );
+        assert_eq!(
+            decoded.get("image").unwrap().try_clone().unwrap(),
+            Value::from("file:///icon.png")
+        );
+    }
+}

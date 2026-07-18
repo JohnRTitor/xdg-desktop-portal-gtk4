@@ -1,4 +1,4 @@
-# Testing Portal Documentation
+# Testing Documentation
 
 This document provides a comprehensive guide for manually testing the `xdg-desktop-portal-gtk4` implementation. It details the implemented D-Bus interfaces, object paths, bus names, and provides exact commands to test every portal method and monitor signals.
 
@@ -31,6 +31,31 @@ This document provides a comprehensive guide for manually testing the `xdg-deskt
    ```bash
    systemctl --user restart xdg-desktop-portal
    ```
+
+## Automated Testing
+
+The codebase includes an extensive suite of automated tests. You can run all standard unit tests and mocked integration tests using Cargo:
+
+```bash
+cargo test
+```
+
+### D-Bus Integration Tests
+
+Some tests interact directly with the D-Bus daemon to verify correct portal exporting and signal emission. Because these tests require a live session bus and can be sensitive to the environment, they are disabled by default.
+
+To run the D-Bus integration tests, you must explicitly enable them using the `RUN_DBUS_TESTS` environment variable:
+
+```bash
+RUN_DBUS_TESTS=1 cargo test --test dbus_portals_test
+```
+
+> **Note:** Tests executing on the dbus daemon execute in multiple concurrent Tokio worker threads by default. However, some portals (like `SettingsPortal`) leverage GTK's glib main loop via `spawn_local`, which assumes thread exclusivity. This occasionally triggers a panic (`Failed to acquire ownership of main context, already acquired by another thread`).
+> 
+> To circumvent this, the dbus tests have to run sequentially:
+> ```bash
+> RUN_DBUS_TESTS=1 cargo test --test dbus_portals_test -- --test-threads=1
+> ```
 
 ## Debugging
 

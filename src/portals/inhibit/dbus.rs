@@ -334,3 +334,34 @@ impl Inhibit {
         state: HashMap<String, Value<'_>>,
     ) -> zbus::Result<()>;
 }
+
+#[cfg(test)]
+mod tests {
+    use {
+        super::*,
+        std::collections::HashMap,
+        zbus::zvariant::{Endian, Value, serialized::Context},
+    };
+
+    #[test]
+    fn test_inhibit_options_deserialize() {
+        let mut dict = HashMap::new();
+        dict.insert("reason", Value::from("Playing a movie"));
+
+        let ctxt = Context::new_dbus(Endian::Little, 0);
+        let encoded = zbus::zvariant::to_bytes(ctxt, &dict).unwrap();
+        let options: InhibitOptions = encoded.deserialize().unwrap().0;
+
+        assert_eq!(options.reason.as_deref(), Some("Playing a movie"));
+    }
+
+    #[test]
+    fn test_inhibit_options_empty() {
+        let dict: HashMap<&str, Value> = HashMap::new();
+        let ctxt = Context::new_dbus(Endian::Little, 0);
+        let encoded = zbus::zvariant::to_bytes(ctxt, &dict).unwrap();
+        let options: InhibitOptions = encoded.deserialize().unwrap().0;
+
+        assert_eq!(options.reason, None);
+    }
+}

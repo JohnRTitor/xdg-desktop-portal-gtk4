@@ -175,4 +175,29 @@ mod tests {
     fn test_usb_results_signature() {
         assert_eq!(UsbResults::SIGNATURE, "a{sv}");
     }
+
+    #[test]
+    fn test_usb_results_serialize() {
+        use zbus::zvariant::{Endian, Value, serialized::Context};
+
+        let mut props = HashMap::new();
+        props.insert(
+            "name".to_string(),
+            zbus::zvariant::OwnedValue::try_from(Value::from("Test USB")).unwrap(),
+        );
+
+        let results = UsbResults {
+            devices: vec![("device1".to_string(), props)],
+        };
+
+        let ctxt = Context::new_dbus(Endian::Little, 0);
+        let encoded = zbus::zvariant::to_bytes(ctxt, &results).unwrap();
+        let decoded: HashMap<String, Value> = encoded.deserialize().unwrap().0;
+
+        let _decoded_devices_val = decoded.get("devices").unwrap();
+        // Since signature is a{sv}, devices is returned as Value.
+        // In UsbResults, devices is `a(sa{sv})`.
+        // Let's just ensure it's not empty and serialization worked.
+        assert!(decoded.contains_key("devices"));
+    }
 }
