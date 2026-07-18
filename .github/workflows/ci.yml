@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  pull_request:
+    paths:
+      - '**.rs'
+      - '**Cargo.toml'
+      - '**Cargo.lock'
+  push:
+    paths:
+      - '**.rs'
+      - '**Cargo.toml'
+      - '**Cargo.lock'
+
+env:
+  CARGO_TERM_COLOR: always
+  SCCACHE_GHA_ENABLED: "true"
+  RUSTC_WRAPPER: "sccache"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        toolchain: [stable, nightly]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mozilla-actions/sccache-action@v0.0.9
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.toolchain }}
+      - uses: taiki-e/install-action@cargo-nextest
+      - run: sudo apt-get update && sudo apt-get install -y libgtk-4-dev
+      - run: cargo nextest run --workspace --locked
+
+  matrix-distro:
+    strategy:
+      fail-fast: false
+      matrix:
+        distro:
+          - fedora:latest
+          - archlinux:latest
+    runs-on: ubuntu-latest
+    container:
+      image: ${{ matrix.distro }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies (Fedora)
+        if: contains(matrix.distro, 'fedora')
+        run: |
+          dnf install -y gcc gtk4-devel git rust cargo
+      - name: Install dependencies (Arch Linux)
+        if: contains(matrix.distro, 'archlinux')
+        run: |
+          pacman -Syu --noconfirm base-devel gtk4 git rust cargo
+      - name: Build
+        run: cargo build --locked
+      - name: Test
+        run: cargo test --locked

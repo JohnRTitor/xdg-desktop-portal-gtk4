@@ -1,0 +1,31 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y libgtk-4-dev
+      - name: Build Release
+        run: cargo build --release --locked
+      - name: Strip Binary
+        run: strip target/release/xdg-desktop-portal-gtk4
+      - name: Package
+        run: |
+          tar -czvf xdg-desktop-portal-gtk4-linux-x86_64.tar.gz -C target/release xdg-desktop-portal-gtk4
+          sha256sum xdg-desktop-portal-gtk4-linux-x86_64.tar.gz > xdg-desktop-portal-gtk4-linux-x86_64.tar.gz.sha256
+      - name: Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            xdg-desktop-portal-gtk4-linux-x86_64.tar.gz
+            xdg-desktop-portal-gtk4-linux-x86_64.tar.gz.sha256
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

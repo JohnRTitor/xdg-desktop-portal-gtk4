@@ -49,3 +49,19 @@ To enter a development shell with all necessary dependencies configured:
 ```bash
 nix develop
 ```
+
+## Continuous Integration (CI)
+
+This project uses GitHub Actions for continuous integration, inspired by the robust practices of `swww` and `Waybar`.
+
+### Workflows
+
+- **Lint (`lint.yml`)**: Checks code formatting (`cargo fmt`), linting (`cargo clippy`), and documentation generation (`cargo doc`). Runs on PRs and pushes to `master`. Uses `sccache` for faster builds.
+- **CI (`ci.yml`)**: Compiles and tests the project.
+  - **Toolchain Matrix**: Runs `cargo nextest` across `stable` and `nightly` Rust toolchains natively on Ubuntu.
+  - **Distro Matrix**: Verifies the build compiles correctly on different Linux distributions (`fedora` and `archlinux`) using containers.
+- **Release (`release.yml`)**: Automatically triggered on tags starting with `v*`. Compiles an optimized release binary for `x86_64`, strips it, creates a `.tar.gz` archive, and publishes it to GitHub Releases.
+
+### Caching
+
+To reduce CI execution time, the project heavily utilizes `mozilla-actions/sccache-action`. Compilation artifacts and dependencies are cached across runs, significantly speeding up PR checks.
