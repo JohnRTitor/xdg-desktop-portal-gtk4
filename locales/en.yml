@@ -5,7 +5,7 @@ cancel_action: Cancel
 choose_an_application: Choose an application
 create_action: Create
 create_web_application: Create Web Application
-deny_access_action: _Deny Access
+deny_access_action: Deny Access
 deny_action: Deny
 grant_access_action: Grant Access
 name: Name
