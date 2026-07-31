@@ -121,7 +121,7 @@ impl Account {
 /// Fetches the current user's profile information from AccountsService via D-Bus.
 async fn fetch_user_data() -> zbus::Result<(String, String, String)> {
     // We assume the portal is running as the user invoking the application.
-    let uid = unsafe { libc::getuid() };
+    let uid = nix::unistd::getuid().as_raw();
 
     // AccountsService exposes user objects at paths like `/org/freedesktop/Accounts/User1000`.
     let path = format!("/org/freedesktop/Accounts/User{}", uid);

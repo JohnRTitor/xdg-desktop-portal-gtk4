@@ -1,11 +1,6 @@
 use {
     log::{Level, LevelFilter},
-    std::{
-        env,
-        fs::File,
-        mem::ManuallyDrop,
-        os::{fd::FromRawFd, linux::fs::MetadataExt},
-    },
+    std::{env, fs::File, os::linux::fs::MetadataExt},
 };
 
 pub fn init() {
@@ -48,7 +43,11 @@ fn stderr_is_journal() -> bool {
     let Ok(ino) = ino.parse::<u64>() else {
         return false;
     };
-    let stderr = unsafe { ManuallyDrop::new(File::from_raw_fd(2)) };
+    use {nix::unistd::dup, std::os::fd::AsFd};
+    let Ok(owned_fd) = dup(std::io::stderr().as_fd()) else {
+        return false;
+    };
+    let stderr = File::from(owned_fd);
     let Ok(metadata) = stderr.metadata() else {
         return false;
     };

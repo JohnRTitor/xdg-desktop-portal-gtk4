@@ -1,5 +1,4 @@
 use {
-    super::file_chooser_ext::FileChooserExtManualFixed,
     crate::gui::{UiError, UiProxy},
     async_channel::{Receiver, Sender},
     gtk4::{
@@ -253,7 +252,7 @@ impl FileChooserUi {
             while choice_ids.contains(read_only_id.as_str()) {
                 read_only_id.push('_');
             }
-            dialog.add_choice_fixed(&read_only_id, t!("open_files_read_only").as_ref(), &[]);
+            dialog.add_choice(&read_only_id, t!("open_files_read_only").as_ref(), &[]);
             dialog.set_choice(&read_only_id, "true");
         }
         if let Some(choices) = &self.choices {
@@ -262,7 +261,7 @@ impl FileChooserUi {
                 for variant in &choice.variants {
                     variants.push((variant.id.as_str(), variant.label.as_str()));
                 }
-                dialog.add_choice_fixed(&choice.id, &choice.label, &variants);
+                dialog.add_choice(&choice.id, &choice.label, &variants);
                 dialog.set_choice(&choice.id, &choice.default);
             }
         }

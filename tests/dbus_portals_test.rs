@@ -45,6 +45,9 @@ trait Settings {
         &self,
         namespaces: &[&str],
     ) -> zbus::Result<HashMap<String, HashMap<String, OwnedValue>>>;
+
+    #[zbus(property)]
+    fn version(&self) -> zbus::Result<u32>;
 }
 
 #[proxy(
@@ -188,6 +191,31 @@ async fn test_settings_read_all_wildcard_namespaces() -> Result<(), Box<dyn std:
 
     // Depending on the environment, it may or may not return keys, but it shouldn't error.
     assert!(res.is_empty() || !res.is_empty());
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_settings_portal_properties() -> Result<(), Box<dyn std::error::Error>> {
+    skip_if_dbus_tests_disabled!();
+    let _conn = zbus::Connection::session().await?;
+    let server = _conn.object_server();
+    server
+        .at(
+            "/org/freedesktop/portal/desktop",
+            SettingsPortal::new(server.clone()),
+        )
+        .await?;
+
+    let client_conn = zbus::Connection::session().await?;
+    let proxy = SettingsProxy::builder(&client_conn)
+        .destination(_conn.unique_name().unwrap().clone())?
+        .build()
+        .await?;
+
+    // Verify the version property returns 2
+    let version = proxy.version().await?;
+    assert_eq!(version, 2);
 
     Ok(())
 }

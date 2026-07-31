@@ -157,51 +157,52 @@ impl Notification {
                     hints.insert("suppress-sound", Value::from(true));
                 }
             } else if let Value::Fd(fd) = inner {
-                use std::{
-                    io::{Read, Write},
-                    os::fd::{AsRawFd, FromRawFd},
-                };
+                use std::io::{Read, Write};
 
-                let raw_fd = fd.as_raw_fd();
-                let mut file = unsafe { std::fs::File::from_raw_fd(libc::dup(raw_fd)) };
+                use {nix::unistd::dup, std::os::fd::AsFd};
+                if let Ok(owned_fd) = dup(fd.as_fd()) {
+                    let mut file = std::fs::File::from(owned_fd);
 
-                let mut path = std::env::temp_dir();
-                if let Ok(runtime_dir) = std::env::var("XDG_RUNTIME_DIR") {
-                    path = std::path::PathBuf::from(runtime_dir);
-                }
-                path.push("xdg-desktop-portal-gtk4-sounds");
-                let _ = std::fs::create_dir_all(&path);
+                    let mut path = std::env::temp_dir();
+                    if let Ok(runtime_dir) = std::env::var("XDG_RUNTIME_DIR") {
+                        path = std::path::PathBuf::from(runtime_dir);
+                    }
+                    path.push("xdg-desktop-portal-gtk4-sounds");
+                    let _ = std::fs::create_dir_all(&path);
 
-                let timestamp = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_micros();
-                path.push(format!(
-                    "{}_{}.snd",
-                    app_id.replace('.', "_").replace('-', "_"),
-                    timestamp
-                ));
+                    let timestamp = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_micros();
+                    path.push(format!(
+                        "{}_{}.snd",
+                        app_id.replace('.', "_").replace('-', "_"),
+                        timestamp
+                    ));
 
-                let path_clone = path.clone();
+                    let path_clone = path.clone();
 
-                let written_path = gtk4::gio::spawn_blocking(move || {
-                    let mut data = Vec::new();
-                    if file.read_to_end(&mut data).is_ok() {
-                        if let Ok(mut out) = std::fs::File::create(&path_clone) {
-                            if out.write_all(&data).is_ok() {
-                                return Some(path_clone);
+                    let written_path = gtk4::gio::spawn_blocking(move || {
+                        let mut data = Vec::new();
+                        if file.read_to_end(&mut data).is_ok() {
+                            if let Ok(mut out) = std::fs::File::create(&path_clone) {
+                                if out.write_all(&data).is_ok() {
+                                    return Some(path_clone);
+                                }
                             }
                         }
-                    }
-                    None
-                })
-                .await
-                .unwrap_or(None);
+                        None
+                    })
+                    .await
+                    .unwrap_or(None);
 
-                if let Some(p) = written_path {
-                    sound_file_path = Some(p.clone());
-                    // ZVariant string must live long enough to be converted to Value
-                    // We can just create an OwnedValue and use its inner Value
+                    if let Some(p) = written_path {
+                        sound_file_path = Some(p.clone());
+                        // ZVariant string must live long enough to be converted to Value
+                        // We can just create an OwnedValue and use its inner Value
+                    }
+                } else {
+                    log::error!("Failed to dup sound fd");
                 }
             }
         }
@@ -242,55 +243,57 @@ impl Notification {
                                 // Apps sending "bytes" arrays will have their bytes written to a memfd
                                 // by the host portal, which forwards it to us here as "file-descriptor".
                                 if let Value::Fd(fd) = payload {
-                                    use std::os::fd::{AsRawFd, FromRawFd};
-                                    let raw_fd = fd.as_raw_fd();
+                                    use {nix::unistd::dup, std::os::fd::AsFd};
                                     // Duplicate the FD so we can safely read it without consuming the original
-                                    let mut file =
-                                        unsafe { std::fs::File::from_raw_fd(libc::dup(raw_fd)) };
+                                    if let Ok(owned_fd) = dup(fd.as_fd()) {
+                                        let mut file = std::fs::File::from(owned_fd);
 
-                                    let image_data = gtk4::gio::spawn_blocking(move || {
-                                        use {
-                                            gdk_pixbuf::Pixbuf,
-                                            gtk4::{gio::MemoryInputStream, glib::Bytes},
-                                            std::io::Read,
-                                        };
+                                        let image_data = gtk4::gio::spawn_blocking(move || {
+                                            use {
+                                                gdk_pixbuf::Pixbuf,
+                                                gtk4::{gio::MemoryInputStream, glib::Bytes},
+                                                std::io::Read,
+                                            };
 
-                                        let mut data = Vec::new();
-                                        if file.read_to_end(&mut data).is_ok() {
-                                            let bytes = Bytes::from(&data);
-                                            let stream = MemoryInputStream::from_bytes(&bytes);
-                                            if let Ok(pixbuf) = Pixbuf::from_stream(
-                                                &stream,
-                                                gtk4::gio::Cancellable::NONE,
-                                            ) {
-                                                let width = pixbuf.width();
-                                                let height = pixbuf.height();
-                                                let rowstride = pixbuf.rowstride();
-                                                let has_alpha = pixbuf.has_alpha();
-                                                let bits_per_sample = pixbuf.bits_per_sample();
-                                                let n_channels = pixbuf.n_channels();
-                                                let pixels = pixbuf.read_pixel_bytes();
-                                                let pixels_bytes: &[u8] = &pixels;
+                                            let mut data = Vec::new();
+                                            if file.read_to_end(&mut data).is_ok() {
+                                                let bytes = Bytes::from(&data);
+                                                let stream = MemoryInputStream::from_bytes(&bytes);
+                                                if let Ok(pixbuf) = Pixbuf::from_stream(
+                                                    &stream,
+                                                    gtk4::gio::Cancellable::NONE,
+                                                ) {
+                                                    let width = pixbuf.width();
+                                                    let height = pixbuf.height();
+                                                    let rowstride = pixbuf.rowstride();
+                                                    let has_alpha = pixbuf.has_alpha();
+                                                    let bits_per_sample = pixbuf.bits_per_sample();
+                                                    let n_channels = pixbuf.n_channels();
+                                                    let pixels = pixbuf.read_pixel_bytes();
+                                                    let pixels_bytes: &[u8] = &pixels;
 
-                                                return OwnedValue::try_from(Value::new((
-                                                    width,
-                                                    height,
-                                                    rowstride,
-                                                    has_alpha,
-                                                    bits_per_sample,
-                                                    n_channels,
-                                                    Value::from(pixels_bytes),
-                                                )))
-                                                .ok();
+                                                    return OwnedValue::try_from(Value::new((
+                                                        width,
+                                                        height,
+                                                        rowstride,
+                                                        has_alpha,
+                                                        bits_per_sample,
+                                                        n_channels,
+                                                        Value::from(pixels_bytes),
+                                                    )))
+                                                    .ok();
+                                                }
                                             }
-                                        }
-                                        None
-                                    })
-                                    .await
-                                    .unwrap_or(None);
+                                            None
+                                        })
+                                        .await
+                                        .unwrap_or(None);
 
-                                    if let Some(image_data) = image_data {
-                                        hints.insert("image-data", Value::from(image_data));
+                                        if let Some(image_data) = image_data {
+                                            hints.insert("image-data", Value::from(image_data));
+                                        }
+                                    } else {
+                                        log::error!("Failed to dup icon fd");
                                     }
                                 }
                             }
