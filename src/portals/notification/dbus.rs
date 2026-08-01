@@ -202,8 +202,7 @@ impl Notification {
                     if let Some(data) = bytes
                         && std::fs::write(&path_clone, data).is_ok()
                     {
-                        sound_file =
-                            Some(std::sync::Arc::new(TempSoundFile { path: path_clone }));
+                        sound_file = Some(std::sync::Arc::new(TempSoundFile { path: path_clone }));
                     }
                 } else {
                     tracing::error!("Failed to dup sound fd");
@@ -406,10 +405,7 @@ impl Notification {
                 if let Some(conn) = c1
                     && let Err(e) = listen_for_action_invoked(rm1, s1, Some(conn)).await
                 {
-                    tracing::error!(
-                        "Action invoked listener failed: {}",
-                        anyhow::Error::new(e)
-                    );
+                    tracing::error!("Action invoked listener failed: {}", anyhow::Error::new(e));
                 }
             });
 

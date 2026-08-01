@@ -11,7 +11,11 @@ use {
     },
 };
 
-type UsbDeviceData = (String, HashMap<String, OwnedValue>, HashMap<String, OwnedValue>);
+type UsbDeviceData = (
+    String,
+    HashMap<String, OwnedValue>,
+    HashMap<String, OwnedValue>,
+);
 
 #[derive(SerializeDict, Type, Debug, Default)]
 #[zvariant(signature = "dict")]
