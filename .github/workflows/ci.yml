@@ -3,14 +3,14 @@ name: CI
 on:
   pull_request:
     paths:
-      - '**.rs'
-      - '**Cargo.toml'
-      - '**Cargo.lock'
+      - "**.rs"
+      - "**Cargo.toml"
+      - "**Cargo.lock"
   push:
     paths:
-      - '**.rs'
-      - '**Cargo.toml'
-      - '**Cargo.lock'
+      - "**.rs"
+      - "**Cargo.toml"
+      - "**Cargo.lock"
 
 env:
   CARGO_TERM_COLOR: always
@@ -22,7 +22,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        toolchain: [stable, nightly]
+        toolchain: ["1.92", stable, nightly]
     steps:
       - uses: actions/checkout@v4
       - uses: mozilla-actions/sccache-action@v0.0.9

@@ -26,6 +26,14 @@ This implementation provides backend support for the following XDG Desktop Porta
 - **Settings** (`org.freedesktop.impl.portal.Settings`): Reading desktop settings (such as color-scheme for dark mode).
 - **USB** (`org.freedesktop.impl.portal.Usb`): Managing USB device access.
 
+## Minimum Supported Rust Version (MSRV)
+
+This project explicitly documents and enforces its MSRV in the `rust-version` field of `Cargo.toml`.
+
+The project uses the **Rust 2024 edition** and relies on the GTK4 Rust bindings (`gtk4`, `gdk4`, etc.). The enforced `rust-version` is derived directly from the minimum requirements of these ecosystem dependencies.
+
+The MSRV is updated only when required by language features, standard library APIs, or dependency requirements. Any planned MSRV increase will be documented in the changelog and release notes.
+
 ## Feature Flags
 
 Every portal is optionally compiled using Cargo features. By default, all portals are enabled. You can disable the default features and selectively enable only the portals you need to reduce binary size and compile time.
