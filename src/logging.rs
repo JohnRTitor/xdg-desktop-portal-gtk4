@@ -31,8 +31,8 @@ fn stderr_is_journal() -> bool {
     let Ok(ino) = ino.parse::<u64>() else {
         return false;
     };
-    use {nix::unistd::dup, std::os::fd::AsFd};
-    let Ok(owned_fd) = dup(std::io::stderr().as_fd()) else {
+    use std::os::fd::AsFd;
+    let Ok(owned_fd) = std::io::stderr().as_fd().try_clone_to_owned() else {
         return false;
     };
     let stderr = File::from(owned_fd);

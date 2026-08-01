@@ -66,7 +66,7 @@ file_chooser = []
 inhibit = []
 lockdown = []
 notification = ["dep:gdk-pixbuf"]
-print = ["dep:rand"]
+print = ["dep:fastrand"]
 settings = []
 usb = []
 
@@ -80,8 +80,8 @@ gdk4-wayland = "0.11.4"
 gdk4-x11 = { version = "0.11.4" }
 gtk4 = "0.11.4"
 language-tags = "0.3.2"
-nix = { version = "0.31.3", features = ["user", "fs"] }
-rand = { version = "0.10.2", optional = true }
+rustix = { version = "1.1", features = ["process"] }
+fastrand = { version = "2.3", optional = true }
 rust-i18n = "4.2.0"
 serde = { version = "1.0.228", features = ["derive"] }
 thiserror = "2.0.18"

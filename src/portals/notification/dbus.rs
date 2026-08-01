@@ -165,8 +165,8 @@ impl Notification {
             } else if let Value::Fd(fd) = inner {
                 use std::io::{Read, Write};
 
-                use {nix::unistd::dup, std::os::fd::AsFd};
-                if let Ok(owned_fd) = dup(fd.as_fd()) {
+                use std::os::fd::AsFd;
+                if let Ok(owned_fd) = fd.as_fd().try_clone_to_owned() {
                     let mut file = std::fs::File::from(owned_fd);
 
                     let mut path = std::env::temp_dir();
@@ -249,9 +249,8 @@ impl Notification {
                             // Apps sending "bytes" arrays will have their bytes written to a memfd
                             // by the host portal, which forwards it to us here as "file-descriptor".
                             if let Value::Fd(fd) = payload {
-                                use {nix::unistd::dup, std::os::fd::AsFd};
-                                // Duplicate the FD so we can safely read it without consuming the original
-                                if let Ok(owned_fd) = dup(fd.as_fd()) {
+                                use std::os::fd::AsFd;
+                                if let Ok(owned_fd) = fd.as_fd().try_clone_to_owned() {
                                     let mut file = std::fs::File::from(owned_fd);
 
                                     let image_data = gtk4::gio::spawn_blocking(move || {

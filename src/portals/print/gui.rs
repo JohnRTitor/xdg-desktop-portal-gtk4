@@ -100,7 +100,7 @@ impl PrintUi {
                         let page_setup_obj = d.page_setup();
 
                         // Generate a random token to identify this job in the subsequent `Print` call.
-                        let token: u32 = rand::random();
+                        let token: u32 = fastrand::u32(..);
                         let token_clone = token;
 
                         // The XDG Desktop Portal Print specification expects the application to call `Print`

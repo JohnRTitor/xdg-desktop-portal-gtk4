@@ -9,7 +9,7 @@ use {
     },
     gtk4::{gio, prelude::FileExt},
     serde::{Deserialize, Deserializer},
-    std::{ffi::CString, os::unix::ffi::OsStrExt, path::Path},
+    std::{ffi::CString, path::Path},
     thiserror::Error,
     zbus::{
         ObjectServer, interface,
