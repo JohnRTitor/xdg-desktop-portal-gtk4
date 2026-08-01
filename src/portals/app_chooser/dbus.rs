@@ -14,7 +14,9 @@ use {
 
 #[derive(DeserializeDict, Type, Debug)]
 #[zvariant(signature = "dict")]
+#[allow(dead_code)]
 pub struct ChooseApplicationOptions {
+    #[allow(dead_code)]
     last_choice: Option<String>,
     modal: Option<bool>,
     content_type: Option<String>,

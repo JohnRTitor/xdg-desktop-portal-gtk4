@@ -79,7 +79,7 @@ impl Account {
             Ok(res) => {
                 let mut image_uri = res.image;
                 if image_uri.starts_with('/') {
-                    image_uri = format!("file://{}", image_uri);
+                    image_uri.insert_str(0, "file://");
                 }
                 Response::success(UserInformation {
                     id: res.user_name,

@@ -87,16 +87,16 @@ impl SettingsPortal {
 
     fn get_gnome_interface_static() -> Option<Settings> {
         thread_local! {
-            static GNOME_SETTINGS: std::cell::RefCell<Option<Settings>> = std::cell::RefCell::new(None);
-            static CHECKED: std::cell::Cell<bool> = std::cell::Cell::new(false);
+            static GNOME_SETTINGS: std::cell::RefCell<Option<Settings>> = const { std::cell::RefCell::new(None) };
+            static CHECKED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
         }
 
         GNOME_SETTINGS.with(|s| {
             if !CHECKED.with(|c| c.get()) {
-                if let Some(source) = SettingsSchemaSource::default() {
-                    if source.lookup("org.gnome.desktop.interface", true).is_some() {
-                        *s.borrow_mut() = Some(Settings::new("org.gnome.desktop.interface"));
-                    }
+                if let Some(source) = SettingsSchemaSource::default()
+                    && source.lookup("org.gnome.desktop.interface", true).is_some()
+                {
+                    *s.borrow_mut() = Some(Settings::new("org.gnome.desktop.interface"));
                 }
                 CHECKED.with(|c| c.set(true));
             }

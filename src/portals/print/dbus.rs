@@ -25,6 +25,7 @@ impl Print {
 
 #[derive(DeserializeDict, Type, Debug, Default)]
 #[zvariant(signature = "dict")]
+#[allow(dead_code)]
 struct PreparePrintOptions {
     modal: Option<bool>,
     accept_label: Option<String>,
@@ -45,6 +46,7 @@ struct PreparePrintResults {
 
 #[derive(DeserializeDict, Type, Debug, Default)]
 #[zvariant(signature = "dict")]
+#[allow(dead_code)]
 struct PrintOptions {
     modal: Option<bool>,
     token: Option<u32>,
@@ -133,6 +135,7 @@ impl Print {
 ///    The portal matches the token to the cached print settings and submits the job to CUPS.
 #[interface(name = "org.freedesktop.impl.portal.Print")]
 impl Print {
+    #[allow(clippy::too_many_arguments)]
     #[tracing::instrument(skip_all, fields(app_id = %app_id, handle = %handle.as_str()))]
     async fn prepare_print(
         &self,
@@ -153,6 +156,7 @@ impl Print {
         .await
     }
 
+    #[allow(clippy::too_many_arguments)]
     #[tracing::instrument(skip_all, fields(app_id = %app_id, handle = %handle.as_str()))]
     async fn print(
         &self,

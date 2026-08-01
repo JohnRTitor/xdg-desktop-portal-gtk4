@@ -82,6 +82,7 @@ impl Inhibit {
 /// to monitor these states.
 #[interface(name = "org.freedesktop.impl.portal.Inhibit")]
 impl Inhibit {
+    #[allow(clippy::too_many_arguments)]
     #[tracing::instrument(skip_all, fields(app_id = %app_id, handle = %handle.as_str()))]
     async fn inhibit(
         &self,

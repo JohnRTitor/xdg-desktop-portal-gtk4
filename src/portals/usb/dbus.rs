@@ -11,6 +11,8 @@ use {
     },
 };
 
+type UsbDeviceData = (String, HashMap<String, OwnedValue>, HashMap<String, OwnedValue>);
+
 #[derive(SerializeDict, Type, Debug, Default)]
 #[zvariant(signature = "dict")]
 pub struct UsbResults {
@@ -44,11 +46,7 @@ impl UsbPortal {
         &self,
         app_id: String,
         parent_window: String,
-        devices_in: Vec<(
-            String,
-            HashMap<String, OwnedValue>,
-            HashMap<String, OwnedValue>,
-        )>,
+        devices_in: Vec<UsbDeviceData>,
         options: HashMap<String, OwnedValue>,
     ) -> Response<UsbResults> {
         let mut parsed_devices = Vec::new();
@@ -126,11 +124,7 @@ impl UsbPortal {
         handle: OwnedObjectPath,
         parent_window: String,
         app_id: String,
-        devices: Vec<(
-            String,
-            HashMap<String, OwnedValue>,
-            HashMap<String, OwnedValue>,
-        )>,
+        devices: Vec<UsbDeviceData>,
         options: HashMap<String, OwnedValue>,
         #[zbus(object_server)] server: &zbus::ObjectServer,
     ) -> Response<UsbResults> {

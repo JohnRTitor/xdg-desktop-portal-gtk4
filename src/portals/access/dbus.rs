@@ -113,6 +113,7 @@ impl Access {
 /// such as accessing the camera, microphone, or location.
 #[interface(name = "org.freedesktop.impl.portal.Access")]
 impl Access {
+    #[allow(clippy::too_many_arguments)]
     #[tracing::instrument(skip_all, fields(app_id = %app_id, handle = %handle.as_str()))]
     async fn access_dialog(
         &self,

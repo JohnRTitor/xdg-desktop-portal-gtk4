@@ -24,11 +24,13 @@ impl DynamicLauncher {
 
 #[derive(DeserializeDict, Type, Debug, Default)]
 #[zvariant(signature = "dict")]
+#[allow(dead_code)]
 struct PrepareInstallOptions {
     modal: Option<bool>,
     launcher_type: Option<u32>,
     target: Option<String>,
     editable_name: Option<bool>,
+    #[allow(dead_code)]
     editable_icon: Option<bool>,
     pub activation_token: Option<String>,
 }
@@ -99,6 +101,7 @@ impl DynamicLauncher {
 /// for example, for web apps or installed games.
 #[interface(name = "org.freedesktop.impl.portal.DynamicLauncher")]
 impl DynamicLauncher {
+    #[allow(clippy::too_many_arguments)]
     #[tracing::instrument(skip_all, fields(app_id = %app_id, handle = %handle.as_str()))]
     async fn prepare_install(
         &self,
@@ -247,7 +250,7 @@ mod tests {
     fn test_parse_icon_invalid_structure() {
         let type_val = Value::Str("unknown".into());
         let dummy_val = Value::from(123);
-        let variant_val = Value::from(dummy_val);
+        let variant_val = dummy_val;
         let v = OwnedValue::try_from(Value::from((type_val, variant_val))).unwrap();
         let (name, data) = parse_icon(&v);
         assert_eq!(name, None);

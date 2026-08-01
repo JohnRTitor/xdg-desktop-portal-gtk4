@@ -8,11 +8,11 @@ pub fn init() {
 
     let registry = Registry::default().with(env_filter);
 
-    if stderr_is_journal() {
-        if let Ok(layer) = tracing_journald::layer() {
-            registry.with(layer).init();
-            return;
-        }
+    if stderr_is_journal()
+        && let Ok(layer) = tracing_journald::layer()
+    {
+        registry.with(layer).init();
+        return;
     }
 
     registry.with(tracing_subscriber::fmt::layer()).init();

@@ -54,18 +54,13 @@ impl SessionManager {
     ) -> Result<(), SessionError> {
         let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
 
-        let current_count = state.app_sessions.get(app_id).copied().unwrap_or(0);
-        if current_count >= self.max_sessions_per_app {
+        let count = state.app_sessions.entry(app_id.to_string()).or_default();
+        if *count >= self.max_sessions_per_app {
             return Err(SessionError::LimitExceeded {
                 app_id: app_id.to_string(),
             });
         }
-
-        if let Some(count) = state.app_sessions.get_mut(app_id) {
-            *count += 1;
-        } else {
-            state.app_sessions.insert(app_id.to_string(), 1);
-        }
+        *count += 1;
 
         let sender_list = state.sender_objects.entry(sender.to_string()).or_default();
         sender_list.push((object_path.to_string(), app_id.to_string(), cancel));

@@ -1,3 +1,5 @@
+#![allow(clippy::too_many_arguments)]
+
 use {
     futures_util::stream::StreamExt,
     std::{collections::HashMap, sync::Mutex},
@@ -23,6 +25,7 @@ impl Drop for TempSoundFile {
     default_service = "org.freedesktop.Notifications",
     default_path = "/org/freedesktop/Notifications"
 )]
+#[allow(clippy::too_many_arguments)]
 trait Notifications {
     fn notify(
         &self,
@@ -76,23 +79,19 @@ pub struct PortalNotification {
     sound: Option<OwnedValue>,
 }
 
+pub type NotificationTargetData = (
+    String,
+    String,
+    HashMap<String, OwnedValue>,
+    Option<std::sync::Arc<TempSoundFile>>,
+);
+pub type ReverseMapType = std::sync::Arc<Mutex<HashMap<u32, NotificationTargetData>>>;
+
 pub struct Notification {
     active_notifications: std::sync::Arc<Mutex<HashMap<(String, String), u32>>>,
     // Maps system D-Bus notification ID back to the portal app_id, portal_id, action targets, and optional sound temp file.
     // This is needed so we can correctly propagate the `ActionInvoked` signal back to the sandboxed app, and clean up temp files.
-    reverse_map: std::sync::Arc<
-        Mutex<
-            HashMap<
-                u32,
-                (
-                    String,
-                    String,
-                    HashMap<String, OwnedValue>,
-                    Option<std::sync::Arc<TempSoundFile>>,
-                ),
-            >,
-        >,
-    >,
+    reverse_map: ReverseMapType,
     init_once: std::sync::Once,
     connection: Option<Connection>,
 }
@@ -200,11 +199,11 @@ impl Notification {
                     .await
                     .unwrap_or(None);
 
-                    if let Some(data) = bytes {
-                        if std::fs::write(&path_clone, data).is_ok() {
-                            sound_file =
-                                Some(std::sync::Arc::new(TempSoundFile { path: path_clone }));
-                        }
+                    if let Some(data) = bytes
+                        && std::fs::write(&path_clone, data).is_ok()
+                    {
+                        sound_file =
+                            Some(std::sync::Arc::new(TempSoundFile { path: path_clone }));
                     }
                 } else {
                     tracing::error!("Failed to dup sound fd");
@@ -212,10 +211,10 @@ impl Notification {
             }
         }
 
-        if let Some(s) = sound_file.as_ref() {
-            if let Some(path_str) = s.path.to_str() {
-                hints.insert("sound-file", Value::from(path_str));
-            }
+        if let Some(s) = sound_file.as_ref()
+            && let Some(path_str) = s.path.to_str()
+        {
+            hints.insert("sound-file", Value::from(path_str));
         }
 
         if let Some(v) = notification.icon.as_ref() {
@@ -404,13 +403,13 @@ impl Notification {
             let s1 = server_clone.clone();
             let c1 = conn_clone.clone();
             gtk4::glib::MainContext::default().spawn(async move {
-                if let Some(conn) = c1 {
-                    if let Err(e) = listen_for_action_invoked(rm1, s1, Some(conn)).await {
-                        tracing::error!(
-                            "Action invoked listener failed: {}",
-                            anyhow::Error::new(e)
-                        );
-                    }
+                if let Some(conn) = c1
+                    && let Err(e) = listen_for_action_invoked(rm1, s1, Some(conn)).await
+                {
+                    tracing::error!(
+                        "Action invoked listener failed: {}",
+                        anyhow::Error::new(e)
+                    );
                 }
             });
 
@@ -418,13 +417,13 @@ impl Notification {
             let act2 = self.active_notifications.clone();
             let c2 = conn_clone.clone();
             gtk4::glib::MainContext::default().spawn(async move {
-                if let Some(conn) = c2 {
-                    if let Err(e) = listen_for_notification_closed(rm2, act2, Some(conn)).await {
-                        tracing::error!(
-                            "Notification closed listener failed: {}",
-                            anyhow::Error::new(e)
-                        );
-                    }
+                if let Some(conn) = c2
+                    && let Err(e) = listen_for_notification_closed(rm2, act2, Some(conn)).await
+                {
+                    tracing::error!(
+                        "Notification closed listener failed: {}",
+                        anyhow::Error::new(e)
+                    );
                 }
             });
         });
@@ -438,12 +437,11 @@ impl Notification {
             tracing::error!("Failed to lock active_notifications mutex in remove_notification");
             None
         };
-        if let Some(fdo_id) = fdo_id {
-            if let Some(session_bus) = &self.connection
-                && let Ok(proxy) = NotificationsProxy::new(session_bus).await
-            {
-                let _ = proxy.close_notification(fdo_id).await;
-            }
+        if let Some(fdo_id) = fdo_id
+            && let Some(session_bus) = &self.connection
+            && let Ok(proxy) = NotificationsProxy::new(session_bus).await
+        {
+            let _ = proxy.close_notification(fdo_id).await;
         }
     }
 
@@ -484,19 +482,7 @@ impl Notification {
 // When an action is invoked on a notification created through this portal, it looks up the original
 // portal app_id and notification id in the `reverse_map` and emits the portal's `ActionInvoked` signal.
 async fn listen_for_action_invoked(
-    reverse_map: std::sync::Arc<
-        Mutex<
-            HashMap<
-                u32,
-                (
-                    String,
-                    String,
-                    HashMap<String, OwnedValue>,
-                    Option<std::sync::Arc<TempSoundFile>>,
-                ),
-            >,
-        >,
-    >,
+    reverse_map: ReverseMapType,
     server: ObjectServer,
     session_bus_opt: Option<Connection>,
 ) -> zbus::Result<()> {
@@ -533,8 +519,8 @@ async fn listen_for_action_invoked(
             app_path.push_str(&app_id.replace('.', "/").replace('-', "_"));
 
             if let Some(action_name) = action_key.strip_prefix("app.") {
-                let Ok(builder) = ApplicationProxy::builder(&session_bus)
-                    .destination(app_id.as_str())
+                let Ok(builder) =
+                    ApplicationProxy::builder(&session_bus).destination(app_id.as_str())
                 else {
                     tracing::error!("Invalid D-Bus destination: {}", app_id);
                     continue;
@@ -551,8 +537,8 @@ async fn listen_for_action_invoked(
                         .await;
                 }
             } else {
-                let Ok(builder) = ApplicationProxy::builder(&session_bus)
-                    .destination(app_id.as_str())
+                let Ok(builder) =
+                    ApplicationProxy::builder(&session_bus).destination(app_id.as_str())
                 else {
                     tracing::error!("Invalid D-Bus destination: {}", app_id);
                     continue;
@@ -588,19 +574,7 @@ async fn listen_for_action_invoked(
 }
 
 async fn listen_for_notification_closed(
-    reverse_map: std::sync::Arc<
-        Mutex<
-            HashMap<
-                u32,
-                (
-                    String,
-                    String,
-                    HashMap<String, OwnedValue>,
-                    Option<std::sync::Arc<TempSoundFile>>,
-                ),
-            >,
-        >,
-    >,
+    reverse_map: ReverseMapType,
     active_notifications: std::sync::Arc<Mutex<HashMap<(String, String), u32>>>,
     session_bus_opt: Option<Connection>,
 ) -> zbus::Result<()> {

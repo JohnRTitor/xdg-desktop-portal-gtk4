@@ -80,8 +80,8 @@ async fn test_lockdown_all_properties_false() -> Result<(), Box<dyn std::error::
         .build()
         .await?;
 
-    assert_eq!(proxy.disable_printing().await?, false);
-    assert_eq!(proxy.disable_save_to_disk().await?, false);
+    assert!(!proxy.disable_printing().await?);
+    assert!(!proxy.disable_save_to_disk().await?);
 
     Ok(())
 }
@@ -160,11 +160,9 @@ async fn test_inhibit_returns_success() -> Result<(), Box<dyn std::error::Error>
         .await?;
 
     let path = OwnedObjectPath::try_from("/org/freedesktop/portal/desktop/request/1").unwrap();
-    let res = proxy
+    proxy
         .inhibit(path, "app_id", "window", 1, HashMap::new())
         .await?;
-
-    assert_eq!(res, ()); // PORTAL_SUCCESS
 
     Ok(())
 }

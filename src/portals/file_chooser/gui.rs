@@ -257,10 +257,11 @@ impl FileChooserUi {
         }
         if let Some(choices) = &self.choices {
             for choice in choices {
-                let mut variants = vec![];
-                for variant in &choice.variants {
-                    variants.push((variant.id.as_str(), variant.label.as_str()));
-                }
+                let variants: Vec<_> = choice
+                    .variants
+                    .iter()
+                    .map(|variant| (variant.id.as_str(), variant.label.as_str()))
+                    .collect();
                 dialog.add_choice(&choice.id, &choice.label, &variants);
                 dialog.set_choice(&choice.id, &choice.default);
             }
