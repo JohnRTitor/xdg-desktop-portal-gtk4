@@ -169,7 +169,7 @@ impl FileChooser {
                 writable: Some(res.writeable),
             }),
             Err(e) => {
-                log::error!("OpenFile failed: {}", anyhow::Error::new(e));
+                tracing::error!("OpenFile failed: {}", anyhow::Error::new(e));
                 Response::cancelled()
             }
         }
@@ -208,7 +208,7 @@ impl FileChooser {
                 current_filter: res.current_filter.map(unmap_filter),
             }),
             Err(e) => {
-                log::error!("SaveFile failed: {}", anyhow::Error::new(e));
+                tracing::error!("SaveFile failed: {}", anyhow::Error::new(e));
                 Response::cancelled()
             }
         }
@@ -309,7 +309,7 @@ impl FileChooser {
         {
             Ok(res) => Response::success(res),
             Err(e) => {
-                log::error!("SaveFiles failed: {}", anyhow::Error::new(e));
+                tracing::error!("SaveFiles failed: {}", anyhow::Error::new(e));
                 Response::cancelled()
             }
         }
@@ -322,6 +322,7 @@ impl FileChooser {
 /// It wraps GTK's native `FileChooserDialog`.
 #[interface(name = "org.freedesktop.impl.portal.FileChooser")]
 impl FileChooser {
+    #[tracing::instrument(skip_all, fields(app_id = %app_id, handle = %handle.as_str()))]
     async fn open_file(
         &self,
         handle: OwnedObjectPath,
@@ -339,6 +340,7 @@ impl FileChooser {
         .await
     }
 
+    #[tracing::instrument(skip_all, fields(app_id = %app_id, handle = %handle.as_str()))]
     async fn save_file(
         &self,
         handle: OwnedObjectPath,
@@ -356,6 +358,7 @@ impl FileChooser {
         .await
     }
 
+    #[tracing::instrument(skip_all, fields(app_id = %app_id, handle = %handle.as_str()))]
     async fn save_files(
         &self,
         handle: OwnedObjectPath,

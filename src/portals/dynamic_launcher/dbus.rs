@@ -86,7 +86,7 @@ impl DynamicLauncher {
                 })
             }
             Err(e) => {
-                log::error!("PrepareInstall failed: {}", anyhow::Error::new(e));
+                tracing::error!("PrepareInstall failed: {}", anyhow::Error::new(e));
                 Response::cancelled()
             }
         }
@@ -99,6 +99,7 @@ impl DynamicLauncher {
 /// for example, for web apps or installed games.
 #[interface(name = "org.freedesktop.impl.portal.DynamicLauncher")]
 impl DynamicLauncher {
+    #[tracing::instrument(skip_all, fields(app_id = %app_id, handle = %handle.as_str()))]
     async fn prepare_install(
         &self,
         handle: OwnedObjectPath,
@@ -112,7 +113,7 @@ impl DynamicLauncher {
         let icon_owned = match OwnedValue::try_from(icon_v) {
             Ok(v) => v,
             Err(e) => {
-                log::error!("Failed to allocate OwnedValue: {}", e);
+                tracing::error!("Failed to allocate OwnedValue: {}", e);
                 return Response::cancelled();
             }
         };

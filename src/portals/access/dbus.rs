@@ -100,7 +100,7 @@ impl Access {
                     .map(|c| c.into_iter().map(|fc| (fc.id, fc.variant_id)).collect()),
             }),
             Err(e) => {
-                log::error!("AccessDialog failed: {}", anyhow::Error::new(e));
+                tracing::error!("AccessDialog failed: {}", anyhow::Error::new(e));
                 Response::cancelled()
             }
         }
@@ -113,6 +113,7 @@ impl Access {
 /// such as accessing the camera, microphone, or location.
 #[interface(name = "org.freedesktop.impl.portal.Access")]
 impl Access {
+    #[tracing::instrument(skip_all, fields(app_id = %app_id, handle = %handle.as_str()))]
     async fn access_dialog(
         &self,
         handle: OwnedObjectPath,

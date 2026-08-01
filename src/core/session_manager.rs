@@ -122,7 +122,7 @@ impl SessionManager {
                 };
 
                 for (path, _, cancel) in objects_to_close {
-                    log::info!("Client {} disconnected, cancelling {}", name, path);
+                    tracing::info!("Client {} disconnected, cancelling {}", name, path);
                     let _ = cancel.send(()).await;
                 }
             }

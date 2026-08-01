@@ -77,6 +77,7 @@ impl Inhibit {
 /// to monitor these states.
 #[interface(name = "org.freedesktop.impl.portal.Inhibit")]
 impl Inhibit {
+    #[tracing::instrument(skip_all, fields(app_id = %app_id, handle = %handle.as_str()))]
     async fn inhibit(
         &self,
         #[zbus(header)] header: zbus::message::Header<'_>,
@@ -91,7 +92,7 @@ impl Inhibit {
         let request = InhibitRequest { send: send.clone() };
 
         if let Err(e) = server.at(handle.clone(), request).await {
-            log::error!("Failed to export Inhibit Request {}: {}", handle, e);
+            tracing::error!("Failed to export Inhibit Request {}: {}", handle, e);
             return Err(zbus::fdo::Error::Failed("Failed to export Request".into()));
         }
 
@@ -157,10 +158,10 @@ impl Inhibit {
                         Ok(fd) => {
                             // The lock is held as long as the FD is kept open.
                             logind_fd = Some(fd);
-                            log::debug!("Acquired logind inhibit lock for {}", what_str);
+                            tracing::debug!("Acquired logind inhibit lock for {}", what_str);
                         }
                         Err(e) => {
-                            log::warn!("Failed to inhibit via logind: {}", e);
+                            tracing::warn!("Failed to inhibit via logind: {}", e);
                         }
                     }
                 }
@@ -175,10 +176,10 @@ impl Inhibit {
                     match ss_proxy.inhibit(&app_id, reason_str).await {
                         Ok(cookie) => {
                             screen_saver_cookie = Some((ss_proxy, cookie));
-                            log::debug!("Acquired ScreenSaver inhibit cookie {}", cookie);
+                            tracing::debug!("Acquired ScreenSaver inhibit cookie {}", cookie);
                         }
                         Err(e) => {
-                            log::warn!("Failed to inhibit via ScreenSaver: {}", e);
+                            tracing::warn!("Failed to inhibit via ScreenSaver: {}", e);
                         }
                     }
                 }
@@ -186,7 +187,7 @@ impl Inhibit {
                 // Wait for the Request to be closed
                 let _ = recv.recv().await;
 
-                log::debug!("Inhibit Request {} closed, releasing locks", handle);
+                tracing::debug!("Inhibit Request {} closed, releasing locks", handle);
 
                 // Release ScreenSaver cookie
                 if let Some((proxy, cookie)) = screen_saver_cookie {
@@ -208,6 +209,7 @@ impl Inhibit {
         Ok(())
     }
 
+    #[tracing::instrument(skip_all, fields(app_id = %app_id, handle = %handle.as_str()))]
     async fn create_monitor(
         &self,
         #[zbus(header)] header: zbus::message::Header<'_>,
@@ -229,13 +231,13 @@ impl Inhibit {
             self.session_manager
                 .register(&app_id, &sender, session_handle.as_str(), cancel_tx)
         {
-            log::warn!("Session limit exceeded for monitor: {}", e);
+            tracing::warn!("Session limit exceeded for monitor: {}", e);
             return Ok(2);
         }
 
         let session = Session::new(session_handle.as_str().to_string(), Some(tx));
         if let Err(e) = server.at(session_handle.clone(), session).await {
-            log::error!("Failed to export monitor session: {}", e);
+            tracing::error!("Failed to export monitor session: {}", e);
             self.session_manager
                 .unregister(&app_id, &sender, session_handle.as_str());
             return Ok(2); // Returning 2 as general error for create_monitor according to xdp-gtk
@@ -319,7 +321,7 @@ impl Inhibit {
     }
 
     async fn query_end_response(&self, _session_handle: OwnedObjectPath) {
-        log::debug!("query_end_response called");
+        tracing::debug!("query_end_response called");
     }
 
     #[zbus(signal)]

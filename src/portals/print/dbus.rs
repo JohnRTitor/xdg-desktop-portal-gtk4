@@ -89,7 +89,7 @@ impl Print {
                 has_selected_pages: Some(true),
             }),
             Err(e) => {
-                log::error!("PreparePrint failed: {}", anyhow::Error::new(e));
+                tracing::error!("PreparePrint failed: {}", anyhow::Error::new(e));
                 Response::cancelled()
             }
         }
@@ -117,7 +117,7 @@ impl Print {
         match res {
             Ok(_) => Response::success(PrintResults::default()),
             Err(e) => {
-                log::error!("Print dispatch failed: {}", anyhow::Error::new(e));
+                tracing::error!("Print dispatch failed: {}", anyhow::Error::new(e));
                 Response::cancelled()
             }
         }
@@ -133,6 +133,7 @@ impl Print {
 ///    The portal matches the token to the cached print settings and submits the job to CUPS.
 #[interface(name = "org.freedesktop.impl.portal.Print")]
 impl Print {
+    #[tracing::instrument(skip_all, fields(app_id = %app_id, handle = %handle.as_str()))]
     async fn prepare_print(
         &self,
         handle: OwnedObjectPath,
@@ -152,6 +153,7 @@ impl Print {
         .await
     }
 
+    #[tracing::instrument(skip_all, fields(app_id = %app_id, handle = %handle.as_str()))]
     async fn print(
         &self,
         handle: OwnedObjectPath,

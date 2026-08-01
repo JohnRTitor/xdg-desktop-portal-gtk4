@@ -1,33 +1,21 @@
 use {
-    log::{Level, LevelFilter},
     std::{env, fs::File, os::linux::fs::MetadataExt},
+    tracing_subscriber::{EnvFilter, Registry, layer::SubscriberExt, util::SubscriberInitExt},
 };
 
 pub fn init() {
-    let mut builder = env_logger::builder();
+    let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+
+    let registry = Registry::default().with(env_filter);
+
     if stderr_is_journal() {
-        builder.format(|f, r| {
-            use std::io::Write;
-            let level = match r.level() {
-                Level::Error => 3,
-                Level::Warn => 4,
-                Level::Info => 6,
-                Level::Debug => 7,
-                Level::Trace => 7,
-            };
-            write!(f, "<{level}>")?;
-            if let Some(path) = r.module_path() {
-                write!(f, "{path}: ")?;
-            }
-            writeln!(f, "{}", r.args())
-        });
-    } else {
-        builder.default_format();
+        if let Ok(layer) = tracing_journald::layer() {
+            registry.with(layer).init();
+            return;
+        }
     }
-    builder
-        .filter_level(LevelFilter::Info)
-        .parse_default_env()
-        .init();
+
+    registry.with(tracing_subscriber::fmt::layer()).init();
 }
 
 fn stderr_is_journal() -> bool {

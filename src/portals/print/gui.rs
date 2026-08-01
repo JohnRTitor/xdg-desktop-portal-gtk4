@@ -177,21 +177,21 @@ impl ExecutePrintUi {
                 &cached.page_setup,
             );
             if let Err(e) = print_job.set_source_fd(self.fd) {
-                log::error!("Failed to set source fd for print job: {}", e);
+                tracing::error!("Failed to set source fd for print job: {}", e);
                 let _ = send.send_blocking(Err(UiError::Rejected));
                 return;
             }
 
             print_job.send(move |_, err| {
                 if let Err(e) = err {
-                    log::error!("Failed to send print job: {}", e);
+                    tracing::error!("Failed to send print job: {}", e);
                 } else {
-                    log::info!("Print job successfully sent to CUPS");
+                    tracing::info!("Print job successfully sent to CUPS");
                 }
             });
             let _ = send.send_blocking(Ok(()));
         } else {
-            log::warn!("Received print request for unknown token: {}", self.token);
+            tracing::warn!("Received print request for unknown token: {}", self.token);
             let _ = send.send_blocking(Err(UiError::Rejected));
         }
     }

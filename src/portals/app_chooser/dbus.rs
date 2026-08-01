@@ -111,6 +111,7 @@ impl AppChooser {
 #[interface(name = "org.freedesktop.impl.portal.AppChooser")]
 impl AppChooser {
     #[zbus(name = "ChooseApplication")]
+    #[tracing::instrument(skip_all, fields(app_id = %app_id, handle = %handle.as_str()))]
     async fn choose_application(
         &self,
         handle: OwnedObjectPath,
@@ -134,7 +135,7 @@ impl AppChooser {
         handle: OwnedObjectPath,
         choices: Vec<String>,
     ) -> zbus::fdo::Result<()> {
-        log::info!("UpdateChoices called for handle: {}", handle.as_str());
+        tracing::info!("UpdateChoices called for handle: {}", handle.as_str());
         // Look up the channel sender for this specific request handle.
         // If found, send the new list of choices to the GTK task.
         if let Ok(lock) = self.active_dialogs.lock()

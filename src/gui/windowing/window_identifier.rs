@@ -17,7 +17,7 @@ impl WindowIdentifier {
             if let Ok(xid) = u64::from_str_radix(hex_str, 16) {
                 return Some(Self::X11(xid));
             } else {
-                log::warn!("Invalid X11 window handle: {}", handle);
+                tracing::warn!("Invalid X11 window handle: {}", handle);
             }
         }
         None

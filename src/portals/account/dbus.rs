@@ -88,7 +88,7 @@ impl Account {
                 })
             }
             Err(e) => {
-                log::error!("GetUserInformation failed: {}", anyhow::Error::new(e));
+                tracing::error!("GetUserInformation failed: {}", anyhow::Error::new(e));
                 Response::cancelled()
             }
         }
@@ -101,6 +101,7 @@ impl Account {
 /// after prompting the user for confirmation.
 #[interface(name = "org.freedesktop.impl.portal.Account")]
 impl Account {
+    #[tracing::instrument(skip_all, fields(app_id = %app_id, handle = %handle.as_str()))]
     async fn get_user_information(
         &self,
         handle: OwnedObjectPath,

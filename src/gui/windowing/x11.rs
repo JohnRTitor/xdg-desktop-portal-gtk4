@@ -16,13 +16,13 @@ pub fn set_x11_parent(widget: &impl IsA<gtk4::Widget>, parent_xid: u64) {
                 if let Some(toplevel) = surface.downcast_ref::<gtk4::gdk::Toplevel>() {
                     toplevel.set_transient_for(parent_surface.upcast_ref::<gtk4::gdk::Surface>());
                 } else {
-                    log::warn!("Tried to set X11 parent, but surface is not a Toplevel");
+                    tracing::warn!("Tried to set X11 parent, but surface is not a Toplevel");
                 }
             } else {
-                log::error!("Failed to resolve GDK surface for parent XID: {parent_xid}");
+                tracing::error!("Failed to resolve GDK surface for parent XID: {parent_xid}");
             }
         } else {
-            log::warn!("Tried to set X11 parent, but surface is not X11Surface");
+            tracing::warn!("Tried to set X11 parent, but surface is not X11Surface");
         }
     }
 }

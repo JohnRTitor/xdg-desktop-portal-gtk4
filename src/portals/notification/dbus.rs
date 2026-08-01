@@ -207,7 +207,7 @@ impl Notification {
                         // We can just create an OwnedValue and use its inner Value
                     }
                 } else {
-                    log::error!("Failed to dup sound fd");
+                    tracing::error!("Failed to dup sound fd");
                 }
             }
         }
@@ -299,7 +299,7 @@ impl Notification {
                                         hints.insert("image-data", Value::from(image_data));
                                     }
                                 } else {
-                                    log::error!("Failed to dup icon fd");
+                                    tracing::error!("Failed to dup icon fd");
                                 }
                             }
                         }
@@ -431,7 +431,7 @@ impl Notification {
             let s1 = server_clone.clone();
             gtk4::glib::MainContext::default().spawn(async move {
                 if let Err(e) = listen_for_action_invoked(rm1, s1).await {
-                    log::error!("Action invoked listener failed: {}", anyhow::Error::new(e));
+                    tracing::error!("Action invoked listener failed: {}", anyhow::Error::new(e));
                 }
             });
 
@@ -439,7 +439,7 @@ impl Notification {
             let act2 = active_clone.clone();
             gtk4::glib::MainContext::default().spawn(async move {
                 if let Err(e) = listen_for_notification_closed(rm2, act2).await {
-                    log::error!(
+                    tracing::error!(
                         "Notification closed listener failed: {}",
                         anyhow::Error::new(e)
                     );
@@ -453,7 +453,7 @@ impl Notification {
         let fdo_id = if let Ok(mut lock) = self.active_notifications.lock() {
             lock.remove(&key)
         } else {
-            log::error!("Failed to lock active_notifications mutex in remove_notification");
+            tracing::error!("Failed to lock active_notifications mutex in remove_notification");
             None
         };
         if let Some(fdo_id) = fdo_id {

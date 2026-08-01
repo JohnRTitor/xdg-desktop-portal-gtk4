@@ -23,7 +23,7 @@ impl Session {
     async fn close(&self) {
         // Currently, we only log the closure. Real implementations (if added later)
         // would need to clean up resources, close GTK dialogs, or stop screen recording.
-        log::info!("Session {} closed", self.id);
+        tracing::info!("Session {} closed", self.id);
         if let Some(tx) = &self.on_close {
             let _ = tx.send(self.id.clone()).await;
         }

@@ -60,7 +60,7 @@ impl Email {
         match AppInfo::launch_default_for_uri(&url, Some(&launch_context)) {
             Ok(_) => Response::success(EmailResults::default()),
             Err(e) => {
-                log::error!("ComposeEmail failed: {}", anyhow::Error::new(e));
+                tracing::error!("ComposeEmail failed: {}", anyhow::Error::new(e));
                 Response::cancelled()
             }
         }
@@ -130,6 +130,7 @@ fn build_mailto_url(options: &ComposeEmailOptions) -> String {
 /// Provides a way for sandboxed applications to compose emails.
 #[interface(name = "org.freedesktop.impl.portal.Email")]
 impl Email {
+    #[tracing::instrument(skip_all, fields(app_id = %app_id, handle = %handle.as_str()))]
     async fn compose_email(
         &self,
         handle: OwnedObjectPath,

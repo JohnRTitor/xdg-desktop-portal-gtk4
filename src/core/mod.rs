@@ -71,7 +71,7 @@ impl Portal {
 
         context.spawn_local(async move {
             if let Err(e) = session_manager_clone.run().await {
-                log::error!("SessionManager failed: {}", e);
+                tracing::error!("SessionManager failed: {}", e);
             }
         });
 
@@ -122,7 +122,7 @@ impl Portal {
         context.spawn_local(async move {
             use futures_util::stream::StreamExt;
             if name_lost_iterator.next().await.is_some() {
-                log::warn!("Lost name {}", NAME);
+                tracing::warn!("Lost name {}", NAME);
                 std::process::exit(0);
             }
         });
