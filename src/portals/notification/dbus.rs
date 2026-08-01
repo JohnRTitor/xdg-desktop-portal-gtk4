@@ -8,6 +8,16 @@ use {
     },
 };
 
+pub struct TempSoundFile {
+    pub path: std::path::PathBuf,
+}
+
+impl Drop for TempSoundFile {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
+
 #[zbus::proxy(
     interface = "org.freedesktop.Notifications",
     default_service = "org.freedesktop.Notifications",
@@ -78,26 +88,22 @@ pub struct Notification {
                     String,
                     String,
                     HashMap<String, OwnedValue>,
-                    Option<std::path::PathBuf>,
+                    Option<std::sync::Arc<TempSoundFile>>,
                 ),
             >,
         >,
     >,
     init_once: std::sync::Once,
-}
-
-impl Default for Notification {
-    fn default() -> Self {
-        Self::new()
-    }
+    connection: Option<Connection>,
 }
 
 impl Notification {
-    pub fn new() -> Self {
+    pub fn new(connection: Option<Connection>) -> Self {
         Self {
             active_notifications: std::sync::Arc::new(Mutex::new(HashMap::new())),
             reverse_map: std::sync::Arc::new(Mutex::new(HashMap::new())),
             init_once: std::sync::Once::new(),
+            connection,
         }
     }
 }
@@ -152,7 +158,7 @@ impl Notification {
             }
         }
 
-        let mut sound_file_path: Option<std::path::PathBuf> = None;
+        let mut sound_file: Option<std::sync::Arc<TempSoundFile>> = None;
         if let Some(sound) = notification.sound.as_ref() {
             let inner = match std::ops::Deref::deref(sound) {
                 Value::Value(v) => v.as_ref(),
@@ -163,12 +169,9 @@ impl Notification {
                     hints.insert("suppress-sound", Value::from(true));
                 }
             } else if let Value::Fd(fd) = inner {
-                use std::io::{Read, Write};
-
-                use std::os::fd::AsFd;
+                use std::{io::Read, os::fd::AsFd};
                 if let Ok(owned_fd) = fd.as_fd().try_clone_to_owned() {
                     let mut file = std::fs::File::from(owned_fd);
-
                     let mut path = std::env::temp_dir();
                     if let Ok(runtime_dir) = std::env::var("XDG_RUNTIME_DIR") {
                         path = std::path::PathBuf::from(runtime_dir);
@@ -187,24 +190,21 @@ impl Notification {
                     ));
 
                     let path_clone = path.clone();
-
-                    let written_path = gtk4::gio::spawn_blocking(move || {
+                    let bytes = gtk4::gio::spawn_blocking(move || {
                         let mut data = Vec::new();
-                        if file.read_to_end(&mut data).is_ok()
-                            && let Ok(mut out) = std::fs::File::create(&path_clone)
-                            && out.write_all(&data).is_ok()
-                        {
-                            return Some(path_clone);
+                        if file.read_to_end(&mut data).is_ok() {
+                            return Some(data);
                         }
                         None
                     })
                     .await
                     .unwrap_or(None);
 
-                    if let Some(p) = written_path {
-                        sound_file_path = Some(p.clone());
-                        // ZVariant string must live long enough to be converted to Value
-                        // We can just create an OwnedValue and use its inner Value
+                    if let Some(data) = bytes {
+                        if std::fs::write(&path_clone, data).is_ok() {
+                            sound_file =
+                                Some(std::sync::Arc::new(TempSoundFile { path: path_clone }));
+                        }
                     }
                 } else {
                     tracing::error!("Failed to dup sound fd");
@@ -212,13 +212,10 @@ impl Notification {
             }
         }
 
-        // ZBus hints takes references to Value<'a>, so we must own the string outside
-        let sound_file_str = sound_file_path
-            .as_ref()
-            .and_then(|p| p.to_str())
-            .map(|s| s.to_string());
-        if let Some(s) = sound_file_str.as_ref() {
-            hints.insert("sound-file", Value::from(s.as_str()));
+        if let Some(s) = sound_file.as_ref() {
+            if let Some(path_str) = s.path.to_str() {
+                hints.insert("sound-file", Value::from(path_str));
+            }
         }
 
         if let Some(v) = notification.icon.as_ref() {
@@ -252,14 +249,12 @@ impl Notification {
                                 use std::os::fd::AsFd;
                                 if let Ok(owned_fd) = fd.as_fd().try_clone_to_owned() {
                                     let mut file = std::fs::File::from(owned_fd);
-
                                     let image_data = gtk4::gio::spawn_blocking(move || {
                                         use {
                                             gdk_pixbuf::Pixbuf,
                                             gtk4::{gio::MemoryInputStream, glib::Bytes},
                                             std::io::Read,
                                         };
-
                                         let mut data = Vec::new();
                                         if file.read_to_end(&mut data).is_ok() {
                                             let bytes = Bytes::from(&data);
@@ -268,23 +263,14 @@ impl Notification {
                                                 &stream,
                                                 gtk4::gio::Cancellable::NONE,
                                             ) {
-                                                let width = pixbuf.width();
-                                                let height = pixbuf.height();
-                                                let rowstride = pixbuf.rowstride();
-                                                let has_alpha = pixbuf.has_alpha();
-                                                let bits_per_sample = pixbuf.bits_per_sample();
-                                                let n_channels = pixbuf.n_channels();
-                                                let pixels = pixbuf.read_pixel_bytes();
-                                                let pixels_bytes: &[u8] = &pixels;
-
                                                 return OwnedValue::try_from(Value::new((
-                                                    width,
-                                                    height,
-                                                    rowstride,
-                                                    has_alpha,
-                                                    bits_per_sample,
-                                                    n_channels,
-                                                    Value::from(pixels_bytes),
+                                                    pixbuf.width(),
+                                                    pixbuf.height(),
+                                                    pixbuf.rowstride(),
+                                                    pixbuf.has_alpha(),
+                                                    pixbuf.bits_per_sample(),
+                                                    pixbuf.n_channels(),
+                                                    Value::from(pixbuf.read_pixel_bytes().as_ref()),
                                                 )))
                                                 .ok();
                                             }
@@ -297,8 +283,6 @@ impl Notification {
                                     if let Some(image_data) = image_data {
                                         hints.insert("image-data", Value::from(image_data));
                                     }
-                                } else {
-                                    tracing::error!("Failed to dup icon fd");
                                 }
                             }
                         }
@@ -309,29 +293,19 @@ impl Notification {
                                         gdk_pixbuf::Pixbuf,
                                         gtk4::{gio::MemoryInputStream, glib::Bytes},
                                     };
-
                                     let bytes = Bytes::from(&byte_array);
                                     let stream = MemoryInputStream::from_bytes(&bytes);
                                     if let Ok(pixbuf) =
                                         Pixbuf::from_stream(&stream, gtk4::gio::Cancellable::NONE)
                                     {
-                                        let width = pixbuf.width();
-                                        let height = pixbuf.height();
-                                        let rowstride = pixbuf.rowstride();
-                                        let has_alpha = pixbuf.has_alpha();
-                                        let bits_per_sample = pixbuf.bits_per_sample();
-                                        let n_channels = pixbuf.n_channels();
-                                        let pixels = pixbuf.read_pixel_bytes();
-                                        let pixels_bytes: &[u8] = &pixels;
-
                                         return OwnedValue::try_from(Value::new((
-                                            width,
-                                            height,
-                                            rowstride,
-                                            has_alpha,
-                                            bits_per_sample,
-                                            n_channels,
-                                            Value::from(pixels_bytes),
+                                            pixbuf.width(),
+                                            pixbuf.height(),
+                                            pixbuf.rowstride(),
+                                            pixbuf.has_alpha(),
+                                            pixbuf.bits_per_sample(),
+                                            pixbuf.n_channels(),
+                                            Value::from(pixbuf.read_pixel_bytes().as_ref()),
                                         )))
                                         .ok();
                                     }
@@ -378,8 +352,8 @@ impl Notification {
 
         let actions: Vec<&str> = parsed_actions.iter().map(|s| s.as_str()).collect();
 
-        if let Ok(system_bus) = Connection::session().await
-            && let Ok(proxy) = NotificationsProxy::new(&system_bus).await
+        if let Some(session_bus) = &self.connection
+            && let Ok(proxy) = NotificationsProxy::new(session_bus).await
         {
             let key = (app_id.clone(), id.clone());
             let replaces_id = {
@@ -415,7 +389,7 @@ impl Notification {
                 if let Ok(mut lock) = self.reverse_map.lock() {
                     lock.insert(
                         new_id,
-                        (app_id.clone(), id.clone(), action_targets, sound_file_path),
+                        (app_id.clone(), id.clone(), action_targets, sound_file),
                     );
                 }
             }
@@ -423,25 +397,34 @@ impl Notification {
 
         let reverse_map_clone = self.reverse_map.clone();
         let server_clone = server.clone();
-        let active_clone = self.active_notifications.clone();
+        let conn_clone = self.connection.clone();
 
         self.init_once.call_once(move || {
             let rm1 = reverse_map_clone.clone();
             let s1 = server_clone.clone();
+            let c1 = conn_clone.clone();
             gtk4::glib::MainContext::default().spawn(async move {
-                if let Err(e) = listen_for_action_invoked(rm1, s1).await {
-                    tracing::error!("Action invoked listener failed: {}", anyhow::Error::new(e));
+                if let Some(conn) = c1 {
+                    if let Err(e) = listen_for_action_invoked(rm1, s1, Some(conn)).await {
+                        tracing::error!(
+                            "Action invoked listener failed: {}",
+                            anyhow::Error::new(e)
+                        );
+                    }
                 }
             });
 
             let rm2 = reverse_map_clone.clone();
-            let act2 = active_clone.clone();
+            let act2 = self.active_notifications.clone();
+            let c2 = conn_clone.clone();
             gtk4::glib::MainContext::default().spawn(async move {
-                if let Err(e) = listen_for_notification_closed(rm2, act2).await {
-                    tracing::error!(
-                        "Notification closed listener failed: {}",
-                        anyhow::Error::new(e)
-                    );
+                if let Some(conn) = c2 {
+                    if let Err(e) = listen_for_notification_closed(rm2, act2, Some(conn)).await {
+                        tracing::error!(
+                            "Notification closed listener failed: {}",
+                            anyhow::Error::new(e)
+                        );
+                    }
                 }
             });
         });
@@ -456,14 +439,8 @@ impl Notification {
             None
         };
         if let Some(fdo_id) = fdo_id {
-            if let Ok(mut lock) = self.reverse_map.lock()
-                && let Some((_, _, _, sound_file)) = lock.remove(&fdo_id)
-                && let Some(path) = sound_file
-            {
-                let _ = std::fs::remove_file(path);
-            }
-            if let Ok(system_bus) = Connection::session().await
-                && let Ok(proxy) = NotificationsProxy::new(&system_bus).await
+            if let Some(session_bus) = &self.connection
+                && let Ok(proxy) = NotificationsProxy::new(session_bus).await
             {
                 let _ = proxy.close_notification(fdo_id).await;
             }
@@ -515,14 +492,15 @@ async fn listen_for_action_invoked(
                     String,
                     String,
                     HashMap<String, OwnedValue>,
-                    Option<std::path::PathBuf>,
+                    Option<std::sync::Arc<TempSoundFile>>,
                 ),
             >,
         >,
     >,
     server: ObjectServer,
+    session_bus_opt: Option<Connection>,
 ) -> zbus::Result<()> {
-    let session_bus = Connection::session().await?;
+    let session_bus = session_bus_opt.ok_or(zbus::Error::Failure("No connection".into()))?;
     let proxy = NotificationsProxy::new(&session_bus).await?;
     let mut stream = proxy.receive_action_invoked().await?;
 
@@ -610,14 +588,15 @@ async fn listen_for_notification_closed(
                     String,
                     String,
                     HashMap<String, OwnedValue>,
-                    Option<std::path::PathBuf>,
+                    Option<std::sync::Arc<TempSoundFile>>,
                 ),
             >,
         >,
     >,
     active_notifications: std::sync::Arc<Mutex<HashMap<(String, String), u32>>>,
+    session_bus_opt: Option<Connection>,
 ) -> zbus::Result<()> {
-    let session_bus = Connection::session().await?;
+    let session_bus = session_bus_opt.ok_or(zbus::Error::Failure("No connection".into()))?;
     let proxy = NotificationsProxy::new(&session_bus).await?;
     let mut stream = proxy.receive_notification_closed().await?;
 
@@ -626,10 +605,8 @@ async fn listen_for_notification_closed(
         let id = args.id;
 
         let removed_key = if let Ok(mut lock) = reverse_map.lock() {
-            if let Some((app_id, portal_id, _, sound_file)) = lock.remove(&id) {
-                if let Some(path) = sound_file {
-                    let _ = std::fs::remove_file(path);
-                }
+            if let Some((app_id, portal_id, _, _sound_file)) = lock.remove(&id) {
+                // _sound_file drops here and deletes the temp file via Drop trait
                 Some((app_id, portal_id))
             } else {
                 None
@@ -657,7 +634,7 @@ mod tests {
 
     #[test]
     fn test_notification_properties() {
-        let notification = Notification::new();
+        let notification = Notification::new(None);
         assert_eq!(notification.version(), 2);
 
         let options = notification.supported_options();

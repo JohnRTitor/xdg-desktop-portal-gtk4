@@ -58,14 +58,19 @@ pub struct Inhibit {
     active_monitors: std::sync::Arc<Mutex<HashMap<OwnedObjectPath, OwnedObjectPath>>>,
     init_once: std::sync::Once,
     session_manager: crate::core::session_manager::SessionManager,
+    system_conn: Option<Connection>,
 }
 
 impl Inhibit {
-    pub fn new(session_manager: crate::core::session_manager::SessionManager) -> Self {
+    pub fn new(
+        session_manager: crate::core::session_manager::SessionManager,
+        system_conn: Option<Connection>,
+    ) -> Self {
         Self {
             active_monitors: std::sync::Arc::new(Mutex::new(HashMap::new())),
             init_once: std::sync::Once::new(),
             session_manager,
+            system_conn,
         }
     }
 }
@@ -116,14 +121,16 @@ impl Inhibit {
         let session_manager_clone = self.session_manager.clone();
         let app_id_clone = app_id.clone();
         let handle_clone = handle.clone();
+        let system_conn_clone = self.system_conn.clone();
+        let session_conn_clone = self.session_manager.connection().clone();
 
         gtk4::glib::MainContext::default().spawn(async move {
             {
-                let session_bus_res = Connection::session().await;
+                let session_bus = session_conn_clone;
                 let mut screen_saver_cookie = None;
                 let mut logind_fd = None;
 
-                let system_bus_res = Connection::system().await;
+                let system_bus_opt = system_conn_clone;
 
                 let mut inhibit_what = Vec::new();
 
@@ -147,7 +154,7 @@ impl Inhibit {
                 // Try logind first for sleep/shutdown/idle.
                 // logind provides a robust system-level inhibition API via file descriptors.
                 if !inhibit_what.is_empty()
-                    && let Ok(system_bus) = &system_bus_res
+                    && let Some(system_bus) = &system_bus_opt
                     && let Ok(logind_proxy) = Login1ManagerProxy::new(system_bus).await
                 {
                     let what_str = inhibit_what.join(":");
@@ -170,8 +177,7 @@ impl Inhibit {
                 // Some desktop environments (like GNOME) don't fully honor logind idle locks
                 // for screen blanking, so using the standard D-Bus ScreenSaver API is recommended.
                 if reason & 8 != 0
-                    && let Ok(session_bus) = &session_bus_res
-                    && let Ok(ss_proxy) = ScreenSaverProxy::new(session_bus).await
+                    && let Ok(ss_proxy) = ScreenSaverProxy::new(&session_bus).await
                 {
                     match ss_proxy.inhibit(&app_id, reason_str).await {
                         Ok(cookie) => {
@@ -219,8 +225,8 @@ impl Inhibit {
         _window: String,
         #[zbus(object_server)] server: &ObjectServer,
     ) -> zbus::fdo::Result<u32> {
-        let (tx, rx) = async_channel::unbounded();
-        let (cancel_tx, cancel_rx) = async_channel::unbounded();
+        let (tx, rx) = async_channel::bounded(1);
+        let (cancel_tx, cancel_rx) = async_channel::bounded(1);
 
         let sender = match header.sender() {
             Some(s) => s.as_str().to_string(),
@@ -253,6 +259,7 @@ impl Inhibit {
         let session_manager_clone = self.session_manager.clone();
         let app_id_clone = app_id.clone();
         let sender_clone = sender.clone();
+        let server_clone = server.clone();
 
         gtk4::glib::MainContext::default().spawn(async move {
             futures_util::future::select(
@@ -269,16 +276,22 @@ impl Inhibit {
                 &sender_clone,
                 session_handle_clone.as_str(),
             );
+
+            // Remove the exported Session object
+            let _ = server_clone
+                .remove::<Session, _>(&session_handle_clone)
+                .await;
         });
 
         let server_clone = server.clone();
         let monitors_clone = self.active_monitors.clone();
+        let session_manager_clone2 = self.session_manager.clone();
 
         self.init_once.call_once(move || {
             gtk4::glib::MainContext::default().spawn(async move {
                 {
-                    if let Ok(session_bus) = Connection::session().await
-                        && let Ok(proxy) = ScreenSaverProxy::new(&session_bus).await
+                    let session_bus = session_manager_clone2.connection().clone();
+                    if let Ok(proxy) = ScreenSaverProxy::new(&session_bus).await
                         && let Ok(mut stream) = proxy.receive_active_changed().await
                     {
                         while let Some(signal) = stream.next().await {

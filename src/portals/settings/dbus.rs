@@ -18,7 +18,6 @@ impl SettingsPortal {
         // signal listener to it. This allows us to proxy GTK settings changes to sandboxed
         // apps in real-time, emitting the portal `SettingChanged` signal.
         if let Some(s) = settings {
-            let s_clone = s.clone();
             s.connect_changed(None, move |_, key| {
                 let key_str = key;
                 let server_clone = server.clone();
@@ -81,23 +80,28 @@ impl SettingsPortal {
                     }
                 }
             });
-
-            gtk4::glib::MainContext::default().spawn_local(async move {
-                let _keep_alive = s_clone;
-                std::future::pending::<()>().await;
-            });
         }
 
         Self {}
     }
 
     fn get_gnome_interface_static() -> Option<Settings> {
-        let source = SettingsSchemaSource::default()?;
-        if source.lookup("org.gnome.desktop.interface", true).is_some() {
-            Some(Settings::new("org.gnome.desktop.interface"))
-        } else {
-            None
+        thread_local! {
+            static GNOME_SETTINGS: std::cell::RefCell<Option<Settings>> = std::cell::RefCell::new(None);
+            static CHECKED: std::cell::Cell<bool> = std::cell::Cell::new(false);
         }
+
+        GNOME_SETTINGS.with(|s| {
+            if !CHECKED.with(|c| c.get()) {
+                if let Some(source) = SettingsSchemaSource::default() {
+                    if source.lookup("org.gnome.desktop.interface", true).is_some() {
+                        *s.borrow_mut() = Some(Settings::new("org.gnome.desktop.interface"));
+                    }
+                }
+                CHECKED.with(|c| c.set(true));
+            }
+            s.borrow().clone()
+        })
     }
 
     fn read_setting(&self, namespace: &str, key: &str) -> Option<OwnedValue> {
@@ -254,7 +258,7 @@ impl SettingsPortal {
         value: &Value<'_>,
     ) -> zbus::Result<()>;
 
-    #[zbus(property, name = "version")]
+    #[zbus(property)]
     fn version(&self) -> u32 {
         2 // Version 2 introduced ReadAll
     }

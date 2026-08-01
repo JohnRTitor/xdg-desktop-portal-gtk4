@@ -39,6 +39,11 @@ impl SessionManager {
         }
     }
 
+    /// Returns the underlying D-Bus connection.
+    pub fn connection(&self) -> &Connection {
+        &self.conn
+    }
+
     /// Registers a session or request with the session manager.
     pub fn register(
         &self,

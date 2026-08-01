@@ -148,6 +148,7 @@ async fn test_inhibit_returns_success() -> Result<(), Box<dyn std::error::Error>
                     client_conn.clone(),
                     10,
                 ),
+                None,
             ),
         )?
         .build()
