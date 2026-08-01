@@ -1,21 +1,10 @@
-use {
-    clap::Parser,
-    xdg_desktop_portal_gtk4::{core::Portal, gui::Ui, logging},
-};
-
-/// The xdg-desktop-portal-gtk4 portal.
-#[derive(Parser, Debug)]
-struct Cli {
-    /// Replace the portal if it is already running.
-    #[clap(long)]
-    pub replace: bool,
-}
+use xdg_desktop_portal_gtk4::{core::Portal, gui::Ui, logging};
 
 fn main() {
     logging::init();
     init_i18n();
 
-    let args = Cli::parse();
+    let replace = std::env::args().any(|arg| arg == "--replace");
 
     // We instantiate the UI state first, which sets up the GTK MainContext and channel receivers.
     // This allows us to pass a thread-safe Proxy to the D-Bus services.
@@ -45,7 +34,7 @@ fn main() {
     let _portal = match ui
         .proxy()
         .context
-        .block_on(async { Portal::create(ui.proxy(), args.replace).await })
+        .block_on(async { Portal::create(ui.proxy(), replace).await })
     {
         Ok(p) => p,
         Err(e) => {

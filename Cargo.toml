@@ -62,7 +62,7 @@ account = []
 app_chooser = []
 dynamic_launcher = []
 email = []
-file_chooser = ["dep:bstr", "dep:url"]
+file_chooser = []
 inhibit = []
 lockdown = []
 notification = ["dep:gdk-pixbuf"]
@@ -73,8 +73,6 @@ usb = []
 [dependencies]
 anyhow = "1.0.103"
 async-channel = "2.5.0"
-bstr = { version = "1.13.0", optional = true }
-clap = { version = "4.6.2", features = ["derive"] }
 current_locale = "0.1.1"
 futures-util = "0.3.32"
 gdk-pixbuf = { version = "0.22.0", optional = true }
@@ -90,8 +88,14 @@ thiserror = "2.0.18"
 tracing = "0.1.44"
 tracing-journald = "0.3.2"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
-url = { version = "2.5.8", features = ["serde"], optional = true }
 zbus = { version = "5.17.0" }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt", "time"] }
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true

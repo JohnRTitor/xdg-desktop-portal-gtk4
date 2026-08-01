@@ -7,11 +7,10 @@ use {
         core::{request::run_request, response::Response},
         gui::UiProxy,
     },
-    bstr::{ByteSlice, ByteVec},
+    gtk4::{gio, prelude::FileExt},
     serde::{Deserialize, Deserializer},
-    std::{ffi::CString, path::Path, str::FromStr},
+    std::{ffi::CString, os::unix::ffi::OsStrExt, path::Path},
     thiserror::Error,
-    url::Url,
     zbus::{
         ObjectServer, interface,
         zvariant::{DeserializeDict, OwnedObjectPath, SerializeDict, Type},
@@ -46,7 +45,9 @@ impl<'de> Deserialize<'de> for FilePath {
         let bytes = <Vec<u8>>::deserialize(deserializer)?;
         let c_string = CString::from_vec_with_nul(bytes)
             .map_err(|_| serde::de::Error::custom("Bytes are not nul-terminated"))?;
-        Ok(Self(c_string.into_bytes().into_string_lossy()))
+        Ok(Self(
+            String::from_utf8_lossy(&c_string.into_bytes()).into_owned(),
+        ))
     }
 }
 
@@ -124,12 +125,8 @@ enum SaveFilesError {
     MultipleComponents,
     #[error("Client tried to save `.` or `..`")]
     SpecialPath,
-    #[error("The selected path is not a valid URI")]
-    SelectedNotValidUrl(#[source] url::ParseError),
     #[error("The selected path is not a path")]
     SelectedNotValidPath,
-    #[error("The computed unique path is not a valid URI")]
-    UniqueNotValidUrl,
     #[error(transparent)]
     Ui(crate::gui::UiError),
 }
@@ -265,10 +262,9 @@ impl FileChooser {
             Some(u) => u,
             None => return Err(SaveFilesError::NotExactlyOnePath),
         };
-        let base = Url::from_str(&uri)
-            .map_err(SaveFilesError::SelectedNotValidUrl)?
-            .to_file_path()
-            .map_err(|_| SaveFilesError::SelectedNotValidPath)?;
+        let base = gio::File::for_uri(&uri)
+            .path()
+            .ok_or(SaveFilesError::SelectedNotValidPath)?;
         let mut uris = vec![];
         for file in files {
             let mut path = base.join(&file.0);
@@ -284,11 +280,7 @@ impl FileChooser {
                     }
                 }
             }
-            uris.push(
-                Url::from_file_path(&path)
-                    .map_err(|_| SaveFilesError::UniqueNotValidUrl)?
-                    .to_string(),
-            );
+            uris.push(gio::File::for_path(&path).uri().to_string());
         }
         Ok(SaveFilesResults {
             uris: Some(uris),
@@ -410,7 +402,7 @@ fn unmap_filter(f: Filter) -> FileFilter {
 }
 
 fn map_cstr(f: FilePath) -> String {
-    f.0.as_bytes().to_str_lossy().into_owned()
+    f.0
 }
 
 fn map_choices(c: Vec<Choice>) -> Vec<file_chooser::Choice> {
