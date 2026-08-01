@@ -55,7 +55,7 @@ pub fn setup_window<W: IsA<gtk4::Window> + IsA<gtk4::Widget>>(
                 // we open an X11 display explicitly so the dialog runs as an XWayland client,
                 // allowing us to properly use XSetTransientForHint.
                 thread_local! {
-                    static X11_FALLBACK_DISPLAY: std::cell::RefCell<Option<X11Display>> = std::cell::RefCell::new(None);
+                    static X11_FALLBACK_DISPLAY: std::cell::RefCell<Option<X11Display>> = const { std::cell::RefCell::new(None) };
                 }
 
                 X11_FALLBACK_DISPLAY.with(|cache| {

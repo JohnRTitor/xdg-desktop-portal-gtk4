@@ -86,6 +86,12 @@ pub struct Notification {
     init_once: std::sync::Once,
 }
 
+impl Default for Notification {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Notification {
     pub fn new() -> Self {
         Self {
@@ -176,7 +182,7 @@ impl Notification {
                         .as_micros();
                     path.push(format!(
                         "{}_{}.snd",
-                        app_id.replace('.', "_").replace('-', "_"),
+                        app_id.replace(['.', '-'], "_"),
                         timestamp
                     ));
 
@@ -184,12 +190,11 @@ impl Notification {
 
                     let written_path = gtk4::gio::spawn_blocking(move || {
                         let mut data = Vec::new();
-                        if file.read_to_end(&mut data).is_ok() {
-                            if let Ok(mut out) = std::fs::File::create(&path_clone) {
-                                if out.write_all(&data).is_ok() {
-                                    return Some(path_clone);
-                                }
-                            }
+                        if file.read_to_end(&mut data).is_ok()
+                            && let Ok(mut out) = std::fs::File::create(&path_clone)
+                            && out.write_all(&data).is_ok()
+                        {
+                            return Some(path_clone);
                         }
                         None
                     })
@@ -222,114 +227,68 @@ impl Notification {
                 icon_name = s.to_string();
             } else if let Ok(structure) = <Structure>::try_from(v_ref) {
                 let fields = structure.fields();
-                if fields.len() == 2 {
-                    if let Ok(icon_type) = <&str>::try_from(&fields[0]) {
-                        // The icon format is (sv) — the payload in fields[1] is wrapped
-                        // in a variant. Unwrap it so we can extract the actual value.
-                        let payload = match &fields[1] {
-                            Value::Value(inner) => inner.as_ref(),
-                            other => other,
-                        };
-                        match icon_type {
-                            "themed" => {
-                                if let Ok(names) = <Vec<String>>::try_from(payload.clone()) {
-                                    if let Some(first) = names.first() {
-                                        icon_name = first.to_string();
-                                    }
-                                }
+                if fields.len() == 2
+                    && let Ok(icon_type) = <&str>::try_from(&fields[0])
+                {
+                    // The icon format is (sv) — the payload in fields[1] is wrapped
+                    // in a variant. Unwrap it so we can extract the actual value.
+                    let payload = match &fields[1] {
+                        Value::Value(inner) => inner.as_ref(),
+                        other => other,
+                    };
+                    match icon_type {
+                        "themed" => {
+                            if let Ok(names) = <Vec<String>>::try_from(payload.clone())
+                                && let Some(first) = names.first()
+                            {
+                                icon_name = first.to_string();
                             }
-                            "file-descriptor" => {
-                                // Note: xdg-desktop-portal drops raw "file" icon paths for security.
-                                // Apps sending "bytes" arrays will have their bytes written to a memfd
-                                // by the host portal, which forwards it to us here as "file-descriptor".
-                                if let Value::Fd(fd) = payload {
-                                    use {nix::unistd::dup, std::os::fd::AsFd};
-                                    // Duplicate the FD so we can safely read it without consuming the original
-                                    if let Ok(owned_fd) = dup(fd.as_fd()) {
-                                        let mut file = std::fs::File::from(owned_fd);
+                        }
+                        "file-descriptor" => {
+                            // Note: xdg-desktop-portal drops raw "file" icon paths for security.
+                            // Apps sending "bytes" arrays will have their bytes written to a memfd
+                            // by the host portal, which forwards it to us here as "file-descriptor".
+                            if let Value::Fd(fd) = payload {
+                                use {nix::unistd::dup, std::os::fd::AsFd};
+                                // Duplicate the FD so we can safely read it without consuming the original
+                                if let Ok(owned_fd) = dup(fd.as_fd()) {
+                                    let mut file = std::fs::File::from(owned_fd);
 
-                                        let image_data = gtk4::gio::spawn_blocking(move || {
-                                            use {
-                                                gdk_pixbuf::Pixbuf,
-                                                gtk4::{gio::MemoryInputStream, glib::Bytes},
-                                                std::io::Read,
-                                            };
-
-                                            let mut data = Vec::new();
-                                            if file.read_to_end(&mut data).is_ok() {
-                                                let bytes = Bytes::from(&data);
-                                                let stream = MemoryInputStream::from_bytes(&bytes);
-                                                if let Ok(pixbuf) = Pixbuf::from_stream(
-                                                    &stream,
-                                                    gtk4::gio::Cancellable::NONE,
-                                                ) {
-                                                    let width = pixbuf.width();
-                                                    let height = pixbuf.height();
-                                                    let rowstride = pixbuf.rowstride();
-                                                    let has_alpha = pixbuf.has_alpha();
-                                                    let bits_per_sample = pixbuf.bits_per_sample();
-                                                    let n_channels = pixbuf.n_channels();
-                                                    let pixels = pixbuf.read_pixel_bytes();
-                                                    let pixels_bytes: &[u8] = &pixels;
-
-                                                    return OwnedValue::try_from(Value::new((
-                                                        width,
-                                                        height,
-                                                        rowstride,
-                                                        has_alpha,
-                                                        bits_per_sample,
-                                                        n_channels,
-                                                        Value::from(pixels_bytes),
-                                                    )))
-                                                    .ok();
-                                                }
-                                            }
-                                            None
-                                        })
-                                        .await
-                                        .unwrap_or(None);
-
-                                        if let Some(image_data) = image_data {
-                                            hints.insert("image-data", Value::from(image_data));
-                                        }
-                                    } else {
-                                        log::error!("Failed to dup icon fd");
-                                    }
-                                }
-                            }
-                            "bytes" => {
-                                if let Ok(byte_array) = <Vec<u8>>::try_from(payload.clone()) {
                                     let image_data = gtk4::gio::spawn_blocking(move || {
                                         use {
                                             gdk_pixbuf::Pixbuf,
                                             gtk4::{gio::MemoryInputStream, glib::Bytes},
+                                            std::io::Read,
                                         };
 
-                                        let bytes = Bytes::from(&byte_array);
-                                        let stream = MemoryInputStream::from_bytes(&bytes);
-                                        if let Ok(pixbuf) = Pixbuf::from_stream(
-                                            &stream,
-                                            gtk4::gio::Cancellable::NONE,
-                                        ) {
-                                            let width = pixbuf.width();
-                                            let height = pixbuf.height();
-                                            let rowstride = pixbuf.rowstride();
-                                            let has_alpha = pixbuf.has_alpha();
-                                            let bits_per_sample = pixbuf.bits_per_sample();
-                                            let n_channels = pixbuf.n_channels();
-                                            let pixels = pixbuf.read_pixel_bytes();
-                                            let pixels_bytes: &[u8] = &pixels;
+                                        let mut data = Vec::new();
+                                        if file.read_to_end(&mut data).is_ok() {
+                                            let bytes = Bytes::from(&data);
+                                            let stream = MemoryInputStream::from_bytes(&bytes);
+                                            if let Ok(pixbuf) = Pixbuf::from_stream(
+                                                &stream,
+                                                gtk4::gio::Cancellable::NONE,
+                                            ) {
+                                                let width = pixbuf.width();
+                                                let height = pixbuf.height();
+                                                let rowstride = pixbuf.rowstride();
+                                                let has_alpha = pixbuf.has_alpha();
+                                                let bits_per_sample = pixbuf.bits_per_sample();
+                                                let n_channels = pixbuf.n_channels();
+                                                let pixels = pixbuf.read_pixel_bytes();
+                                                let pixels_bytes: &[u8] = &pixels;
 
-                                            return OwnedValue::try_from(Value::new((
-                                                width,
-                                                height,
-                                                rowstride,
-                                                has_alpha,
-                                                bits_per_sample,
-                                                n_channels,
-                                                Value::from(pixels_bytes),
-                                            )))
-                                            .ok();
+                                                return OwnedValue::try_from(Value::new((
+                                                    width,
+                                                    height,
+                                                    rowstride,
+                                                    has_alpha,
+                                                    bits_per_sample,
+                                                    n_channels,
+                                                    Value::from(pixels_bytes),
+                                                )))
+                                                .ok();
+                                            }
                                         }
                                         None
                                     })
@@ -339,10 +298,55 @@ impl Notification {
                                     if let Some(image_data) = image_data {
                                         hints.insert("image-data", Value::from(image_data));
                                     }
+                                } else {
+                                    log::error!("Failed to dup icon fd");
                                 }
                             }
-                            _ => {}
                         }
+                        "bytes" => {
+                            if let Ok(byte_array) = <Vec<u8>>::try_from(payload.clone()) {
+                                let image_data = gtk4::gio::spawn_blocking(move || {
+                                    use {
+                                        gdk_pixbuf::Pixbuf,
+                                        gtk4::{gio::MemoryInputStream, glib::Bytes},
+                                    };
+
+                                    let bytes = Bytes::from(&byte_array);
+                                    let stream = MemoryInputStream::from_bytes(&bytes);
+                                    if let Ok(pixbuf) =
+                                        Pixbuf::from_stream(&stream, gtk4::gio::Cancellable::NONE)
+                                    {
+                                        let width = pixbuf.width();
+                                        let height = pixbuf.height();
+                                        let rowstride = pixbuf.rowstride();
+                                        let has_alpha = pixbuf.has_alpha();
+                                        let bits_per_sample = pixbuf.bits_per_sample();
+                                        let n_channels = pixbuf.n_channels();
+                                        let pixels = pixbuf.read_pixel_bytes();
+                                        let pixels_bytes: &[u8] = &pixels;
+
+                                        return OwnedValue::try_from(Value::new((
+                                            width,
+                                            height,
+                                            rowstride,
+                                            has_alpha,
+                                            bits_per_sample,
+                                            n_channels,
+                                            Value::from(pixels_bytes),
+                                        )))
+                                        .ok();
+                                    }
+                                    None
+                                })
+                                .await
+                                .unwrap_or(None);
+
+                                if let Some(image_data) = image_data {
+                                    hints.insert("image-data", Value::from(image_data));
+                                }
+                            }
+                        }
+                        _ => {}
                     }
                 }
             }
@@ -375,45 +379,45 @@ impl Notification {
 
         let actions: Vec<&str> = parsed_actions.iter().map(|s| s.as_str()).collect();
 
-        if let Ok(system_bus) = Connection::session().await {
-            if let Ok(proxy) = NotificationsProxy::new(&system_bus).await {
-                let key = (app_id.clone(), id.clone());
-                let replaces_id = {
-                    let mut lock = self
-                        .active_notifications
-                        .lock()
-                        .unwrap_or_else(|e| e.into_inner());
-                    *lock.entry(key.clone()).or_insert(0)
-                };
+        if let Ok(system_bus) = Connection::session().await
+            && let Ok(proxy) = NotificationsProxy::new(&system_bus).await
+        {
+            let key = (app_id.clone(), id.clone());
+            let replaces_id = {
+                let mut lock = self
+                    .active_notifications
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner());
+                *lock.entry(key.clone()).or_insert(0)
+            };
 
-                if replaces_id != 0 {
-                    if let Ok(mut lock) = self.reverse_map.lock() {
-                        lock.remove(&replaces_id);
-                    }
+            if replaces_id != 0
+                && let Ok(mut lock) = self.reverse_map.lock()
+            {
+                lock.remove(&replaces_id);
+            }
+
+            if let Ok(new_id) = proxy
+                .notify(
+                    &app_id,
+                    replaces_id,
+                    &icon_name,
+                    title,
+                    body,
+                    &actions,
+                    &hints,
+                    -1,
+                )
+                .await
+            {
+                if let Ok(mut lock) = self.active_notifications.lock() {
+                    lock.insert(key, new_id);
                 }
-
-                if let Ok(new_id) = proxy
-                    .notify(
-                        &app_id,
-                        replaces_id,
-                        &icon_name,
-                        title,
-                        body,
-                        &actions,
-                        &hints,
-                        -1,
-                    )
-                    .await
-                {
-                    if let Ok(mut lock) = self.active_notifications.lock() {
-                        lock.insert(key, new_id);
-                    }
-                    if let Ok(mut lock) = self.reverse_map.lock() {
-                        lock.insert(
-                            new_id,
-                            (app_id.clone(), id.clone(), action_targets, sound_file_path),
-                        );
-                    }
+                if let Ok(mut lock) = self.reverse_map.lock() {
+                    lock.insert(
+                        new_id,
+                        (app_id.clone(), id.clone(), action_targets, sound_file_path),
+                    );
                 }
             }
         }
@@ -453,17 +457,16 @@ impl Notification {
             None
         };
         if let Some(fdo_id) = fdo_id {
-            if let Ok(mut lock) = self.reverse_map.lock() {
-                if let Some((_, _, _, sound_file)) = lock.remove(&fdo_id) {
-                    if let Some(path) = sound_file {
-                        let _ = std::fs::remove_file(path);
-                    }
-                }
+            if let Ok(mut lock) = self.reverse_map.lock()
+                && let Some((_, _, _, sound_file)) = lock.remove(&fdo_id)
+                && let Some(path) = sound_file
+            {
+                let _ = std::fs::remove_file(path);
             }
-            if let Ok(system_bus) = Connection::session().await {
-                if let Ok(proxy) = NotificationsProxy::new(&system_bus).await {
-                    let _ = proxy.close_notification(fdo_id).await;
-                }
+            if let Ok(system_bus) = Connection::session().await
+                && let Ok(proxy) = NotificationsProxy::new(&system_bus).await
+            {
+                let _ = proxy.close_notification(fdo_id).await;
             }
         }
     }
@@ -552,9 +555,7 @@ async fn listen_for_action_invoked(
             let mut app_path = String::from("/");
             app_path.push_str(&app_id.replace('.', "/").replace('-', "_"));
 
-            if action_key.starts_with("app.") {
-                let action_name = &action_key[4..];
-
+            if let Some(action_name) = action_key.strip_prefix("app.") {
                 let proxy_res = ApplicationProxy::builder(&session_bus)
                     .destination(app_id.as_str())
                     .unwrap()
@@ -590,7 +591,7 @@ async fn listen_for_action_invoked(
                         iface_ref.signal_emitter(),
                         &app_id,
                         &portal_id,
-                        &action_key,
+                        action_key,
                         &params,
                     )
                     .await;
@@ -638,13 +639,13 @@ async fn listen_for_notification_closed(
             None
         };
 
-        if let Some(key) = removed_key {
-            if let Ok(mut lock) = active_notifications.lock() {
-                // To avoid a race condition where the FDO server replaces the notification
-                // but still emits NotificationClosed for the old one, we only remove if it's the exact same FDO ID.
-                if lock.get(&key) == Some(&id) {
-                    lock.remove(&key);
-                }
+        if let Some(key) = removed_key
+            && let Ok(mut lock) = active_notifications.lock()
+        {
+            // To avoid a race condition where the FDO server replaces the notification
+            // but still emits NotificationClosed for the old one, we only remove if it's the exact same FDO ID.
+            if lock.get(&key) == Some(&id) {
+                lock.remove(&key);
             }
         }
     }

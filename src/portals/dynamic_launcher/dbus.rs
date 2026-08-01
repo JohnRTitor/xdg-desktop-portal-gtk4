@@ -24,7 +24,6 @@ impl DynamicLauncher {
 
 #[derive(DeserializeDict, Type, Debug, Default)]
 #[zvariant(signature = "dict")]
-
 struct PrepareInstallOptions {
     modal: Option<bool>,
     launcher_type: Option<u32>,

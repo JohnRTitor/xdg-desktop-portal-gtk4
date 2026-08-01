@@ -26,6 +26,39 @@ This implementation provides backend support for the following XDG Desktop Porta
 - **Settings** (`org.freedesktop.impl.portal.Settings`): Reading desktop settings (such as color-scheme for dark mode).
 - **USB** (`org.freedesktop.impl.portal.Usb`): Managing USB device access.
 
+## Feature Flags
+
+Every portal is optionally compiled using Cargo features. By default, all portals are enabled. You can disable the default features and selectively enable only the portals you need to reduce binary size and compile time.
+
+| Feature | Portal | Default | Extra Dependencies |
+| ------- | ------ | ------- | ------------------ |
+| `access` | Access | Yes | None |
+| `account` | Account | Yes | None |
+| `app_chooser` | AppChooser | Yes | None |
+| `dynamic_launcher` | DynamicLauncher | Yes | None |
+| `email` | Email | Yes | None |
+| `file_chooser` | FileChooser | Yes | `bstr`, `url` |
+| `inhibit` | Inhibit | Yes | None |
+| `lockdown` | Lockdown | Yes | None |
+| `notification` | Notification | Yes | `gdk-pixbuf` |
+| `print` | Print | Yes | `rand` |
+| `settings` | Settings | Yes | None |
+| `usb` | USB | Yes | None |
+
+When using Nix, you can control these features by overriding the package definition:
+
+```nix
+xdg-desktop-portal-gtk4.override {
+  rustPlatform.buildRustPackage = args: args // {
+    cargoBuildNoDefaultFeatures = true;
+    cargoBuildFeatures = [
+      "settings"
+      "file_chooser"
+    ];
+  };
+}
+```
+
 ## Building & Installation
 
 Please see [BUILD.md](./BUILD.md) for detailed dependencies and build instructions.

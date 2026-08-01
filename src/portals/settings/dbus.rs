@@ -113,53 +113,48 @@ impl SettingsPortal {
                     return OwnedValue::try_from(Value::U32(scheme)).ok();
                 }
             } else if key == "contrast" {
-                if let Some(settings) = Self::get_gnome_interface_static() {
-                    if let Some(schema) = settings.settings_schema() {
-                        if schema.has_key("high-contrast") {
-                            let high_contrast = settings.boolean("high-contrast");
-                            let contrast = if high_contrast { 1u32 } else { 0u32 };
-                            return OwnedValue::try_from(Value::U32(contrast)).ok();
-                        }
-                    }
+                if let Some(settings) = Self::get_gnome_interface_static()
+                    && let Some(schema) = settings.settings_schema()
+                    && schema.has_key("high-contrast")
+                {
+                    let high_contrast = settings.boolean("high-contrast");
+                    let contrast = if high_contrast { 1u32 } else { 0u32 };
+                    return OwnedValue::try_from(Value::U32(contrast)).ok();
                 }
-            } else if key == "reduced-motion" {
-                if let Some(settings) = Self::get_gnome_interface_static() {
-                    if let Some(schema) = settings.settings_schema() {
-                        if schema.has_key("gtk-enable-animations") {
-                            let enable_animations = settings.boolean("gtk-enable-animations");
-                            let reduced = if enable_animations { 0u32 } else { 1u32 };
-                            return OwnedValue::try_from(Value::U32(reduced)).ok();
-                        }
-                    }
-                }
+            } else if key == "reduced-motion"
+                && let Some(settings) = Self::get_gnome_interface_static()
+                && let Some(schema) = settings.settings_schema()
+                && schema.has_key("gtk-enable-animations")
+            {
+                let enable_animations = settings.boolean("gtk-enable-animations");
+                let reduced = if enable_animations { 0u32 } else { 1u32 };
+                return OwnedValue::try_from(Value::U32(reduced)).ok();
             }
-        } else if namespace == "org.gnome.desktop.interface" {
-            if let Some(settings) = Self::get_gnome_interface_static() {
-                if let Some(schema) = settings.settings_schema() {
-                    if schema.has_key(key) {
-                        let val = settings.value(key);
-                        let type_string = val.type_().as_str();
-                        return match type_string {
-                            "s" => val
-                                .get::<String>()
-                                .and_then(|s| OwnedValue::try_from(Value::Str(s.into())).ok()),
-                            "b" => val
-                                .get::<bool>()
-                                .and_then(|b| OwnedValue::try_from(Value::Bool(b)).ok()),
-                            "u" => val
-                                .get::<u32>()
-                                .and_then(|u| OwnedValue::try_from(Value::U32(u)).ok()),
-                            "i" => val
-                                .get::<i32>()
-                                .and_then(|i| OwnedValue::try_from(Value::I32(i)).ok()),
-                            "d" => val
-                                .get::<f64>()
-                                .and_then(|d| OwnedValue::try_from(Value::F64(d)).ok()),
-                            _ => None,
-                        };
-                    }
-                }
-            }
+        } else if namespace == "org.gnome.desktop.interface"
+            && let Some(settings) = Self::get_gnome_interface_static()
+            && let Some(schema) = settings.settings_schema()
+            && schema.has_key(key)
+        {
+            let val = settings.value(key);
+            let type_string = val.type_().as_str();
+            return match type_string {
+                "s" => val
+                    .get::<String>()
+                    .and_then(|s| OwnedValue::try_from(Value::Str(s.into())).ok()),
+                "b" => val
+                    .get::<bool>()
+                    .and_then(|b| OwnedValue::try_from(Value::Bool(b)).ok()),
+                "u" => val
+                    .get::<u32>()
+                    .and_then(|u| OwnedValue::try_from(Value::U32(u)).ok()),
+                "i" => val
+                    .get::<i32>()
+                    .and_then(|i| OwnedValue::try_from(Value::I32(i)).ok()),
+                "d" => val
+                    .get::<f64>()
+                    .and_then(|d| OwnedValue::try_from(Value::F64(d)).ok()),
+                _ => None,
+            };
         }
         None
     }
@@ -212,10 +207,10 @@ impl SettingsPortal {
                             active_namespaces.push(available_ns.clone());
                         }
                     }
-                } else if supported_namespaces.contains(&requested_ns) {
-                    if !active_namespaces.contains(&requested_ns) {
-                        active_namespaces.push(requested_ns);
-                    }
+                } else if supported_namespaces.contains(&requested_ns)
+                    && !active_namespaces.contains(&requested_ns)
+                {
+                    active_namespaces.push(requested_ns);
                 }
             }
         }
@@ -232,15 +227,14 @@ impl SettingsPortal {
                 if let Some(val) = self.read_setting(&ns, "reduced-motion") {
                     ns_map.insert("reduced-motion".to_string(), val);
                 }
-            } else if ns == "org.gnome.desktop.interface" {
-                if let Some(settings) = Self::get_gnome_interface_static() {
-                    if let Some(schema) = settings.settings_schema() {
-                        for key in schema.list_keys() {
-                            let key_str = key.as_str();
-                            if let Some(val) = self.read_setting(&ns, key_str) {
-                                ns_map.insert(key_str.to_string(), val);
-                            }
-                        }
+            } else if ns == "org.gnome.desktop.interface"
+                && let Some(settings) = Self::get_gnome_interface_static()
+                && let Some(schema) = settings.settings_schema()
+            {
+                for key in schema.list_keys() {
+                    let key_str = key.as_str();
+                    if let Some(val) = self.read_setting(&ns, key_str) {
+                        ns_map.insert(key_str.to_string(), val);
                     }
                 }
             }

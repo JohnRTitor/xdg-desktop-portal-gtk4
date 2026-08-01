@@ -121,10 +121,10 @@ impl FileChooserUi {
                         .filter_map(|f| f.ok().and_then(|f| f.downcast::<gtk4::gio::File>().ok()))
                         .map(|f| {
                             let uri = f.uri();
-                            if !uri.starts_with("file://") {
-                                if let Some(path) = f.path() {
-                                    return gtk4::gio::File::for_path(path).uri().into();
-                                }
+                            if !uri.starts_with("file://")
+                                && let Some(path) = f.path()
+                            {
+                                return gtk4::gio::File::for_path(path).uri().into();
                             }
                             uri.into()
                         })

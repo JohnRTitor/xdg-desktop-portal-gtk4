@@ -2,6 +2,12 @@ use zbus::interface;
 
 pub struct LockdownPortal {}
 
+impl Default for LockdownPortal {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl LockdownPortal {
     pub fn new() -> Self {
         Self {}

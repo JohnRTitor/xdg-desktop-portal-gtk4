@@ -9,6 +9,12 @@ use {
 
 pub struct Email;
 
+impl Default for Email {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Email {
     pub fn new() -> Self {
         Self

@@ -25,7 +25,6 @@ impl Print {
 
 #[derive(DeserializeDict, Type, Debug, Default)]
 #[zvariant(signature = "dict")]
-
 struct PreparePrintOptions {
     modal: Option<bool>,
     accept_label: Option<String>,
@@ -46,7 +45,6 @@ struct PreparePrintResults {
 
 #[derive(DeserializeDict, Type, Debug, Default)]
 #[zvariant(signature = "dict")]
-
 struct PrintOptions {
     modal: Option<bool>,
     token: Option<u32>,

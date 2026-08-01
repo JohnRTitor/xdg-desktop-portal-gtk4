@@ -1,17 +1,33 @@
 use {
-    crate::{
-        gui::UiProxy,
-        portals::{
-            access::dbus::Access, account::dbus::Account, app_chooser::dbus::AppChooser,
-            dynamic_launcher::dbus::DynamicLauncher, email::dbus::Email,
-            file_chooser::dbus::FileChooser, inhibit::dbus::Inhibit,
-            lockdown::dbus::LockdownPortal, notification::dbus::Notification, print::dbus::Print,
-            settings::dbus::SettingsPortal, usb::dbus::UsbPortal,
-        },
-    },
+    crate::gui::UiProxy,
     thiserror::Error,
     zbus::{Connection, fdo::RequestNameFlags},
 };
+
+#[cfg(feature = "access")]
+use crate::portals::access::dbus::Access;
+#[cfg(feature = "account")]
+use crate::portals::account::dbus::Account;
+#[cfg(feature = "app_chooser")]
+use crate::portals::app_chooser::dbus::AppChooser;
+#[cfg(feature = "dynamic_launcher")]
+use crate::portals::dynamic_launcher::dbus::DynamicLauncher;
+#[cfg(feature = "email")]
+use crate::portals::email::dbus::Email;
+#[cfg(feature = "file_chooser")]
+use crate::portals::file_chooser::dbus::FileChooser;
+#[cfg(feature = "inhibit")]
+use crate::portals::inhibit::dbus::Inhibit;
+#[cfg(feature = "lockdown")]
+use crate::portals::lockdown::dbus::LockdownPortal;
+#[cfg(feature = "notification")]
+use crate::portals::notification::dbus::Notification;
+#[cfg(feature = "print")]
+use crate::portals::print::dbus::Print;
+#[cfg(feature = "settings")]
+use crate::portals::settings::dbus::SettingsPortal;
+#[cfg(feature = "usb")]
+use crate::portals::usb::dbus::UsbPortal;
 
 pub mod request;
 pub mod response;
@@ -68,17 +84,29 @@ impl Portal {
                     .map_err(PortalError::AddInterface)?;
             };
         }
+        #[cfg(feature = "file_chooser")]
         add!(FileChooser::new(proxy));
+        #[cfg(feature = "email")]
         add!(Email::new());
+        #[cfg(feature = "access")]
         add!(Access::new(proxy));
+        #[cfg(feature = "account")]
         add!(Account::new(proxy));
+        #[cfg(feature = "notification")]
         add!(Notification::new());
+        #[cfg(feature = "dynamic_launcher")]
         add!(DynamicLauncher::new(proxy));
+        #[cfg(feature = "print")]
         add!(Print::new(proxy));
+        #[cfg(feature = "inhibit")]
         add!(Inhibit::new(session_manager.clone()));
+        #[cfg(feature = "settings")]
         add!(SettingsPortal::new(session.object_server().clone()));
+        #[cfg(feature = "lockdown")]
         add!(LockdownPortal::new());
+        #[cfg(feature = "app_chooser")]
         add!(AppChooser::new(proxy));
+        #[cfg(feature = "usb")]
         add!(UsbPortal::new(proxy));
 
         let mut name_lost_iterator = zbus::fdo::DBusProxy::new(&session)

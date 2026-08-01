@@ -102,7 +102,7 @@ impl SessionManager {
             if args
                 .new_owner()
                 .as_ref()
-                .map_or(true, |n| n.as_str().is_empty())
+                .is_none_or(|n| n.as_str().is_empty())
             {
                 let name = args.name().as_str();
 

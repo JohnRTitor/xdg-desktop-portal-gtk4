@@ -9,6 +9,12 @@ pub struct Ui {
     proxy: UiProxy,
 }
 
+impl Default for Ui {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Ui {
     pub fn new() -> Self {
         let main_loop = MainLoop::new(None, false);

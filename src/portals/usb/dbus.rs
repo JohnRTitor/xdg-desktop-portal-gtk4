@@ -74,12 +74,11 @@ impl UsbPortal {
             );
 
             let mut serial = None;
-            if let Some(val) = properties.get("ID_SERIAL_SHORT") {
-                if let Ok(s) = <&str>::try_from(val) {
-                    if !s.is_empty() {
-                        serial = Some(Self::parse_udev_string(s));
-                    }
-                }
+            if let Some(val) = properties.get("ID_SERIAL_SHORT")
+                && let Ok(s) = <&str>::try_from(val)
+                && !s.is_empty()
+            {
+                serial = Some(Self::parse_udev_string(s));
             }
 
             parsed_devices.push(UsbDevice {

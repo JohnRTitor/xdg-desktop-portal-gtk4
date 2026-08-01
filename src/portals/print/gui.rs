@@ -84,12 +84,12 @@ impl PrintUi {
                     page_setup.to_key_file(&key_file, Some("Page Setup"));
                     if let Ok(keys) = key_file.keys("Page Setup") {
                         for key in keys {
-                            if let Ok(val) = key_file.value("Page Setup", &key) {
-                                if let Ok(owned) = zbus::zvariant::OwnedValue::try_from(
+                            if let Ok(val) = key_file.value("Page Setup", &key)
+                                && let Ok(owned) = zbus::zvariant::OwnedValue::try_from(
                                     zbus::zvariant::Value::from(val.as_str()),
-                                ) {
-                                    page_setup_map.insert(key.to_string(), owned);
-                                }
+                                )
+                            {
+                                page_setup_map.insert(key.to_string(), owned);
                             }
                         }
                     }

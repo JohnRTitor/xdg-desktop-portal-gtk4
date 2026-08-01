@@ -14,7 +14,6 @@ use {
 
 #[derive(DeserializeDict, Type, Debug)]
 #[zvariant(signature = "dict")]
-
 pub struct ChooseApplicationOptions {
     last_choice: Option<String>,
     modal: Option<bool>,
@@ -138,10 +137,10 @@ impl AppChooser {
         log::info!("UpdateChoices called for handle: {}", handle.as_str());
         // Look up the channel sender for this specific request handle.
         // If found, send the new list of choices to the GTK task.
-        if let Ok(lock) = self.active_dialogs.lock() {
-            if let Some(sender) = lock.get(&handle) {
-                let _ = sender.try_send(choices);
-            }
+        if let Ok(lock) = self.active_dialogs.lock()
+            && let Some(sender) = lock.get(&handle)
+        {
+            let _ = sender.try_send(choices);
         }
         Ok(())
     }

@@ -179,17 +179,17 @@ fn populate_list_box(
         // If the frontend provided specific choices (e.g., from its own history or cache),
         // we only show those.
         for app in all_apps {
-            if let Some(id) = app.id() {
-                if choices.contains(&id.to_string()) {
-                    apps_to_show.push(app.clone());
-                }
+            if let Some(id) = app.id()
+                && choices.contains(&id.to_string())
+            {
+                apps_to_show.push(app.clone());
             }
         }
     } else {
         apps_to_show = recommended_apps.to_vec();
     }
 
-    apps_to_show.sort_by(|a, b| a.name().cmp(&b.name()));
+    apps_to_show.sort_by_key(|a| a.name());
     apps_to_show.dedup_by(|a, b| a.id() == b.id());
 
     for app in apps_to_show {
@@ -213,7 +213,7 @@ fn populate_list_box(
         row.set_child(Some(&hbox));
 
         if let Some(id) = app.id() {
-            row.set_widget_name(&id.to_string());
+            row.set_widget_name(id.as_ref());
             list_box.append(&row);
         }
     }

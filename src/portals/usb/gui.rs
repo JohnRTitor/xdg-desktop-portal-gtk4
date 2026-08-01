@@ -104,7 +104,7 @@ impl UsbUi {
 
             if let Some(serial) = &device.serial {
                 let serial_label = Label::builder()
-                    .label(&format!("SN: {}", serial))
+                    .label(format!("SN: {}", serial))
                     .halign(gtk4::Align::Start)
                     .build();
                 serial_label.add_css_class("dim-label");
@@ -152,10 +152,10 @@ impl UsbUi {
         ok_button.connect_clicked(move |_| {
             let mut selected = Vec::new();
             for (i, check_weak) in checks_weak_ok.iter().enumerate() {
-                if let Some(check) = check_weak.upgrade() {
-                    if check.is_active() {
-                        selected.push((devices[i].id.clone(), devices[i].access_options.clone()));
-                    }
+                if let Some(check) = check_weak.upgrade()
+                    && check.is_active()
+                {
+                    selected.push((devices[i].id.clone(), devices[i].access_options.clone()));
                 }
             }
             let res = if selected.is_empty() {

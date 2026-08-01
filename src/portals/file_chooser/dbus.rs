@@ -221,7 +221,7 @@ impl FileChooser {
         title: String,
         options: SaveFilesOptions,
     ) -> Result<SaveFilesResults, SaveFilesError> {
-        let files = options.files.as_ref().map(|v| v.as_slice()).unwrap_or(&[]);
+        let files = options.files.as_deref().unwrap_or(&[]);
 
         // Security checks: The client provides paths to save, but we must ensure
         // they don't contain absolute paths or directory traversal attacks, because

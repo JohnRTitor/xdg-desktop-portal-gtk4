@@ -145,23 +145,22 @@ impl Inhibit {
 
                 // Try logind first for sleep/shutdown/idle.
                 // logind provides a robust system-level inhibition API via file descriptors.
-                if !inhibit_what.is_empty() {
-                    if let Ok(system_bus) = &system_bus_res {
-                        if let Ok(logind_proxy) = Login1ManagerProxy::new(system_bus).await {
-                            let what_str = inhibit_what.join(":");
-                            match logind_proxy
-                                .inhibit(&what_str, &app_id, reason_str, "block")
-                                .await
-                            {
-                                Ok(fd) => {
-                                    // The lock is held as long as the FD is kept open.
-                                    logind_fd = Some(fd);
-                                    log::debug!("Acquired logind inhibit lock for {}", what_str);
-                                }
-                                Err(e) => {
-                                    log::warn!("Failed to inhibit via logind: {}", e);
-                                }
-                            }
+                if !inhibit_what.is_empty()
+                    && let Ok(system_bus) = &system_bus_res
+                    && let Ok(logind_proxy) = Login1ManagerProxy::new(system_bus).await
+                {
+                    let what_str = inhibit_what.join(":");
+                    match logind_proxy
+                        .inhibit(&what_str, &app_id, reason_str, "block")
+                        .await
+                    {
+                        Ok(fd) => {
+                            // The lock is held as long as the FD is kept open.
+                            logind_fd = Some(fd);
+                            log::debug!("Acquired logind inhibit lock for {}", what_str);
+                        }
+                        Err(e) => {
+                            log::warn!("Failed to inhibit via logind: {}", e);
                         }
                     }
                 }
@@ -169,18 +168,17 @@ impl Inhibit {
                 // If Idle is requested, try ScreenSaver as a fallback or in addition.
                 // Some desktop environments (like GNOME) don't fully honor logind idle locks
                 // for screen blanking, so using the standard D-Bus ScreenSaver API is recommended.
-                if reason & 8 != 0 {
-                    if let Ok(session_bus) = &session_bus_res {
-                        if let Ok(ss_proxy) = ScreenSaverProxy::new(session_bus).await {
-                            match ss_proxy.inhibit(&app_id, reason_str).await {
-                                Ok(cookie) => {
-                                    screen_saver_cookie = Some((ss_proxy, cookie));
-                                    log::debug!("Acquired ScreenSaver inhibit cookie {}", cookie);
-                                }
-                                Err(e) => {
-                                    log::warn!("Failed to inhibit via ScreenSaver: {}", e);
-                                }
-                            }
+                if reason & 8 != 0
+                    && let Ok(session_bus) = &session_bus_res
+                    && let Ok(ss_proxy) = ScreenSaverProxy::new(session_bus).await
+                {
+                    match ss_proxy.inhibit(&app_id, reason_str).await {
+                        Ok(cookie) => {
+                            screen_saver_cookie = Some((ss_proxy, cookie));
+                            log::debug!("Acquired ScreenSaver inhibit cookie {}", cookie);
+                        }
+                        Err(e) => {
+                            log::warn!("Failed to inhibit via ScreenSaver: {}", e);
                         }
                     }
                 }
@@ -277,40 +275,37 @@ impl Inhibit {
         self.init_once.call_once(move || {
             gtk4::glib::MainContext::default().spawn(async move {
                 {
-                    if let Ok(session_bus) = Connection::session().await {
-                        if let Ok(proxy) = ScreenSaverProxy::new(&session_bus).await {
-                            if let Ok(mut stream) = proxy.receive_active_changed().await {
-                                while let Some(signal) = stream.next().await {
-                                    if let Ok(args) = signal.args() {
-                                        let active = args.active;
-                                        if let Ok(iface_ref) = server_clone
-                                            .interface::<_, Inhibit>(
-                                                "/org/freedesktop/portal/desktop",
-                                            )
-                                            .await
-                                        {
-                                            let mut state = HashMap::new();
-                                            state.insert(
-                                                "screensaver-active".to_string(),
-                                                Value::Bool(active),
-                                            );
+                    if let Ok(session_bus) = Connection::session().await
+                        && let Ok(proxy) = ScreenSaverProxy::new(&session_bus).await
+                        && let Ok(mut stream) = proxy.receive_active_changed().await
+                    {
+                        while let Some(signal) = stream.next().await {
+                            if let Ok(args) = signal.args() {
+                                let active = args.active;
+                                if let Ok(iface_ref) = server_clone
+                                    .interface::<_, Inhibit>("/org/freedesktop/portal/desktop")
+                                    .await
+                                {
+                                    let mut state = HashMap::new();
+                                    state.insert(
+                                        "screensaver-active".to_string(),
+                                        Value::Bool(active),
+                                    );
 
-                                            let sessions: Vec<OwnedObjectPath> =
-                                                if let Ok(lock) = monitors_clone.lock() {
-                                                    lock.values().cloned().collect()
-                                                } else {
-                                                    Vec::new()
-                                                };
+                                    let sessions: Vec<OwnedObjectPath> =
+                                        if let Ok(lock) = monitors_clone.lock() {
+                                            lock.values().cloned().collect()
+                                        } else {
+                                            Vec::new()
+                                        };
 
-                                            for session_h in sessions {
-                                                let _ = Self::state_changed(
-                                                    iface_ref.signal_emitter(),
-                                                    session_h,
-                                                    state.clone(),
-                                                )
-                                                .await;
-                                            }
-                                        }
+                                    for session_h in sessions {
+                                        let _ = Self::state_changed(
+                                            iface_ref.signal_emitter(),
+                                            session_h,
+                                            state.clone(),
+                                        )
+                                        .await;
                                     }
                                 }
                             }
