@@ -52,7 +52,7 @@ impl SessionManager {
         object_path: &str,
         cancel: Sender<()>,
     ) -> Result<(), SessionError> {
-        let mut state = self.state.lock().unwrap();
+        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
 
         let current_count = state.app_sessions.get(app_id).copied().unwrap_or(0);
         if current_count >= self.max_sessions_per_app {
@@ -67,11 +67,7 @@ impl SessionManager {
             state.app_sessions.insert(app_id.to_string(), 1);
         }
 
-        let sender_list = if state.sender_objects.contains_key(sender) {
-            state.sender_objects.get_mut(sender).unwrap()
-        } else {
-            state.sender_objects.entry(sender.to_string()).or_default()
-        };
+        let sender_list = state.sender_objects.entry(sender.to_string()).or_default();
         sender_list.push((object_path.to_string(), app_id.to_string(), cancel));
 
         Ok(())
@@ -79,7 +75,7 @@ impl SessionManager {
 
     /// Unregisters a session or request.
     pub fn unregister(&self, app_id: &str, sender: &str, object_path: &str) {
-        let mut state = self.state.lock().unwrap();
+        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
 
         if let Some(count) = state.app_sessions.get_mut(app_id) {
             *count = count.saturating_sub(1);
@@ -112,7 +108,7 @@ impl SessionManager {
                 let name = args.name().as_str();
 
                 let objects_to_close = {
-                    let mut state = self.state.lock().unwrap();
+                    let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
                     let closed = state.sender_objects.remove(name).unwrap_or_default();
 
                     for (_, app_id, _) in &closed {

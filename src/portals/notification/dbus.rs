@@ -181,7 +181,7 @@ impl Notification {
 
                     let timestamp = std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap()
+                        .unwrap_or_default()
                         .as_micros();
                     path.push(format!(
                         "{}_{}.snd",
@@ -533,13 +533,17 @@ async fn listen_for_action_invoked(
             app_path.push_str(&app_id.replace('.', "/").replace('-', "_"));
 
             if let Some(action_name) = action_key.strip_prefix("app.") {
-                let proxy_res = ApplicationProxy::builder(&session_bus)
+                let Ok(builder) = ApplicationProxy::builder(&session_bus)
                     .destination(app_id.as_str())
-                    .unwrap()
-                    .path(app_path.as_str())
-                    .unwrap()
-                    .build()
-                    .await;
+                else {
+                    tracing::error!("Invalid D-Bus destination: {}", app_id);
+                    continue;
+                };
+                let Ok(builder) = builder.path(app_path.as_str()) else {
+                    tracing::error!("Invalid D-Bus path: {}", app_path);
+                    continue;
+                };
+                let proxy_res = builder.build().await;
 
                 if let Ok(proxy) = proxy_res {
                     let _ = proxy
@@ -547,13 +551,17 @@ async fn listen_for_action_invoked(
                         .await;
                 }
             } else {
-                let proxy_res = ApplicationProxy::builder(&session_bus)
+                let Ok(builder) = ApplicationProxy::builder(&session_bus)
                     .destination(app_id.as_str())
-                    .unwrap()
-                    .path(app_path.as_str())
-                    .unwrap()
-                    .build()
-                    .await;
+                else {
+                    tracing::error!("Invalid D-Bus destination: {}", app_id);
+                    continue;
+                };
+                let Ok(builder) = builder.path(app_path.as_str()) else {
+                    tracing::error!("Invalid D-Bus path: {}", app_path);
+                    continue;
+                };
+                let proxy_res = builder.build().await;
 
                 if let Ok(proxy) = proxy_res {
                     let _ = proxy.activate(&platform_data).await;

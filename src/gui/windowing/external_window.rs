@@ -32,7 +32,10 @@ pub fn setup_window<W: IsA<gtk4::Window> + IsA<gtk4::Widget>>(
         return;
     };
 
-    let default_display = gtk4::gdk::Display::default().unwrap();
+    let Some(default_display) = gtk4::gdk::Display::default() else {
+        tracing::warn!("No default display found for window setup");
+        return;
+    };
     let is_wayland_display = default_display.downcast_ref::<WaylandDisplay>().is_some();
     let is_x11_display = default_display.downcast_ref::<X11Display>().is_some();
 
