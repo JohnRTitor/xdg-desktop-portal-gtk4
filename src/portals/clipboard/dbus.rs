@@ -31,38 +31,38 @@ impl ClipboardPortal {
         let pending_transfers = Arc::new(Mutex::new(HashMap::new()));
         let active_sessions = Arc::new(Mutex::new(Vec::new()));
 
-        match gtk_backend::subscribe_changes() {
-            Ok(formats_rx) => {
-                let conn_clone = connection.clone();
-                let sessions_clone = active_sessions.clone();
+        let conn_clone = connection.clone();
+        let sessions_clone = active_sessions.clone();
 
-                gtk4::glib::MainContext::default().spawn_local(async move {
+        gtk4::glib::MainContext::default().spawn_local(async move {
+            match gtk_backend::subscribe_changes() {
+                Ok(formats_rx) => {
                     while let Ok(mimes) = formats_rx.recv().await {
-                let emitter = match SignalEmitter::new(&conn_clone, "/org/freedesktop/portal/desktop") {
-                    Ok(e) => e,
-                    Err(err) => {
-                        tracing::error!("Failed to create SignalEmitter: {}", err);
-                        return;
-                    }
-                };
+                        let emitter = match SignalEmitter::new(&conn_clone, "/org/freedesktop/portal/desktop") {
+                            Ok(e) => e,
+                            Err(err) => {
+                                tracing::error!("Failed to create SignalEmitter: {}", err);
+                                return;
+                            }
+                        };
 
-                let mut options = HashMap::new();
-                let mimes_val = Value::from(mimes.clone());
-                options.insert("mime_types", &mimes_val);
-                let is_owner = Value::from(false);
-                options.insert("session_is_owner", &is_owner);
+                        let mut options = HashMap::new();
+                        let mimes_val = Value::from(mimes.clone());
+                        options.insert("mime_types", &mimes_val);
+                        let is_owner = Value::from(false);
+                        options.insert("session_is_owner", &is_owner);
 
-                    let sessions: Vec<_> = sessions_clone.lock().unwrap_or_else(|e| e.into_inner()).clone();
-                    for session in sessions {
-                        let _ = Self::selection_owner_changed(&emitter, &session, options.clone()).await;
+                        let sessions: Vec<_> = sessions_clone.lock().unwrap_or_else(|e| e.into_inner()).clone();
+                        for session in sessions {
+                            let _ = Self::selection_owner_changed(&emitter, &session, options.clone()).await;
+                        }
                     }
                 }
-            });
+                Err(e) => {
+                    tracing::warn!("Clipboard portal backend unavailable: {}", e);
+                }
             }
-            Err(e) => {
-                tracing::warn!("Clipboard portal backend unavailable: {}", e);
-            }
-        }
+        });
 
         Self {
             active_sessions,
