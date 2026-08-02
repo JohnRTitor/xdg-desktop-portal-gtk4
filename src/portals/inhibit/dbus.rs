@@ -302,11 +302,8 @@ impl Inhibit {
                                     .interface::<_, Inhibit>("/org/freedesktop/portal/desktop")
                                     .await
                                 {
-                                    let mut state = HashMap::new();
-                                    state.insert(
-                                        "screensaver-active".to_string(),
-                                        Value::Bool(active),
-                                    );
+                                    let mut state: HashMap<&str, Value<'_>> = HashMap::new();
+                                    state.insert("screensaver-active", Value::Bool(active));
 
                                     let sessions: Vec<OwnedObjectPath> =
                                         if let Ok(lock) = monitors_clone.lock() {
@@ -342,7 +339,7 @@ impl Inhibit {
     async fn state_changed(
         ctx: &SignalEmitter<'_>,
         session_handle: OwnedObjectPath,
-        state: HashMap<String, Value<'_>>,
+        state: HashMap<&str, Value<'_>>,
     ) -> zbus::Result<()>;
 }
 

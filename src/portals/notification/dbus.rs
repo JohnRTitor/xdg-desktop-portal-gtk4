@@ -188,7 +188,6 @@ impl Notification {
                         timestamp
                     ));
 
-                    let path_clone = path.clone();
                     let bytes = gtk4::gio::spawn_blocking(move || {
                         let mut data = Vec::new();
                         if file.read_to_end(&mut data).is_ok() {
@@ -200,9 +199,9 @@ impl Notification {
                     .unwrap_or(None);
 
                     if let Some(data) = bytes
-                        && std::fs::write(&path_clone, data).is_ok()
+                        && std::fs::write(&path, data).is_ok()
                     {
-                        sound_file = Some(std::sync::Arc::new(TempSoundFile { path: path_clone }));
+                        sound_file = Some(std::sync::Arc::new(TempSoundFile { path }));
                     }
                 } else {
                     tracing::error!("Failed to dup sound fd");
@@ -355,11 +354,11 @@ impl Notification {
         {
             let key = (app_id.clone(), id.clone());
             let replaces_id = {
-                let mut lock = self
+                let lock = self
                     .active_notifications
                     .lock()
                     .unwrap_or_else(|e| e.into_inner());
-                *lock.entry(key.clone()).or_insert(0)
+                *lock.get(&key).unwrap_or(&0)
             };
 
             if replaces_id != 0

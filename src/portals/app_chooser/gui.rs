@@ -3,7 +3,9 @@ use {
     async_channel::{Receiver, Sender},
     gtk4::{
         Box as GtkBox, Button, Image, Label, ListBox, ListBoxRow, Orientation, ScrolledWindow,
-        gio::AppInfo, glib::MainContext, prelude::*,
+        gio::AppInfo,
+        glib::{self, MainContext},
+        prelude::*,
     },
     rust_i18n::t,
 };
@@ -77,14 +79,9 @@ impl AppChooserUi {
 
         let all_apps = AppInfo::all();
         let recommended_apps = if let Some(ct) = self.content_type.as_deref() {
-            let recommended = AppInfo::recommended_for_type(ct);
-            if recommended.is_empty() {
-                all_apps.clone()
-            } else {
-                recommended
-            }
+            AppInfo::recommended_for_type(ct)
         } else {
-            all_apps.clone()
+            Vec::new()
         };
 
         populate_list_box(&list_box, &self.choices, &all_apps, &recommended_apps);
@@ -98,12 +95,13 @@ impl AppChooserUi {
             }
         });
 
-        let ok_button_weak = ok_button.downgrade();
-        list_box.connect_row_selected(move |_, row| {
-            if let Some(btn) = ok_button_weak.upgrade() {
-                btn.set_sensitive(row.is_some());
+        list_box.connect_row_selected(gtk4::glib::clone!(
+            #[weak]
+            ok_button,
+            move |_, row| {
+                ok_button.set_sensitive(row.is_some());
             }
-        });
+        ));
 
         let list_box_clone = list_box.clone();
 
@@ -116,37 +114,38 @@ impl AppChooserUi {
         });
 
         let send_cancel = send.clone();
-        let w_cancel = window.downgrade();
-        cancel_button.connect_clicked(move |_| {
-            let _ = send_cancel.send_blocking(Err(UiError::Rejected));
-            if let Some(w) = w_cancel.upgrade() {
-                w.close();
+        cancel_button.connect_clicked(gtk4::glib::clone!(
+            #[weak]
+            window,
+            move |_| {
+                let _ = send_cancel.send_blocking(Err(UiError::Rejected));
+                window.close();
             }
-        });
+        ));
 
         let send_ok = send.clone();
-        let w_ok = window.downgrade();
-        ok_button.connect_clicked(move |_| {
-            let res = if let Some(row) = list_box_clone.selected_row() {
-                // If the user selected an app, generate a startup notification token.
-                // This allows the desktop environment to show a "starting" animation
-                // or focus the new window once it appears.
-                let launch_context = gtk4::gio::AppLaunchContext::new();
-                let token = launch_context
-                    .startup_notify_id(None::<&gtk4::gio::AppInfo>, &[])
-                    .map(|s| s.to_string());
-                Ok(AppChooserResult {
-                    choice: row.widget_name().to_string(),
-                    activation_token: token,
-                })
-            } else {
-                Err(UiError::Rejected)
-            };
-            let _ = send_ok.send_blocking(res);
-            if let Some(w) = w_ok.upgrade() {
-                w.close();
+        ok_button.connect_clicked(gtk4::glib::clone!(
+            #[weak]
+            window,
+            #[weak]
+            list_box_clone,
+            move |_| {
+                let res = if let Some(row) = list_box_clone.selected_row() {
+                    let launch_context = gtk4::gio::AppLaunchContext::new();
+                    let token = launch_context
+                        .startup_notify_id(None::<&gtk4::gio::AppInfo>, &[])
+                        .map(|s| s.to_string());
+                    Ok(AppChooserResult {
+                        choice: row.widget_name().to_string(),
+                        activation_token: token,
+                    })
+                } else {
+                    Err(UiError::Rejected)
+                };
+                let _ = send_ok.send_blocking(res);
+                window.close();
             }
-        });
+        ));
 
         crate::gui::windowing::external_window::setup_window(
             &window,
@@ -173,7 +172,7 @@ fn populate_list_box(
         list_box.remove(&child);
     }
 
-    let mut apps_to_show = Vec::new();
+    let mut apps_to_show: Vec<&AppInfo> = Vec::new();
 
     if !choices.is_empty() {
         // If the frontend provided specific choices (e.g., from its own history or cache),
@@ -182,11 +181,13 @@ fn populate_list_box(
             if let Some(id) = app.id()
                 && choices.contains(&id.to_string())
             {
-                apps_to_show.push(app.clone());
+                apps_to_show.push(app);
             }
         }
+    } else if !recommended_apps.is_empty() {
+        apps_to_show = recommended_apps.iter().collect();
     } else {
-        apps_to_show = recommended_apps.to_vec();
+        apps_to_show = all_apps.iter().collect();
     }
 
     apps_to_show.sort_by_key(|a| a.name());

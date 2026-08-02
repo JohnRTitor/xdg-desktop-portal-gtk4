@@ -3,7 +3,9 @@ use {
     async_channel::{Receiver, Sender},
     gtk4::{
         Box as GtkBox, Button, CheckButton, Label, ListBox, ListBoxRow, Orientation,
-        ScrolledWindow, glib::MainContext, prelude::*,
+        ScrolledWindow,
+        glib::{self, MainContext},
+        prelude::*,
     },
     rust_i18n::t,
     std::{collections::HashMap, rc::Rc},
@@ -115,17 +117,18 @@ impl UsbUi {
             row.set_child(Some(&hbox));
             list_box.append(&row);
 
-            let ok_button_weak = ok_button.downgrade();
             let weak_checks_clone = weak_checks.clone();
-            check.connect_toggled(move |_| {
-                let any_checked = weak_checks_clone
-                    .iter()
-                    .filter_map(|w| w.upgrade())
-                    .any(|c| c.is_active());
-                if let Some(btn) = ok_button_weak.upgrade() {
-                    btn.set_sensitive(any_checked);
+            check.connect_toggled(gtk4::glib::clone!(
+                #[weak]
+                ok_button,
+                move |_| {
+                    let any_checked = weak_checks_clone
+                        .iter()
+                        .filter_map(|w| w.upgrade())
+                        .any(|c| c.is_active());
+                    ok_button.set_sensitive(any_checked);
                 }
-            });
+            ));
         }
 
         let devices = self.devices;
@@ -138,36 +141,38 @@ impl UsbUi {
         });
 
         let send_cancel = send.clone();
-        let w_cancel = window.downgrade();
-        cancel_button.connect_clicked(move |_| {
-            let _ = send_cancel.send_blocking(Err(UiError::Rejected));
-            if let Some(w) = w_cancel.upgrade() {
-                w.close();
+        cancel_button.connect_clicked(gtk4::glib::clone!(
+            #[weak]
+            window,
+            move |_| {
+                let _ = send_cancel.send_blocking(Err(UiError::Rejected));
+                window.close();
             }
-        });
+        ));
 
         let send_ok = send.clone();
-        let w_ok = window.downgrade();
         let checks_weak_ok = weak_checks.clone();
-        ok_button.connect_clicked(move |_| {
-            let mut selected = Vec::new();
-            for (i, check_weak) in checks_weak_ok.iter().enumerate() {
-                if let Some(check) = check_weak.upgrade()
-                    && check.is_active()
-                {
-                    selected.push((devices[i].id.clone(), devices[i].access_options.clone()));
+        ok_button.connect_clicked(gtk4::glib::clone!(
+            #[weak]
+            window,
+            move |_| {
+                let mut selected = Vec::new();
+                for (i, check_weak) in checks_weak_ok.iter().enumerate() {
+                    if let Some(check) = check_weak.upgrade()
+                        && check.is_active()
+                    {
+                        selected.push((devices[i].id.clone(), devices[i].access_options.clone()));
+                    }
                 }
+                let res = if selected.is_empty() {
+                    Err(UiError::Rejected)
+                } else {
+                    Ok(UsbResult { devices: selected })
+                };
+                let _ = send_ok.send_blocking(res);
+                window.close();
             }
-            let res = if selected.is_empty() {
-                Err(UiError::Rejected)
-            } else {
-                Ok(UsbResult { devices: selected })
-            };
-            let _ = send_ok.send_blocking(res);
-            if let Some(w) = w_ok.upgrade() {
-                w.close();
-            }
-        });
+        ));
 
         crate::gui::windowing::external_window::setup_window(
             &window,

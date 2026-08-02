@@ -3,7 +3,7 @@ use {
     async_channel::{Receiver, Sender},
     gtk4::{
         Button, CheckButton, Image, Label,
-        glib::{MainContext, clone::Downgrade},
+        glib::{self, MainContext},
         prelude::{BoxExt, ButtonExt, CheckButtonExt, GtkWindowExt, WidgetExt},
     },
     rust_i18n::t,
@@ -161,45 +161,47 @@ impl AccessUi {
         });
 
         let send_deny = send.clone();
-        let w_deny = window.downgrade();
-        deny_btn.connect_clicked(move |_| {
-            let _ = send_deny.send_blocking(Err(UiError::Rejected));
-            if let Some(w) = w_deny.upgrade() {
-                w.close();
+        deny_btn.connect_clicked(gtk4::glib::clone!(
+            #[weak]
+            window,
+            move |_| {
+                let _ = send_deny.send_blocking(Err(UiError::Rejected));
+                window.close();
             }
-        });
+        ));
 
         let send_grant = send.clone();
-        let w_grant = window.downgrade();
-        grant_btn.connect_clicked(move |_| {
-            let mut final_choices = None;
-            if choices_cfg {
-                let mut fc = Vec::new();
-                for (id, button) in &boolean_choices {
-                    fc.push(FinalChoice {
-                        id: id.clone(),
-                        variant_id: if button.is_active() {
-                            "true".to_string()
-                        } else {
-                            "false".to_string()
-                        },
-                    });
-                }
-                for (id, variants) in &radio_choices {
-                    if let Some((v_id, _)) = variants.iter().find(|(_, r)| r.is_active()) {
+        grant_btn.connect_clicked(gtk4::glib::clone!(
+            #[weak]
+            window,
+            move |_| {
+                let mut final_choices = None;
+                if choices_cfg {
+                    let mut fc = Vec::new();
+                    for (id, button) in &boolean_choices {
                         fc.push(FinalChoice {
                             id: id.clone(),
-                            variant_id: v_id.clone(),
+                            variant_id: if button.is_active() {
+                                "true".to_string()
+                            } else {
+                                "false".to_string()
+                            },
                         });
                     }
+                    for (id, variants) in &radio_choices {
+                        if let Some((v_id, _)) = variants.iter().find(|(_, r)| r.is_active()) {
+                            fc.push(FinalChoice {
+                                id: id.clone(),
+                                variant_id: v_id.clone(),
+                            });
+                        }
+                    }
+                    final_choices = Some(fc);
                 }
-                final_choices = Some(fc);
+                let _ = send_grant.send_blocking(Ok(AccessResult { final_choices }));
+                window.close();
             }
-            let _ = send_grant.send_blocking(Ok(AccessResult { final_choices }));
-            if let Some(w) = w_grant.upgrade() {
-                w.close();
-            }
-        });
+        ));
 
         // Bind the dialog to the calling application's window if running under Wayland.
         crate::gui::windowing::external_window::setup_window(

@@ -27,7 +27,6 @@ impl SettingsPortal {
                 {
                     let sc1 = server_clone.clone();
                     let k1 = key_string.clone();
-                    let v1 = val.clone();
                     gtk4::glib::MainContext::default().spawn_local(async move {
                         if let Ok(iface_ref) = sc1
                             .interface::<_, SettingsPortal>("/org/freedesktop/portal/desktop")
@@ -37,7 +36,7 @@ impl SettingsPortal {
                                 iface_ref.signal_emitter(),
                                 "org.gnome.desktop.interface",
                                 &k1,
-                                &v1,
+                                &val,
                             )
                             .await;
                         }
@@ -108,17 +107,18 @@ impl SettingsPortal {
         Self::read_setting_static(namespace, key)
     }
 
-    fn read_setting_static(namespace: &str, key: &str) -> Option<OwnedValue> {
+    fn read_setting_with_settings(
+        settings: &Settings,
+        namespace: &str,
+        key: &str,
+    ) -> Option<OwnedValue> {
         if namespace == "org.freedesktop.appearance" {
             if key == "color-scheme" {
-                if let Some(settings) = Self::get_gnome_interface_static() {
-                    let val: String = settings.string("color-scheme").into();
-                    let scheme = map_color_scheme(val.as_str());
-                    return OwnedValue::try_from(Value::U32(scheme)).ok();
-                }
+                let val: String = settings.string("color-scheme").into();
+                let scheme = map_color_scheme(val.as_str());
+                return OwnedValue::try_from(Value::U32(scheme)).ok();
             } else if key == "contrast" {
-                if let Some(settings) = Self::get_gnome_interface_static()
-                    && let Some(schema) = settings.settings_schema()
+                if let Some(schema) = settings.settings_schema()
                     && schema.has_key("high-contrast")
                 {
                     let high_contrast = settings.boolean("high-contrast");
@@ -126,7 +126,6 @@ impl SettingsPortal {
                     return OwnedValue::try_from(Value::U32(contrast)).ok();
                 }
             } else if key == "reduced-motion"
-                && let Some(settings) = Self::get_gnome_interface_static()
                 && let Some(schema) = settings.settings_schema()
                 && schema.has_key("gtk-enable-animations")
             {
@@ -135,7 +134,6 @@ impl SettingsPortal {
                 return OwnedValue::try_from(Value::U32(reduced)).ok();
             }
         } else if namespace == "org.gnome.desktop.interface"
-            && let Some(settings) = Self::get_gnome_interface_static()
             && let Some(schema) = settings.settings_schema()
             && schema.has_key(key)
         {
@@ -161,6 +159,14 @@ impl SettingsPortal {
             };
         }
         None
+    }
+
+    fn read_setting_static(namespace: &str, key: &str) -> Option<OwnedValue> {
+        if let Some(settings) = Self::get_gnome_interface_static() {
+            Self::read_setting_with_settings(&settings, namespace, key)
+        } else {
+            None
+        }
     }
 }
 
@@ -237,7 +243,7 @@ impl SettingsPortal {
             {
                 for key in schema.list_keys() {
                     let key_str = key.as_str();
-                    if let Some(val) = self.read_setting(&ns, key_str) {
+                    if let Some(val) = Self::read_setting_with_settings(&settings, &ns, key_str) {
                         ns_map.insert(key_str.to_string(), val);
                     }
                 }

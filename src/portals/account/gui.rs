@@ -3,7 +3,7 @@ use {
     async_channel::{Receiver, Sender},
     gtk4::{
         Button, Entry, Image, Label,
-        glib::{self, MainContext, clone::Downgrade},
+        glib::{self, MainContext},
         prelude::{BoxExt, ButtonExt, EditableExt, GtkWindowExt, WidgetExt},
     },
     rust_i18n::t,
@@ -101,42 +101,48 @@ impl AccountUi {
         });
 
         let send_cancel = send.clone();
-        let w_cancel = window.downgrade();
-        cancel_button.connect_clicked(move |_| {
-            let _ = send_cancel.send_blocking(Err(UiError::Rejected));
-            if let Some(w) = w_cancel.upgrade() {
-                w.close();
+        cancel_button.connect_clicked(gtk4::glib::clone!(
+            #[weak]
+            window,
+            move |_| {
+                let _ = send_cancel.send_blocking(Err(UiError::Rejected));
+                window.close();
             }
-        });
+        ));
 
         let send_ok = send.clone();
-        let w_ok = window.downgrade();
-        ok_button.connect_clicked(move |_| {
-            // If the user selected an icon, we must convert it to a file:// URI
-            // as required by the portal specification.
-            let image_uri = if !icon_file.is_empty() {
-                if let Ok(uri) = glib::filename_to_uri(&icon_file, None) {
-                    uri.to_string()
+        ok_button.connect_clicked(gtk4::glib::clone!(
+            #[weak]
+            window,
+            #[weak]
+            user_name_entry,
+            #[weak]
+            real_name_entry,
+            move |_| {
+                // If the user selected an icon, we must convert it to a file:// URI
+                // as required by the portal specification.
+                let image_uri = if !icon_file.is_empty() {
+                    if let Ok(uri) = glib::filename_to_uri(&icon_file, None) {
+                        uri.to_string()
+                    } else {
+                        String::new()
+                    }
                 } else {
                     String::new()
-                }
-            } else {
-                String::new()
-            };
+                };
 
-            // The user can edit their name in the entries before sharing,
-            // so we return the contents of the Entry widgets rather than
-            // the original self.user_name / self.real_name.
-            let res = Ok(AccountResult {
-                user_name: user_name_entry.text().to_string(),
-                real_name: real_name_entry.text().to_string(),
-                image: image_uri,
-            });
-            let _ = send_ok.send_blocking(res);
-            if let Some(w) = w_ok.upgrade() {
-                w.close();
+                // The user can edit their name in the entries before sharing,
+                // so we return the contents of the Entry widgets rather than
+                // the original self.user_name / self.real_name.
+                let res = Ok(AccountResult {
+                    user_name: user_name_entry.text().to_string(),
+                    real_name: real_name_entry.text().to_string(),
+                    image: image_uri,
+                });
+                let _ = send_ok.send_blocking(res);
+                window.close();
             }
-        });
+        ));
 
         crate::gui::windowing::external_window::setup_window(
             &window,
