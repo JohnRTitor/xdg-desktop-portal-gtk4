@@ -113,7 +113,7 @@ impl Portal {
         #[cfg(feature = "usb")]
         add!(UsbPortal::new(proxy));
         #[cfg(feature = "clipboard")]
-        add!(ClipboardPortal::new(session.clone()));
+        add!(ClipboardPortal::new(session.clone(), proxy.clone()));
 
         let mut name_lost_iterator = zbus::fdo::DBusProxy::new(&session)
             .await

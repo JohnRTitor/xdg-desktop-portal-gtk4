@@ -39,21 +39,21 @@ The MSRV is updated only when required by language features, standard library AP
 
 Every portal is optionally compiled using Cargo features. By default, all portals are enabled. You can disable the default features and selectively enable only the portals you need to reduce binary size and compile time.
 
-| Feature | Portal | Default | Extra Dependencies |
-| ------- | ------ | ------- | ------------------ |
-| `access` | Access | Yes | None |
-| `account` | Account | Yes | None |
-| `app_chooser` | AppChooser | Yes | None |
-| `clipboard` | Clipboard | Yes | None |
-| `dynamic_launcher` | DynamicLauncher | Yes | None |
-| `email` | Email | Yes | None |
-| `file_chooser` | FileChooser | Yes | `bstr`, `url` |
-| `inhibit` | Inhibit | Yes | None |
-| `lockdown` | Lockdown | Yes | None |
-| `notification` | Notification | Yes | `gdk-pixbuf` |
-| `print` | Print | Yes | `rand` |
-| `settings` | Settings | Yes | None |
-| `usb` | USB | Yes | None |
+| Feature            | Portal          | Default | Extra Dependencies |
+| ------------------ | --------------- | ------- | ------------------ |
+| `access`           | Access          | Yes     | None               |
+| `account`          | Account         | Yes     | None               |
+| `app_chooser`      | AppChooser      | Yes     | None               |
+| `clipboard`        | Clipboard       | Yes     | None               |
+| `dynamic_launcher` | DynamicLauncher | Yes     | None               |
+| `email`            | Email           | Yes     | None               |
+| `file_chooser`     | FileChooser     | Yes     | None               |
+| `inhibit`          | Inhibit         | Yes     | None               |
+| `lockdown`         | Lockdown        | Yes     | None               |
+| `notification`     | Notification    | Yes     | `gdk-pixbuf`       |
+| `print`            | Print           | Yes     | `fastrand`         |
+| `settings`         | Settings        | Yes     | None               |
+| `usb`              | USB             | Yes     | None               |
 
 When using Nix, you can control these features by overriding the package definition:
 
@@ -153,7 +153,6 @@ Then configure your portals (e.g. in `configuration.nix`):
 This project was originally created by [mahkoh](https://github.com/mahkoh) as [mahkoh/xdg-desktop-portal-gtk4](https://github.com/mahkoh/xdg-desktop-portal-gtk4). I extend my sincere gratitude to them for laying the foundation of this work.
 
 I would also like to thank the KDE and GNOME communities for their respective portal implementations[^1][^2], which served as valuable references and inspiration for this project.
-1
 
 ## License
 

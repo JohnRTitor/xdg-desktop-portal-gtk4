@@ -14,6 +14,7 @@ use {
         zvariant::{Fd, ObjectPath, Value},
         Connection,
     },
+    crate::gui::UiProxy,
 };
 
 struct TransferRequest {
@@ -24,10 +25,11 @@ pub struct ClipboardPortal {
     active_sessions: Arc<Mutex<Vec<ObjectPath<'static>>>>,
     pending_transfers: Arc<Mutex<HashMap<u32, TransferRequest>>>,
     connection: Connection,
+    proxy: UiProxy,
 }
 
 impl ClipboardPortal {
-    pub fn new(connection: Connection) -> Self {
+    pub fn new(connection: Connection, proxy: UiProxy) -> Self {
         let pending_transfers = Arc::new(Mutex::new(HashMap::new()));
         let active_sessions = Arc::new(Mutex::new(Vec::new()));
 
@@ -74,6 +76,7 @@ impl ClipboardPortal {
             active_sessions,
             pending_transfers,
             connection,
+            proxy,
         }
     }
 }
@@ -115,30 +118,32 @@ impl ClipboardPortal {
         let conn_clone = self.connection.clone();
         let session_handle_owned = session_handle.into_owned();
 
-        gtk4::glib::MainContext::default().spawn_local(async move {
-            // This task dies when `request_rx` is dropped, which happens when the host copies
-            // something else and our ContentProvider is destroyed.
-            while let Ok((mime, fd_sender)) = request_rx.recv().await {
-                let emitter = match SignalEmitter::new(&conn_clone, "/org/freedesktop/portal/desktop") {
-                    Ok(e) => e,
-                    Err(_) => return,
-                };
-                
-                static SERIAL: AtomicU32 = AtomicU32::new(1);
-                let serial = SERIAL.fetch_add(1, Ordering::SeqCst);
+        self.proxy.context.invoke(move || {
+            gtk4::glib::MainContext::default().spawn_local(async move {
+                // This task dies when `request_rx` is dropped, which happens when the host copies
+                // something else and our ContentProvider is destroyed.
+                while let Ok((mime, fd_sender)) = request_rx.recv().await {
+                    let emitter = match SignalEmitter::new(&conn_clone, "/org/freedesktop/portal/desktop") {
+                        Ok(e) => e,
+                        Err(_) => return,
+                    };
+                    
+                    static SERIAL: AtomicU32 = AtomicU32::new(1);
+                    let serial = SERIAL.fetch_add(1, Ordering::SeqCst);
 
-                pending_transfers.lock().unwrap_or_else(|e| e.into_inner()).insert(
-                    serial,
-                    TransferRequest {
-                        fd_sender,
-                    },
-                );
+                    pending_transfers.lock().unwrap_or_else(|e| e.into_inner()).insert(
+                        serial,
+                        TransferRequest {
+                            fd_sender,
+                        },
+                    );
 
-                if let Err(e) = Self::selection_transfer(&emitter, &session_handle_owned, &mime, serial).await {
-                    tracing::error!("Failed to emit SelectionTransfer: {}", e);
-                    pending_transfers.lock().unwrap_or_else(|e| e.into_inner()).remove(&serial);
+                    if let Err(e) = Self::selection_transfer(&emitter, &session_handle_owned, &mime, serial).await {
+                        tracing::error!("Failed to emit SelectionTransfer: {}", e);
+                        pending_transfers.lock().unwrap_or_else(|e| e.into_inner()).remove(&serial);
+                    }
                 }
-            }
+            });
         });
 
         Ok(())
