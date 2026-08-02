@@ -35,6 +35,12 @@ impl ClipboardPortal {
         let sessions_clone = active_sessions.clone();
 
         gtk4::glib::MainContext::default().spawn_local(async move {
+            // Wait until GTK is fully initialized and a display is available.
+            // Since this runs concurrently with Portal::create, GTK might not be initialized yet.
+            while gtk4::gdk::Display::default().is_none() {
+                gtk4::glib::timeout_future(std::time::Duration::from_millis(50)).await;
+            }
+
             match gtk_backend::subscribe_changes() {
                 Ok(formats_rx) => {
                     while let Ok(mimes) = formats_rx.recv().await {
