@@ -51,7 +51,7 @@ impl Ui {
         self.proxy
             .context
             .acquire()
-            .expect("MainContext should not already be owned")
+            .expect("MainContext must not be owned by another thread during early daemon initialization")
     }
 
     pub fn run(&self) {

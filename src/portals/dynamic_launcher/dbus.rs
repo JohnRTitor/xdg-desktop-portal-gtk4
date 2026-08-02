@@ -48,7 +48,7 @@ impl Default for PrepareInstallResults {
         Self {
             name: String::new(),
             icon_v: OwnedValue::try_from(Value::Str("".into()))
-                .unwrap_or_else(|_| unreachable!("OOM")),
+                .expect("Converting a static empty string to a DBus Value is infallible"),
         }
     }
 }

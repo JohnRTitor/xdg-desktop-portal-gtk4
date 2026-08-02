@@ -56,11 +56,13 @@ default = [
   "print",
   "settings",
   "usb",
+  "clipboard",
 ]
 
 access = []
 account = []
 app_chooser = []
+clipboard = []
 dynamic_launcher = []
 email = []
 file_chooser = []

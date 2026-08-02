@@ -22,3 +22,5 @@ pub mod print;
 pub mod settings;
 #[cfg(feature = "usb")]
 pub mod usb;
+#[cfg(feature = "clipboard")]
+pub mod clipboard;

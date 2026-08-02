@@ -28,6 +28,8 @@ use crate::portals::print::dbus::Print;
 use crate::portals::settings::dbus::SettingsPortal;
 #[cfg(feature = "usb")]
 use crate::portals::usb::dbus::UsbPortal;
+#[cfg(feature = "clipboard")]
+use crate::portals::clipboard::dbus::ClipboardPortal;
 
 pub mod request;
 pub mod response;
@@ -110,6 +112,8 @@ impl Portal {
         add!(AppChooser::new(proxy));
         #[cfg(feature = "usb")]
         add!(UsbPortal::new(proxy));
+        #[cfg(feature = "clipboard")]
+        add!(ClipboardPortal::new(session.clone()));
 
         let mut name_lost_iterator = zbus::fdo::DBusProxy::new(&session)
             .await

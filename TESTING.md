@@ -492,6 +492,61 @@ gdbus call \
 
 ---
 
+---
+
+### 13. Clipboard (`org.freedesktop.impl.portal.Clipboard`)
+
+#### Overview
+- **Interface:** `org.freedesktop.impl.portal.Clipboard`
+- **Signals:** `SelectionOwnerChanged(o, a{sv})`, `SelectionTransfer(o, s, u)`
+- **Behavior:** Bridges clipboard access between sandboxed applications and the host GTK clipboard asynchronously.
+
+#### Method Testing
+
+**`RequestClipboard`**
+Requests a clipboard session for the caller.
+```bash
+gdbus call \
+  --session \
+  --dest org.freedesktop.impl.portal.desktop.gtk4 \
+  --object-path /org/freedesktop/portal/desktop \
+  --method org.freedesktop.impl.portal.Clipboard.RequestClipboard \
+  "/org/freedesktop/portal/desktop/session/1_1/clipboard1" \
+  "{}"
+```
+
+**`SetSelection`**
+Claims the clipboard with advertised MIME types.
+```bash
+gdbus call \
+  --session \
+  --dest org.freedesktop.impl.portal.desktop.gtk4 \
+  --object-path /org/freedesktop/portal/desktop \
+  --method org.freedesktop.impl.portal.Clipboard.SetSelection \
+  "/org/freedesktop/portal/desktop/session/1_1/clipboard1" \
+  "{'mime_types': <['text/plain']*>}"
+```
+
+**`SelectionRead`**
+Reads the current clipboard content for a specified MIME type, returning a Unix File Descriptor.
+```bash
+gdbus call \
+  --session \
+  --dest org.freedesktop.impl.portal.desktop.gtk4 \
+  --object-path /org/freedesktop/portal/desktop \
+  --method org.freedesktop.impl.portal.Clipboard.SelectionRead \
+  "/org/freedesktop/portal/desktop/session/1_1/clipboard1" \
+  "text/plain"
+```
+
+#### Signal Monitoring
+```bash
+dbus-monitor "interface='org.freedesktop.impl.portal.Clipboard'"
+```
+Copy text in an external application and observe the `SelectionOwnerChanged` signal being emitted.
+
+---
+
 ## Validation Checklist
 
 Before submitting changes, ensure the following checklist passes:

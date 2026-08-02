@@ -16,6 +16,7 @@ This implementation provides backend support for the following XDG Desktop Porta
 - **Access** (`org.freedesktop.impl.portal.Access`): Prompting for device/resource access.
 - **Account** (`org.freedesktop.impl.portal.Account`): Providing user account information.
 - **AppChooser** (`org.freedesktop.impl.portal.AppChooser`): Selecting an application to open a file or URI.
+- **Clipboard** (`org.freedesktop.impl.portal.Clipboard`): Bridging clipboard access between sandboxes and the host.
 - **DynamicLauncher** (`org.freedesktop.impl.portal.DynamicLauncher`): Managing dynamic desktop launchers.
 - **Email** (`org.freedesktop.impl.portal.Email`): Composing emails.
 - **FileChooser** (`org.freedesktop.impl.portal.FileChooser`): Opening and saving files (with GTK4 native UI/thumbnails).
@@ -43,6 +44,7 @@ Every portal is optionally compiled using Cargo features. By default, all portal
 | `access` | Access | Yes | None |
 | `account` | Account | Yes | None |
 | `app_chooser` | AppChooser | Yes | None |
+| `clipboard` | Clipboard | Yes | None |
 | `dynamic_launcher` | DynamicLauncher | Yes | None |
 | `email` | Email | Yes | None |
 | `file_chooser` | FileChooser | Yes | `bstr`, `url` |
