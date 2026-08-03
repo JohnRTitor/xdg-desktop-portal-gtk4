@@ -90,9 +90,32 @@ impl ClipboardPortal {
     ) -> fdo::Result<()> {
         tracing::debug!("RequestClipboard called for session: {:?}", session_handle);
         let mut sessions = self.active_sessions.lock().unwrap_or_else(|e| e.into_inner());
-        if !sessions.contains(&session_handle.to_owned()) {
-            sessions.push(session_handle.into_owned());
+        let session_handle_owned = session_handle.into_owned();
+        if !sessions.contains(&session_handle_owned) {
+            sessions.push(session_handle_owned.clone());
         }
+
+        let conn_clone = self.connection.clone();
+        self.proxy.context.invoke(move || {
+            let mimes = gtk_backend::current_formats().unwrap_or_default();
+            gtk4::glib::MainContext::default().spawn_local(async move {
+                if let Ok(emitter) = SignalEmitter::new(&conn_clone, "/org/freedesktop/portal/desktop") {
+                    let mut options = HashMap::new();
+                    let mimes_val = Value::from(mimes);
+                    options.insert("mime_types", &mimes_val);
+                    let is_owner = Value::from(false);
+                    options.insert("session_is_owner", &is_owner);
+                    tracing::debug!("Emitting SelectionOwnerChanged for {:?} with mimes: {:?}", session_handle_owned, mimes_val);
+                    if let Err(e) = Self::selection_owner_changed(&emitter, &session_handle_owned, options).await {
+                        tracing::error!("Failed to emit SelectionOwnerChanged: {}", e);
+                    } else {
+                        tracing::debug!("Successfully emitted SelectionOwnerChanged");
+                    }
+                } else {
+                    tracing::error!("Failed to create SignalEmitter");
+                }
+            });
+        });
         Ok(())
     }
 
@@ -111,7 +134,14 @@ impl ClipboardPortal {
             }
         }
 
-        let request_rx = gtk_backend::claim_selection(mimes)
+        let (tx, rx) = async_channel::bounded(1);
+        self.proxy.context.invoke(move || {
+            let res = gtk_backend::claim_selection(mimes);
+            let _ = tx.try_send(res);
+        });
+
+        let request_rx = rx.recv().await
+            .map_err(|_| fdo::Error::Failed("UI thread dropped channel".into()))?
             .map_err(|e| fdo::Error::Failed(format!("Failed to claim selection: {}", e)))?;
 
         let pending_transfers = self.pending_transfers.clone();
@@ -197,9 +227,11 @@ impl ClipboardPortal {
             fdo::Error::Failed(format!("Failed to create pipe: {}", e))
         })?;
 
-        if let Err(e) = gtk_backend::read_selection(mime_type, write_fd) {
-            return Err(fdo::Error::Failed(format!("Failed to read selection: {}", e)));
-        }
+        self.proxy.context.invoke(move || {
+            if let Err(e) = gtk_backend::read_selection(mime_type, write_fd) {
+                tracing::error!("Failed to read selection: {}", e);
+            }
+        });
 
         Ok(Fd::from(read_fd))
     }

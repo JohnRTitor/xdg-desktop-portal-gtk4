@@ -87,7 +87,7 @@ pub fn read_selection(mime: String, fd: OwnedFd) -> Result<(), ClipboardError> {
             if let Ok((in_stream, _)) = stream_res {
                 let file = std::fs::File::from(fd);
                 let out_stream = gio::WriteOutputStream::new(file);
-                let _ = out_stream
+                let res = out_stream
                     .splice_future(
                         &in_stream,
                         gio::OutputStreamSpliceFlags::CLOSE_SOURCE
@@ -95,6 +95,13 @@ pub fn read_selection(mime: String, fd: OwnedFd) -> Result<(), ClipboardError> {
                         glib::Priority::default(),
                     )
                     .await;
+                if let Err(e) = res {
+                    tracing::error!("splice_future failed: {}", e);
+                } else {
+                    tracing::debug!("splice_future succeeded");
+                }
+            } else if let Err(e) = stream_res {
+                tracing::error!("clipboard.read_future failed: {}", e);
             }
         });
     })?;
@@ -103,4 +110,14 @@ pub fn read_selection(mime: String, fd: OwnedFd) -> Result<(), ClipboardError> {
 
 pub fn subscribe_changes() -> Result<Receiver<Vec<String>>, ClipboardError> {
     get_backend(|backend| backend.formats_receiver.clone())
+}
+
+pub fn current_formats() -> Result<Vec<String>, ClipboardError> {
+    get_backend(|backend| {
+        let mut mimes = Vec::new();
+        for mime in backend.clipboard.formats().mime_types() {
+            mimes.push(mime.to_string());
+        }
+        mimes
+    })
 }
