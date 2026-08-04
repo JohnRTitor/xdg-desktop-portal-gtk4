@@ -27,6 +27,10 @@ trait User {
     fn icon_file(&self) -> zbus::Result<String>;
 }
 
+/// D-Bus interface wrapper for the Account portal.
+///
+/// This struct holds a proxy to the GTK main loop, used to present the generic
+/// access dialog prompting the user to share their account information.
 pub struct Account {
     proxy: UiProxy,
 }
@@ -88,7 +92,7 @@ impl Account {
                 })
             }
             Err(e) => {
-                tracing::error!("GetUserInformation failed: {}", anyhow::Error::new(e));
+                tracing::error!(error = %e, "GetUserInformation failed");
                 Response::cancelled()
             }
         }

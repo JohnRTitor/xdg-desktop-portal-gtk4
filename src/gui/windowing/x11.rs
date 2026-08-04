@@ -8,10 +8,9 @@ use {
 pub fn set_x11_parent(widget: &impl IsA<gtk4::Widget>, parent_xid: u64) {
     if let Some(surface) = widget.native().and_then(|n| n.surface()) {
         if let Some(x11_surface) = surface.downcast_ref::<X11Surface>() {
-            let display = x11_surface
-                .display()
-                .downcast::<X11Display>()
-                .expect("GTK guarantees that an X11Surface is always associated with an X11Display");
+            let display = x11_surface.display().downcast::<X11Display>().expect(
+                "GTK guarantees that an X11Surface is always associated with an X11Display",
+            );
 
             // Safely look up the GDK surface representation from the raw parent XID
             if let Some(parent_surface) = X11Surface::lookup_for_display(&display, parent_xid) {

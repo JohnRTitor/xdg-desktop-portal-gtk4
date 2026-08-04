@@ -4,8 +4,8 @@ use {
         core::{request::run_request, response::Response},
         gui::{UiError, UiProxy},
     },
-    async_channel::Sender,
     std::{collections::HashMap, sync::Mutex},
+    tokio::sync::mpsc::Sender,
     zbus::{
         interface,
         zvariant::{DeserializeDict, OwnedObjectPath, SerializeDict, Type},
@@ -32,12 +32,25 @@ pub struct ChooseApplicationResults {
     activation_token: Option<String>,
 }
 
+const CHANNEL_BUFFER_SIZE: usize = 10;
+
+/// D-Bus interface wrapper for the AppChooser portal.
+///
+/// This struct manages active app chooser dialogs. It maintains a mapping
+/// between the D-Bus object path of the request and a channel sender that
+/// pipes dynamically discovered application choices to the GTK frontend.
 pub struct AppChooser {
     proxy: UiProxy,
-    // The AppChooser portal allows the frontend to update the list of choices
-    // while the dialog is open (e.g., if it finds new apps). We maintain a map
-    // of active request handles to channel senders so we can pipe these updates
-    // to the running GTK dialogs.
+    /// The AppChooser portal allows the frontend to update the list of choices
+    /// while the dialog is open (e.g., if it finds new apps). We maintain a map
+    /// of active request handles to channel senders so we can pipe these updates
+    /// to the running GTK dialogs.
+    ///
+    /// # Threading & Locking
+    ///
+    /// A standard `std::sync::Mutex` is sufficient here (rather than RwLock or Tokio Mutex)
+    /// because insertion and removal only happen during setup and teardown, and
+    /// we do not hold the lock across `.await` points.
     active_dialogs: std::sync::Arc<Mutex<HashMap<OwnedObjectPath, Sender<Vec<String>>>>>,
 }
 
@@ -57,6 +70,9 @@ impl AppChooser {
         choices: Vec<String>,
         options: ChooseApplicationOptions,
     ) -> Response<ChooseApplicationResults> {
+        // Guard pattern: Ensures that the dialog is removed from the `active_dialogs` map
+        // when this method exits, regardless of whether it returned successfully, was cancelled,
+        // or panicked. This prevents a memory leak of stale handles.
         struct ActiveDialogGuard {
             active_dialogs: std::sync::Arc<Mutex<HashMap<OwnedObjectPath, Sender<Vec<String>>>>>,
             handle: OwnedObjectPath,
@@ -64,15 +80,15 @@ impl AppChooser {
 
         impl Drop for ActiveDialogGuard {
             fn drop(&mut self) {
-                if let Ok(mut lock) = self.active_dialogs.lock() {
-                    lock.remove(&self.handle);
-                }
+                let mut lock = self.active_dialogs.lock().expect("Mutex was poisoned");
+                lock.remove(&self.handle);
             }
         }
 
-        let (update_sender, update_receiver) = async_channel::bounded(10);
+        let (update_sender, update_receiver) = tokio::sync::mpsc::channel(CHANNEL_BUFFER_SIZE);
 
-        if let Ok(mut lock) = self.active_dialogs.lock() {
+        {
+            let mut lock = self.active_dialogs.lock().expect("Mutex was poisoned");
             lock.insert(handle.clone(), update_sender);
         }
 
@@ -140,8 +156,12 @@ impl AppChooser {
         tracing::info!("UpdateChoices called for handle: {}", handle.as_str());
         // Look up the channel sender for this specific request handle.
         // If found, send the new list of choices to the GTK task.
-        if let Ok(lock) = self.active_dialogs.lock()
-            && let Some(sender) = lock.get(&handle)
+        // This runs on the Tokio thread, while the receiving end runs on the GTK thread.
+        if let Some(sender) = self
+            .active_dialogs
+            .lock()
+            .expect("Mutex was poisoned")
+            .get(&handle)
         {
             let _ = sender.try_send(choices);
         }
@@ -167,14 +187,15 @@ mod tests {
     async fn test_update_choices_sends_message() {
         let proxy = UiProxy {
             context: gtk4::glib::MainContext::default(),
+            sender: tokio::sync::mpsc::unbounded_channel().0,
         };
         let chooser = AppChooser::new(&proxy);
-        let (sender, receiver) = async_channel::bounded(1);
+        let (sender, mut receiver) = tokio::sync::mpsc::channel(1);
 
         let path = OwnedObjectPath::try_from("/test/handle").unwrap();
 
         {
-            let mut lock = chooser.active_dialogs.lock().unwrap();
+            let mut lock = chooser.active_dialogs.lock().expect("Mutex was poisoned");
             lock.insert(path.clone(), sender);
         }
         let choices = vec!["choice1".to_string(), "choice2".to_string()];
@@ -190,6 +211,7 @@ mod tests {
     async fn test_update_choices_unknown_handle() {
         let proxy = UiProxy {
             context: gtk4::glib::MainContext::default(),
+            sender: tokio::sync::mpsc::unbounded_channel().0,
         };
         let chooser = AppChooser::new(&proxy);
         let path = OwnedObjectPath::try_from("/unknown/handle").unwrap();

@@ -1,6 +1,5 @@
 use {
-    crate::gui::{UiError, UiProxy},
-    async_channel::{Receiver, Sender},
+    crate::gui::{PortalDispatcher, UiError, UiProxy},
     gtk4::{
         Button, Entry, Image, Label,
         glib::{self, MainContext},
@@ -8,6 +7,7 @@ use {
     },
     rust_i18n::t,
     std::path::Path,
+    tokio::sync::oneshot::Receiver,
 };
 
 pub struct AccountUi {
@@ -38,7 +38,7 @@ impl AccountUi {
 
     fn run_impl(
         self,
-        send: Sender<Result<AccountResult, UiError>>,
+        send: crate::gui::UiDispatcher<Result<AccountResult, UiError>>,
         context: MainContext,
         close_on_close: Receiver<()>,
     ) {
@@ -67,8 +67,8 @@ impl AccountUi {
         subtitle_lbl.set_halign(gtk4::Align::Start);
         dialog.content_area.append(&subtitle_lbl);
 
-        let hbox = gtk4::Box::new(gtk4::Orientation::Horizontal, 12);
-        hbox.set_margin_top(10);
+        let hbox = gtk4::Box::new(gtk4::Orientation::Horizontal, crate::gui::DEFAULT_SPACING);
+        hbox.set_margin_top(crate::gui::ELEMENT_MARGIN);
         dialog.content_area.append(&hbox);
 
         let image = if !self.icon_file.is_empty() && Path::new(&self.icon_file).exists() {
@@ -96,7 +96,7 @@ impl AccountUi {
 
         let send_close = send.clone();
         window.connect_close_request(move |_| {
-            let _ = send_close.send_blocking(Err(UiError::Rejected));
+            let _ = send_close.dispatch(Err(UiError::Rejected));
             gtk4::glib::Propagation::Proceed
         });
 
@@ -105,7 +105,7 @@ impl AccountUi {
             #[weak]
             window,
             move |_| {
-                let _ = send_cancel.send_blocking(Err(UiError::Rejected));
+                let _ = send_cancel.dispatch(Err(UiError::Rejected));
                 window.close();
             }
         ));
@@ -139,7 +139,7 @@ impl AccountUi {
                     real_name: real_name_entry.text().to_string(),
                     image: image_uri,
                 });
-                let _ = send_ok.send_blocking(res);
+                let _ = send_ok.dispatch(res);
                 window.close();
             }
         ));
@@ -152,7 +152,7 @@ impl AccountUi {
 
         window.show();
         context.spawn_local(async move {
-            let _ = close_on_close.recv().await;
+            let _ = close_on_close.await;
             window.close();
         });
     }

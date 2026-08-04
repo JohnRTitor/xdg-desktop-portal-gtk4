@@ -8,6 +8,15 @@ use {
     },
 };
 
+const NS_FREEDESKTOP_APPEARANCE: &str = "org.freedesktop.appearance";
+const NS_GNOME_DESKTOP_INTERFACE: &str = "org.gnome.desktop.interface";
+const KEY_COLOR_SCHEME: &str = "color-scheme";
+
+/// D-Bus interface wrapper for the Settings portal.
+///
+/// This portal requires no active UI; it simply reads keys from the underlying
+/// GTK/GLib settings store. It actively listens to `GSettings` changes and
+/// broadcasts them over D-Bus as `SettingChanged` signals.
 pub struct SettingsPortal {}
 
 impl SettingsPortal {
@@ -23,18 +32,17 @@ impl SettingsPortal {
                 let server_clone = server.clone();
                 let key_string = key_str.to_string();
 
-                if let Some(val) = Self::read_setting_static("org.gnome.desktop.interface", key_str)
-                {
+                if let Some(val) = Self::read_setting_static(NS_GNOME_DESKTOP_INTERFACE, key_str) {
                     let sc1 = server_clone.clone();
                     let k1 = key_string.clone();
                     gtk4::glib::MainContext::default().spawn_local(async move {
                         if let Ok(iface_ref) = sc1
-                            .interface::<_, SettingsPortal>("/org/freedesktop/portal/desktop")
+                            .interface::<_, SettingsPortal>(crate::core::DBUS_PATH)
                             .await
                         {
                             let _ = Self::setting_changed(
                                 iface_ref.signal_emitter(),
-                                "org.gnome.desktop.interface",
+                                NS_GNOME_DESKTOP_INTERFACE,
                                 &k1,
                                 &val,
                             )
@@ -46,7 +54,7 @@ impl SettingsPortal {
                 // The freedesktop appearance namespace defines cross-desktop standards for
                 // dark mode, high contrast, and reduced motion.
                 // We map GTK-specific setting keys to these standardized names.
-                if key_str == "color-scheme"
+                if key_str == KEY_COLOR_SCHEME
                     || key_str == "high-contrast"
                     || key_str == "gtk-enable-animations"
                 {
@@ -58,18 +66,18 @@ impl SettingsPortal {
                         key_str
                     };
                     if let Some(val) =
-                        Self::read_setting_static("org.freedesktop.appearance", mapped_key)
+                        Self::read_setting_static(NS_FREEDESKTOP_APPEARANCE, mapped_key)
                     {
                         let sc2 = server_clone.clone();
                         let k2 = mapped_key.to_string();
                         gtk4::glib::MainContext::default().spawn_local(async move {
                             if let Ok(iface_ref) = sc2
-                                .interface::<_, SettingsPortal>("/org/freedesktop/portal/desktop")
+                                .interface::<_, SettingsPortal>(crate::core::DBUS_PATH)
                                 .await
                             {
                                 let _ = Self::setting_changed(
                                     iface_ref.signal_emitter(),
-                                    "org.freedesktop.appearance",
+                                    NS_FREEDESKTOP_APPEARANCE,
                                     &k2,
                                     &val,
                                 )
@@ -93,9 +101,9 @@ impl SettingsPortal {
         GNOME_SETTINGS.with(|s| {
             if !CHECKED.with(|c| c.get()) {
                 if let Some(source) = SettingsSchemaSource::default()
-                    && source.lookup("org.gnome.desktop.interface", true).is_some()
+                    && source.lookup(NS_GNOME_DESKTOP_INTERFACE, true).is_some()
                 {
-                    *s.borrow_mut() = Some(Settings::new("org.gnome.desktop.interface"));
+                    *s.borrow_mut() = Some(Settings::new(NS_GNOME_DESKTOP_INTERFACE));
                 }
                 CHECKED.with(|c| c.set(true));
             }
@@ -112,9 +120,9 @@ impl SettingsPortal {
         namespace: &str,
         key: &str,
     ) -> Option<OwnedValue> {
-        if namespace == "org.freedesktop.appearance" {
-            if key == "color-scheme" {
-                let val: String = settings.string("color-scheme").into();
+        if namespace == NS_FREEDESKTOP_APPEARANCE {
+            if key == KEY_COLOR_SCHEME {
+                let val: String = settings.string(KEY_COLOR_SCHEME).into();
                 let scheme = map_color_scheme(val.as_str());
                 return OwnedValue::try_from(Value::U32(scheme)).ok();
             } else if key == "contrast" {
@@ -133,7 +141,7 @@ impl SettingsPortal {
                 let reduced = if enable_animations { 0u32 } else { 1u32 };
                 return OwnedValue::try_from(Value::U32(reduced)).ok();
             }
-        } else if namespace == "org.gnome.desktop.interface"
+        } else if namespace == NS_GNOME_DESKTOP_INTERFACE
             && let Some(schema) = settings.settings_schema()
             && schema.has_key(key)
         {
@@ -199,8 +207,8 @@ impl SettingsPortal {
         let mut result = HashMap::new();
 
         let supported_namespaces = vec![
-            "org.freedesktop.appearance".to_string(),
-            "org.gnome.desktop.interface".to_string(),
+            NS_FREEDESKTOP_APPEARANCE.to_string(),
+            NS_GNOME_DESKTOP_INTERFACE.to_string(),
         ];
 
         let mut active_namespaces = Vec::new();
@@ -227,9 +235,9 @@ impl SettingsPortal {
 
         for ns in active_namespaces {
             let mut ns_map = HashMap::new();
-            if ns == "org.freedesktop.appearance" {
-                if let Some(val) = self.read_setting(&ns, "color-scheme") {
-                    ns_map.insert("color-scheme".to_string(), val);
+            if ns == NS_FREEDESKTOP_APPEARANCE {
+                if let Some(val) = self.read_setting(&ns, KEY_COLOR_SCHEME) {
+                    ns_map.insert(KEY_COLOR_SCHEME.to_string(), val);
                 }
                 if let Some(val) = self.read_setting(&ns, "contrast") {
                     ns_map.insert("contrast".to_string(), val);
@@ -237,7 +245,7 @@ impl SettingsPortal {
                 if let Some(val) = self.read_setting(&ns, "reduced-motion") {
                     ns_map.insert("reduced-motion".to_string(), val);
                 }
-            } else if ns == "org.gnome.desktop.interface"
+            } else if ns == NS_GNOME_DESKTOP_INTERFACE
                 && let Some(settings) = Self::get_gnome_interface_static()
                 && let Some(schema) = settings.settings_schema()
             {

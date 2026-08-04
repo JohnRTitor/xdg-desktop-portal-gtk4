@@ -6,6 +6,7 @@
 
 - **Rust/Cargo** (for compiling the backend)
 - **pkg-config**
+- **make** (for installation)
 - **GTK 4** development libraries (e.g., `libgtk-4-dev` or `gtk4-devel`)
 - **GLib 2.0** development libraries (e.g., `libglib2.0-dev` or `glib2-devel`)
 
@@ -23,15 +24,10 @@ This project uses a custom `build.rs` script and `make` or similar standard tool
 # Build the binary
 cargo build --release
 
-# Install the binary
-# Note: Installation steps depend on your system, but typically you install it to /usr/bin.
-# You can do this manually:
-sudo install -Dm755 target/release/xdg-desktop-portal-gtk4 /usr/bin/xdg-desktop-portal-gtk4
-
-# Configure and install the remaining data files (desktop, portal, systemd services) using Meson.
-# Meson will also set up a symlink in /usr/libexec pointing to the binary in /usr/bin.
-meson setup build -Dprefix=/usr
-sudo meson install -C build
+# Install the binary and configuration files
+# This installs the executable into /usr/libexec and copies the DBus services, systemd units, 
+# and portal configurations to their respective directories.
+sudo make install PREFIX=/usr
 ```
 
 ### Nix / NixOS

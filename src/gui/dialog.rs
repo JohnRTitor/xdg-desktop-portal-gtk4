@@ -15,17 +15,20 @@ impl CustomDialog {
             .title(title)
             .modal(modal)
             .hide_on_close(true)
-            .default_width(420)
-            .default_height(400)
+            .default_width(crate::gui::DEFAULT_DIALOG_WIDTH)
+            .default_height(crate::gui::DEFAULT_DIALOG_HEIGHT)
             .build();
 
         window.add_css_class("dialog");
 
-        let main_box = gtk4::Box::new(gtk4::Orientation::Vertical, 12);
-        main_box.set_margin_top(12);
-        main_box.set_margin_bottom(12);
-        main_box.set_margin_start(12);
-        main_box.set_margin_end(12);
+        let main_box = gtk4::Box::builder()
+            .orientation(gtk4::Orientation::Vertical)
+            .spacing(crate::gui::DEFAULT_SPACING)
+            .margin_top(crate::gui::DEFAULT_MARGIN)
+            .margin_bottom(crate::gui::DEFAULT_MARGIN)
+            .margin_start(crate::gui::DEFAULT_MARGIN)
+            .margin_end(crate::gui::DEFAULT_MARGIN)
+            .build();
 
         let content_area = gtk4::Box::new(gtk4::Orientation::Vertical, 6);
         // Allow the content area (e.g. a ScrolledWindow inside it) to grow

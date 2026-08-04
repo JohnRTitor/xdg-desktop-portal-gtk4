@@ -23,6 +23,9 @@ pub struct UsbResults {
     devices: Vec<(String, HashMap<String, OwnedValue>)>,
 }
 
+/// D-Bus interface wrapper for the USB portal.
+///
+/// This struct acts as a factory to spawn the USB device chooser UI.
 pub struct UsbPortal {
     proxy: UiProxy,
 }
@@ -34,6 +37,10 @@ impl UsbPortal {
         }
     }
 
+    /// Cleans up udev properties containing hex-escaped strings.
+    ///
+    /// Udev replaces spaces with `\x20`, which we must revert before displaying
+    /// the device name to the user.
     fn parse_udev_string(s: &str) -> String {
         s.replace("\\x20", " ")
     }
@@ -66,6 +73,8 @@ impl UsbPortal {
             }
 
             // Udev properties are often hex-escaped (e.g., `\x20` for spaces).
+            // We search through a series of fallback keys for the vendor and model,
+            // depending on what information udev could extract.
             let vendor = Self::extract_property(
                 &properties,
                 &["ID_VENDOR_FROM_DATABASE", "ID_VENDOR_ENC", "ID_VENDOR_ID"],

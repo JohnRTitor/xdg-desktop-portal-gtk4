@@ -1,5 +1,9 @@
 use zbus::interface;
 
+/// D-Bus interface wrapper for the Lockdown portal.
+///
+/// This struct holds no state because all lockdown policies are exposed as static
+/// D-Bus properties that evaluate to `false` (meaning no restrictions).
 pub struct LockdownPortal {}
 
 impl Default for LockdownPortal {

@@ -1,9 +1,19 @@
 use gtk4::{
     glib,
-    glib::{MainContext, MainContextAcquireGuard, MainLoop},
+    glib::{MainContext, MainLoop},
 };
 
+pub type UiTask = Box<dyn FnOnce() + Send + 'static>;
+
 /// Encapsulates the GTK application state and main event loop.
+///
+/// # Threading Assumptions
+///
+/// GTK strictly requires that all UI operations (widget creation, modification,
+/// window presentation) happen on a single thread—the thread where `gtk4::init()`
+/// was called. This struct enforces that invariant by establishing a `MainContext`
+/// and providing a channel (`UiProxy`) to send closures from Tokio background threads
+/// to the GTK main thread.
 pub struct Ui {
     main_loop: MainLoop,
     proxy: UiProxy,
@@ -18,9 +28,22 @@ impl Default for Ui {
 impl Ui {
     pub fn new() -> Self {
         let main_loop = MainLoop::new(None, false);
+
+        let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel::<UiTask>();
+
+        // spawn_local is crucial here: it attaches the future to the GTK MainContext
+        // rather than the Tokio runtime. This ensures that the queued tasks (which
+        // typically create or manipulate GTK widgets) execute exclusively on the main thread.
+        main_loop.context().spawn_local(async move {
+            while let Some(task) = receiver.recv().await {
+                task();
+            }
+        });
+
         Self {
             proxy: UiProxy {
                 context: main_loop.context().clone(),
+                sender,
             },
             main_loop,
         }
@@ -32,26 +55,6 @@ impl Ui {
             std::process::exit(1);
         }
         glib::set_prgname(Some("xdg-desktop-portal-gtk4"));
-    }
-
-    /// Acquires the `MainContext`, preventing other threads from running
-    /// closures inline via `context.invoke()`.
-    ///
-    /// When the `MainContext` has no owner, any thread calling `invoke()` can
-    /// acquire it and execute the closure synchronously on that thread. This is
-    /// dangerous during the startup window between `Portal::create()` (which
-    /// registers D-Bus interfaces) and `init_gtk()` (which initializes GTK):
-    /// an incoming D-Bus request could trigger `invoke()` on the zbus executor
-    /// thread, running GTK widget code before GTK is initialized.
-    ///
-    /// By holding this guard, `invoke()` from other threads always queues
-    /// closures as idle sources. They will only execute once `main_loop.run()`
-    /// starts processing the loop (which happens after `init_gtk()`).
-    pub fn hold_context(&self) -> MainContextAcquireGuard<'_> {
-        self.proxy
-            .context
-            .acquire()
-            .expect("MainContext must not be owned by another thread during early daemon initialization")
     }
 
     pub fn run(&self) {
@@ -67,9 +70,15 @@ impl Ui {
 ///
 /// Because GTK objects are `!Send`, we cannot easily share them across D-Bus task boundaries.
 /// `UiProxy` can be safely cloned and moved into `zbus` request handlers, allowing those
-/// background tasks to spawn work back onto the GTK main thread using `context.invoke()`
-/// (which is exactly what `run_ui_task` does).
+/// background tasks to spawn work back onto the GTK main thread using `sender`
+/// (which is exactly what [`run_ui_task`](crate::gui::run_ui_task) does).
+///
+/// # Ownership & Lifetime
+///
+/// This proxy holds a sender channel to the main GTK loop. It expects the receiving end
+/// in the main loop to outlive any background tasks.
 #[derive(Clone)]
 pub struct UiProxy {
     pub context: MainContext,
+    pub sender: tokio::sync::mpsc::UnboundedSender<UiTask>,
 }

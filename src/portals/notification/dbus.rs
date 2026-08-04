@@ -87,11 +87,27 @@ pub type NotificationTargetData = (
 );
 pub type ReverseMapType = std::sync::Arc<Mutex<HashMap<u32, NotificationTargetData>>>;
 
+/// The D-Bus interface wrapper for the Notification portal.
+///
+/// This struct holds shared state used to map between the sandboxed application's
+/// portal notification IDs and the host system's actual notification IDs.
 pub struct Notification {
+    /// Maps a composite key `(app_id, portal_id)` to the system notification ID (`u32`).
+    /// This is used so we can replace or remove an existing notification.
     active_notifications: std::sync::Arc<Mutex<HashMap<(String, String), u32>>>,
-    // Maps system D-Bus notification ID back to the portal app_id, portal_id, action targets, and optional sound temp file.
-    // This is needed so we can correctly propagate the `ActionInvoked` signal back to the sandboxed app, and clean up temp files.
+
+    /// Maps the system D-Bus notification ID (`u32`) back to the portal `app_id`, `portal_id`,
+    /// action targets, and optional sound temp file.
+    ///
+    /// # Threading & Invariants
+    ///
+    /// This map is populated when a notification is added, and it is consulted
+    /// asynchronously by the background tasks listening to `ActionInvoked` and
+    /// `NotificationClosed` signals from the host's notification daemon.
+    /// When `NotificationClosed` is received, the entry is removed, which also
+    /// drops the `TempSoundFile` (deleting the temporary file).
     reverse_map: ReverseMapType,
+
     init_once: std::sync::Once,
     connection: Option<Connection>,
 }
@@ -357,14 +373,15 @@ impl Notification {
                 let lock = self
                     .active_notifications
                     .lock()
-                    .unwrap_or_else(|e| e.into_inner());
+                    .expect("Mutex was poisoned");
                 *lock.get(&key).unwrap_or(&0)
             };
 
-            if replaces_id != 0
-                && let Ok(mut lock) = self.reverse_map.lock()
-            {
-                lock.remove(&replaces_id);
+            if replaces_id != 0 {
+                self.reverse_map
+                    .lock()
+                    .expect("Mutex was poisoned")
+                    .remove(&replaces_id);
             }
 
             if let Ok(new_id) = proxy
@@ -380,15 +397,14 @@ impl Notification {
                 )
                 .await
             {
-                if let Ok(mut lock) = self.active_notifications.lock() {
-                    lock.insert(key, new_id);
-                }
-                if let Ok(mut lock) = self.reverse_map.lock() {
-                    lock.insert(
-                        new_id,
-                        (app_id.clone(), id.clone(), action_targets, sound_file),
-                    );
-                }
+                self.active_notifications
+                    .lock()
+                    .expect("Mutex was poisoned")
+                    .insert(key, new_id);
+                self.reverse_map.lock().expect("Mutex was poisoned").insert(
+                    new_id,
+                    (app_id.clone(), id.clone(), action_targets, sound_file),
+                );
             }
         }
 
@@ -400,25 +416,22 @@ impl Notification {
             let rm1 = reverse_map_clone.clone();
             let s1 = server_clone.clone();
             let c1 = conn_clone.clone();
-            gtk4::glib::MainContext::default().spawn(async move {
+            tokio::spawn(async move {
                 if let Some(conn) = c1
                     && let Err(e) = listen_for_action_invoked(rm1, s1, Some(conn)).await
                 {
-                    tracing::error!("Action invoked listener failed: {}", anyhow::Error::new(e));
+                    tracing::error!(error = ?e, "Action invoked listener failed");
                 }
             });
 
             let rm2 = reverse_map_clone.clone();
             let act2 = self.active_notifications.clone();
             let c2 = conn_clone.clone();
-            gtk4::glib::MainContext::default().spawn(async move {
+            tokio::spawn(async move {
                 if let Some(conn) = c2
                     && let Err(e) = listen_for_notification_closed(rm2, act2, Some(conn)).await
                 {
-                    tracing::error!(
-                        "Notification closed listener failed: {}",
-                        anyhow::Error::new(e)
-                    );
+                    tracing::error!(error = ?e, "Notification closed listener failed");
                 }
             });
         });
@@ -426,12 +439,11 @@ impl Notification {
 
     async fn remove_notification(&self, app_id: String, id: String) {
         let key = (app_id, id);
-        let fdo_id = if let Ok(mut lock) = self.active_notifications.lock() {
-            lock.remove(&key)
-        } else {
-            tracing::error!("Failed to lock active_notifications mutex in remove_notification");
-            None
-        };
+        let fdo_id = self
+            .active_notifications
+            .lock()
+            .expect("Mutex was poisoned")
+            .remove(&key);
         if let Some(fdo_id) = fdo_id
             && let Some(session_bus) = &self.connection
             && let Ok(proxy) = NotificationsProxy::new(session_bus).await
@@ -473,9 +485,11 @@ impl Notification {
     }
 }
 
-// Spawns a background task that listens to `ActionInvoked` signals from the system notification daemon.
-// When an action is invoked on a notification created through this portal, it looks up the original
-// portal app_id and notification id in the `reverse_map` and emits the portal's `ActionInvoked` signal.
+/// Spawns a background task that listens to `ActionInvoked` signals from the system notification daemon.
+///
+/// When an action is invoked on a notification created through this portal, this function looks up
+/// the original portal `app_id` and notification id in the `reverse_map`. It then emits the portal's
+/// `ActionInvoked` signal back to the sandboxed application over D-Bus, completing the cycle.
 async fn listen_for_action_invoked(
     reverse_map: ReverseMapType,
     server: ObjectServer,
@@ -490,11 +504,11 @@ async fn listen_for_action_invoked(
         let id = args.id;
         let action_key = args.action_key;
 
-        let target_data = if let Ok(lock) = reverse_map.lock() {
-            lock.get(&id).cloned()
-        } else {
-            None
-        };
+        let target_data = reverse_map
+            .lock()
+            .expect("Mutex was poisoned")
+            .get(&id)
+            .cloned();
 
         if let Some((app_id, portal_id, action_targets, _)) = target_data {
             let mut params: Vec<Value<'_>> = vec![];
@@ -549,7 +563,7 @@ async fn listen_for_action_invoked(
                 }
 
                 let iface_ref_res = server
-                    .interface::<_, Notification>("/org/freedesktop/portal/desktop")
+                    .interface::<_, Notification>(crate::core::DBUS_PATH)
                     .await;
 
                 if let Ok(iface_ref) = iface_ref_res {
@@ -581,20 +595,17 @@ async fn listen_for_notification_closed(
         let args = signal.args()?;
         let id = args.id;
 
-        let removed_key = if let Ok(mut lock) = reverse_map.lock() {
-            if let Some((app_id, portal_id, _, _sound_file)) = lock.remove(&id) {
-                // _sound_file drops here and deletes the temp file via Drop trait
-                Some((app_id, portal_id))
-            } else {
-                None
-            }
+        let removed_key = if let Some((app_id, portal_id, _, _sound_file)) =
+            reverse_map.lock().expect("Mutex was poisoned").remove(&id)
+        {
+            // _sound_file drops here and deletes the temp file via Drop trait
+            Some((app_id, portal_id))
         } else {
             None
         };
 
-        if let Some(key) = removed_key
-            && let Ok(mut lock) = active_notifications.lock()
-        {
+        if let Some(key) = removed_key {
+            let mut lock = active_notifications.lock().expect("Mutex was poisoned");
             // To avoid a race condition where the FDO server replaces the notification
             // but still emits NotificationClosed for the old one, we only remove if it's the exact same FDO ID.
             if lock.get(&key) == Some(&id) {

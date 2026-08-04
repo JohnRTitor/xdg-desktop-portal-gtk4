@@ -1,13 +1,12 @@
 {
   lib,
+  stdenv,
   rustPlatform,
   pkg-config,
   gtk4,
   glib,
   wrapGAppsHook4,
-  meson,
   dbus,
-  ninja,
   version ? "unstable",
   withDbusTests ? false,
 }:
@@ -31,8 +30,6 @@ rustPlatform.buildRustPackage {
   nativeBuildInputs = [
     pkg-config
     wrapGAppsHook4
-    meson
-    ninja
   ];
 
   buildInputs = [
@@ -40,20 +37,6 @@ rustPlatform.buildRustPackage {
     glib
   ];
 
-  # Prevent Nix from treating this primarily as a Meson package
-  dontUseMesonConfigure = true;
-  dontUseMesonBuild = true;
-  dontUseMesonInstall = true;
-  dontUseNinjaConfigure = true;
-  dontUseNinjaBuild = true;
-  dontUseNinjaInstall = true;
-  dontUseNinjaCheck = true;
-  dontUseMesonCheck = true;
-
-  mesonFlags = [
-    "--libexecdir=libexec"
-    "-Dsystemd-user-unit-dir=lib/systemd/user"
-  ];
 
   nativeCheckInputs = lib.optionals withDbusTests [ dbus ];
 
@@ -95,12 +78,11 @@ rustPlatform.buildRustPackage {
   '';
 
   postInstall = ''
-    # Let meson handle substituting templates and installing all files
-    # Note: mesonConfigurePhase cd's into the build directory
-    mesonConfigurePhase
+    # Remove the default bin directory provided by rustPlatform
+    rm -rf $out/bin
 
-    # Run meson install directly to avoid mesonInstallPhase recursively triggering postInstall
-    meson install --no-rebuild
+    # Run our make install to correctly place the binary in libexec and copy data files
+    make install DESTDIR= PREFIX=$out CARGO_TARGET_DIR=target/${stdenv.hostPlatform.rust.cargoShortTarget}
   '';
 
   meta = {

@@ -11,6 +11,10 @@ use {
     },
 };
 
+/// D-Bus interface wrapper for the Access portal.
+///
+/// This struct holds a proxy to the GTK main loop, used to present the generic
+/// access dialog when the system needs to ask the user for permission.
 pub struct Access {
     // Keep a cloned UI proxy to dispatch GTK tasks.
     proxy: UiProxy,
@@ -100,7 +104,7 @@ impl Access {
                     .map(|c| c.into_iter().map(|fc| (fc.id, fc.variant_id)).collect()),
             }),
             Err(e) => {
-                tracing::error!("AccessDialog failed: {}", anyhow::Error::new(e));
+                tracing::error!(error = %e, "AccessDialog failed");
                 Response::cancelled()
             }
         }

@@ -10,6 +10,10 @@ use {
     },
 };
 
+/// D-Bus interface wrapper for the DynamicLauncher portal.
+///
+/// This struct holds a proxy to the GTK main loop. State is inherently short-lived
+/// per request.
 pub struct DynamicLauncher {
     proxy: UiProxy,
 }
@@ -88,7 +92,7 @@ impl DynamicLauncher {
                 })
             }
             Err(e) => {
-                tracing::error!("PrepareInstall failed: {}", anyhow::Error::new(e));
+                tracing::error!(error = %e, "PrepareInstall failed");
                 Response::cancelled()
             }
         }
@@ -128,21 +132,26 @@ impl DynamicLauncher {
         .await
     }
 
+    /// Determines whether the application is allowed to skip the confirmation dialog.
+    ///
+    /// # Policy
+    ///
+    /// We blanket allow certain trusted software centers (like GNOME Software or Discover)
+    /// to create app entries without prompting the user. This matches the behavior of the
+    /// GTK and GNOME portals. All other apps return `2` (Denied), which forces the backend
+    /// to use the interactive `PrepareInstall` UI flow.
     async fn request_install_token(
         &self,
         app_id: String,
         _options: RequestInstallTokenOptions,
     ) -> u32 {
-        // Blanket allow certain trusted software centers to create app entries without
-        // prompting the user. This matches the behavior of the GTK and GNOME portals.
-        let allowed_ids = [
-            "org.gnome.Software",
-            "org.gnome.SoftwareDevel",
-            "io.elementary.appcenter",
-            "org.kde.discover",
-        ];
-
-        if allowed_ids.contains(&app_id.as_str()) {
+        if matches!(
+            app_id.as_str(),
+            "org.gnome.Software"
+                | "org.gnome.SoftwareDevel"
+                | "io.elementary.appcenter"
+                | "org.kde.discover"
+        ) {
             0 // Allowed
         } else {
             2 // Access denied (forces a fallback to PrepareInstall UI flow)
@@ -184,26 +193,19 @@ fn parse_icon(icon_v: &OwnedValue) -> (Option<String>, Option<Vec<u8>>) {
 
     match type_str {
         "bytes" => {
-            let Ok(v) = <zbus::zvariant::Value>::try_from(&fields[1]) else {
-                return (None, None);
-            };
-            let Ok(bytes) = <Vec<u8>>::try_from(v) else {
-                return (None, None);
-            };
-            (None, Some(bytes))
+            let bytes = <zbus::zvariant::Value>::try_from(&fields[1])
+                .ok()
+                .and_then(|v| <Vec<u8>>::try_from(v).ok());
+            (None, bytes)
         }
         "themed" => {
-            let Ok(v) = <zbus::zvariant::Value>::try_from(&fields[1]) else {
-                return (None, None);
-            };
-            let Ok(names) = <Vec<String>>::try_from(v) else {
-                return (None, None);
-            };
-            if !names.is_empty() {
-                (Some(names[0].clone()), None)
-            } else {
-                (None, None)
+            let names = <zbus::zvariant::Value>::try_from(&fields[1])
+                .ok()
+                .and_then(|v| <Vec<String>>::try_from(v).ok());
+            if let Some(name) = names.and_then(|n| n.first().cloned()) {
+                return (Some(name), None);
             }
+            (None, None)
         }
         _ => (None, None),
     }
@@ -271,6 +273,7 @@ mod tests {
         // We just create an empty MainContext for the UiProxy so we don't start GTK.
         let proxy = UiProxy {
             context: gtk4::glib::MainContext::default(),
+            sender: tokio::sync::mpsc::unbounded_channel().0,
         };
         let launcher = DynamicLauncher::new(&proxy);
 
@@ -298,6 +301,7 @@ mod tests {
     async fn test_request_install_token_denied() {
         let proxy = UiProxy {
             context: gtk4::glib::MainContext::default(),
+            sender: tokio::sync::mpsc::unbounded_channel().0,
         };
         let launcher = DynamicLauncher::new(&proxy);
 
@@ -316,6 +320,7 @@ mod tests {
     fn test_dynamic_launcher_properties() {
         let proxy = UiProxy {
             context: gtk4::glib::MainContext::default(),
+            sender: tokio::sync::mpsc::unbounded_channel().0,
         };
         let launcher = DynamicLauncher::new(&proxy);
         assert_eq!(launcher.supported_launcher_types(), 3);

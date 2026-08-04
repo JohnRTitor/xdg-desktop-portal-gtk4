@@ -1,18 +1,18 @@
 use {
-    async_channel::Sender,
     gtk4::{gdk, gio, glib},
-    std::cell::RefCell,
-    std::os::fd::OwnedFd,
+    std::{cell::RefCell, os::fd::OwnedFd},
+    tokio::sync::mpsc::Sender,
 };
 
 mod imp {
-    use super::*;
-    use gtk4::gdk::subclass::prelude::*;
+    use {super::*, gtk4::gdk::subclass::prelude::*};
+
+    pub type FdRequestSender = Sender<(String, tokio::sync::oneshot::Sender<OwnedFd>)>;
 
     #[derive(Default)]
     pub struct PortalContentProvider {
         pub mimes: RefCell<Vec<String>>,
-        pub request_tx: RefCell<Option<Sender<(String, Sender<OwnedFd>)>>>,
+        pub request_tx: RefCell<Option<FdRequestSender>>,
     }
 
     #[glib::object_subclass]
@@ -42,53 +42,58 @@ mod imp {
             mime_type: &str,
             stream: &gio::OutputStream,
             _io_priority: glib::Priority,
-        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), glib::Error>> + 'static>> {
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), glib::Error>> + 'static>>
+        {
             let mime_type = mime_type.to_string();
-            let stream = stream.clone();
-            
+            let out_stream = stream.clone();
+
             // We clone the sender so we can use it in the future
             let request_tx = self.request_tx.borrow().clone();
 
             Box::pin(async move {
-                if let Some(tx) = request_tx {
-                    // Create a channel for receiving the file descriptor
-                    let (fd_tx, fd_rx) = async_channel::bounded(1);
-                    
-                    // Send the request to the D-Bus side
-                    if tx.send((mime_type, fd_tx)).await.is_err() {
-                        return Err(glib::Error::new(
-                            gio::IOErrorEnum::Failed,
-                            "Failed to notify portal of transfer request",
-                        ));
-                    }
+                let Some(tx) = request_tx else {
+                    return Err(glib::Error::new(
+                        gio::IOErrorEnum::Failed,
+                        "No request channel",
+                    ));
+                };
 
-                    // Wait for the file descriptor to be provided by D-Bus SelectionWrite
-                    let fd = match fd_rx.recv().await {
-                        Ok(fd) => fd,
-                        Err(_) => {
-                            return Err(glib::Error::new(
-                                gio::IOErrorEnum::Failed,
-                                "Portal failed to provide file descriptor",
-                            ));
-                        }
-                    };
+                // Create a channel for receiving the file descriptor
+                let (fd_tx, fd_rx) = tokio::sync::oneshot::channel();
 
-                    // Splice data from the pipe to the GTK stream
-                    use gio::prelude::*;
-                    
-                    let file = std::fs::File::from(fd);
-                    let in_stream = gio::ReadInputStream::new(file);
-                    
-                    stream.splice_future(
-                        &in_stream,
-                        gio::OutputStreamSpliceFlags::CLOSE_SOURCE | gio::OutputStreamSpliceFlags::CLOSE_TARGET,
-                        glib::Priority::default(),
-                    ).await.map_err(|e| glib::Error::new(gio::IOErrorEnum::Failed, &e.to_string()))?;
-
-                    Ok(())
-                } else {
-                    Err(glib::Error::new(gio::IOErrorEnum::Failed, "No request channel"))
+                // Send the request for a file descriptor
+                if tx.send((mime_type.to_string(), fd_tx)).await.is_err() {
+                    return Err(glib::Error::new(
+                        gio::IOErrorEnum::Failed,
+                        "Failed to send request for file descriptor",
+                    ));
                 }
+
+                // Wait for the file descriptor
+                let fd = fd_rx.await.map_err(|_| {
+                    glib::Error::new(
+                        gio::IOErrorEnum::Failed,
+                        "Failed to receive file descriptor",
+                    )
+                })?;
+
+                // Wrap the file descriptor in a File and then an InputStream
+                let file = std::fs::File::from(fd);
+                let in_stream = gio::ReadInputStream::new(file);
+
+                // Asynchronously copy data from the provider to our output stream
+                use gio::prelude::*;
+                out_stream
+                    .splice_future(
+                        &in_stream,
+                        gio::OutputStreamSpliceFlags::CLOSE_SOURCE
+                            | gio::OutputStreamSpliceFlags::CLOSE_TARGET,
+                        glib::Priority::default(),
+                    )
+                    .await
+                    .map_err(|e| glib::Error::new(gio::IOErrorEnum::Failed, &e.to_string()))?;
+
+                Ok(())
             })
         }
     }
@@ -100,7 +105,7 @@ glib::wrapper! {
 }
 
 impl PortalContentProvider {
-    pub fn new(mimes: Vec<String>, request_tx: Sender<(String, Sender<OwnedFd>)>) -> Self {
+    pub fn new(mimes: Vec<String>, request_tx: imp::FdRequestSender) -> Self {
         let obj: Self = glib::Object::new();
         let imp = gtk4::subclass::prelude::ObjectSubclassIsExt::imp(&obj);
         *imp.mimes.borrow_mut() = mimes;

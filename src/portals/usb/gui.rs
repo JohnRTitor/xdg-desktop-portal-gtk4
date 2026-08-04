@@ -1,6 +1,5 @@
 use {
-    crate::gui::{UiError, UiProxy},
-    async_channel::{Receiver, Sender},
+    crate::gui::{PortalDispatcher, UiError, UiProxy},
     gtk4::{
         Box as GtkBox, Button, CheckButton, Label, ListBox, ListBoxRow, Orientation,
         ScrolledWindow,
@@ -9,6 +8,7 @@ use {
     },
     rust_i18n::t,
     std::{collections::HashMap, rc::Rc},
+    tokio::sync::oneshot::Receiver,
     zbus::zvariant::OwnedValue,
 };
 
@@ -44,7 +44,7 @@ impl UsbUi {
 
     fn run_impl(
         self,
-        send: Sender<Result<UsbResult, UiError>>,
+        send: crate::gui::UiDispatcher<Result<UsbResult, UiError>>,
         context: MainContext,
         close_on_close: Receiver<()>,
     ) {
@@ -81,11 +81,11 @@ impl UsbUi {
 
         for (i, device) in self.devices.iter().enumerate() {
             let row = ListBoxRow::new();
-            let hbox = GtkBox::new(Orientation::Horizontal, 12);
-            hbox.set_margin_top(6);
-            hbox.set_margin_bottom(6);
-            hbox.set_margin_start(6);
-            hbox.set_margin_end(6);
+            let hbox = GtkBox::new(Orientation::Horizontal, crate::gui::DEFAULT_SPACING);
+            hbox.set_margin_top(crate::gui::SMALL_MARGIN);
+            hbox.set_margin_bottom(crate::gui::SMALL_MARGIN);
+            hbox.set_margin_start(crate::gui::SMALL_MARGIN);
+            hbox.set_margin_end(crate::gui::SMALL_MARGIN);
 
             let check = &checks[i];
             hbox.append(check);
@@ -136,7 +136,7 @@ impl UsbUi {
 
         let send_close = send.clone();
         window.connect_close_request(move |_| {
-            let _ = send_close.send_blocking(Err(UiError::Rejected));
+            let _ = send_close.dispatch(Err(UiError::Rejected));
             gtk4::glib::Propagation::Proceed
         });
 
@@ -145,7 +145,7 @@ impl UsbUi {
             #[weak]
             window,
             move |_| {
-                let _ = send_cancel.send_blocking(Err(UiError::Rejected));
+                let _ = send_cancel.dispatch(Err(UiError::Rejected));
                 window.close();
             }
         ));
@@ -169,7 +169,7 @@ impl UsbUi {
                 } else {
                     Ok(UsbResult { devices: selected })
                 };
-                let _ = send_ok.send_blocking(res);
+                let _ = send_ok.dispatch(res);
                 window.close();
             }
         ));
@@ -182,7 +182,7 @@ impl UsbUi {
 
         window.show();
         context.spawn_local(async move {
-            let _ = close_on_close.recv().await;
+            let _ = close_on_close.await;
             window.close();
         });
     }

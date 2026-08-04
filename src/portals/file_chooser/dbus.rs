@@ -17,6 +17,11 @@ use {
     },
 };
 
+/// D-Bus interface wrapper for the FileChooser portal.
+///
+/// This struct holds a proxy to the GTK main loop. It does not store active session
+/// state itself; instead, each D-Bus method call runs as an independent async task
+/// and uses the proxy to spawn a GTK `FileChooserDialog`.
 pub struct FileChooser {
     proxy: UiProxy,
 }
@@ -166,7 +171,7 @@ impl FileChooser {
                 writable: Some(res.writeable),
             }),
             Err(e) => {
-                tracing::error!("OpenFile failed: {}", anyhow::Error::new(e));
+                tracing::error!(error = %e, "OpenFile failed");
                 Response::cancelled()
             }
         }
@@ -205,7 +210,7 @@ impl FileChooser {
                 current_filter: res.current_filter.map(unmap_filter),
             }),
             Err(e) => {
-                tracing::error!("SaveFile failed: {}", anyhow::Error::new(e));
+                tracing::error!(error = %e, "SaveFile failed");
                 Response::cancelled()
             }
         }
@@ -221,8 +226,10 @@ impl FileChooser {
         let files = options.files.as_deref().unwrap_or(&[]);
 
         // Security checks: The client provides paths to save, but we must ensure
-        // they don't contain absolute paths or directory traversal attacks, because
-        // we will combine these with a user-selected directory.
+        // they don't contain absolute paths or directory traversal attacks. We are
+        // going to combine these provided filenames with a directory that the user
+        // selects. If a malicious client passed `../../etc/passwd`, they could
+        // trick the portal into overwriting critical files.
         for file in files {
             let file = Path::new(&file.0);
             if file.is_absolute() {
@@ -258,9 +265,8 @@ impl FileChooser {
         if res.uris.len() != 1 {
             return Err(SaveFilesError::NotExactlyOnePath);
         }
-        let uri = match res.uris.pop() {
-            Some(u) => u,
-            None => return Err(SaveFilesError::NotExactlyOnePath),
+        let Some(uri) = res.uris.pop() else {
+            return Err(SaveFilesError::NotExactlyOnePath);
         };
         let base = gio::File::for_uri(&uri)
             .path()
@@ -269,12 +275,18 @@ impl FileChooser {
         for file in files {
             let mut path = base.join(&file.0);
             if path.exists() {
-                let (prefix, dot, suffix) = match file.0.split_once('.') {
-                    Some((prefix, suffix)) => (prefix, ".", suffix),
-                    _ => (file.0.as_str(), "", ""),
-                };
+                let stem = path
+                    .file_stem()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .into_owned();
+                let ext = path.extension().map(|e| e.to_string_lossy().into_owned());
                 for i in 1u64.. {
-                    path.set_file_name(format!("{prefix} ({i}){dot}{suffix}"));
+                    let new_name = match &ext {
+                        Some(e) => format!("{stem} ({i}).{e}"),
+                        None => format!("{stem} ({i})"),
+                    };
+                    path.set_file_name(new_name);
                     if !path.exists() {
                         break;
                     }
@@ -301,7 +313,7 @@ impl FileChooser {
         {
             Ok(res) => Response::success(res),
             Err(e) => {
-                tracing::error!("SaveFiles failed: {}", anyhow::Error::new(e));
+                tracing::error!(error = %e, "SaveFiles failed");
                 Response::cancelled()
             }
         }
@@ -522,6 +534,7 @@ mod tests {
     async fn test_save_files_validation_absolute_path() {
         let proxy = crate::gui::UiProxy {
             context: gtk4::glib::MainContext::default(),
+            sender: tokio::sync::mpsc::unbounded_channel().0,
         };
         let chooser = FileChooser::new(&proxy);
         let options = SaveFilesOptions {
@@ -538,6 +551,7 @@ mod tests {
     async fn test_save_files_validation_multiple_components() {
         let proxy = crate::gui::UiProxy {
             context: gtk4::glib::MainContext::default(),
+            sender: tokio::sync::mpsc::unbounded_channel().0,
         };
         let chooser = FileChooser::new(&proxy);
         let options = SaveFilesOptions {
@@ -554,6 +568,7 @@ mod tests {
     async fn test_save_files_validation_special_path_dot() {
         let proxy = crate::gui::UiProxy {
             context: gtk4::glib::MainContext::default(),
+            sender: tokio::sync::mpsc::unbounded_channel().0,
         };
         let chooser = FileChooser::new(&proxy);
         let options = SaveFilesOptions {
@@ -570,6 +585,7 @@ mod tests {
     async fn test_save_files_validation_special_path_dot_dot() {
         let proxy = crate::gui::UiProxy {
             context: gtk4::glib::MainContext::default(),
+            sender: tokio::sync::mpsc::unbounded_channel().0,
         };
         let chooser = FileChooser::new(&proxy);
         let options = SaveFilesOptions {

@@ -1,14 +1,16 @@
 use {
-    crate::gui::{UiError, UiProxy},
-    async_channel::{Receiver, Sender},
+    crate::gui::{PortalDispatcher, UiError, UiProxy},
     gtk4::{
         PrintUnixDialog, ResponseType,
         glib::MainContext,
         prelude::{DialogExt, GtkWindowExt, WidgetExt},
     },
     std::{cell::RefCell, collections::HashMap},
+    tokio::sync::oneshot::Receiver,
     zbus::zvariant::OwnedValue,
 };
+
+const PRINT_TOKEN_TIMEOUT_SECS: u32 = 300;
 
 pub struct CachedPrintJob {
     pub app_id: String,
@@ -51,7 +53,7 @@ impl PrintUi {
 
     fn run_impl(
         self,
-        send: Sender<Result<PrintResult, UiError>>,
+        send: crate::gui::UiDispatcher<Result<PrintResult, UiError>>,
         context: MainContext,
         close_on_close: Receiver<()>,
     ) {
@@ -63,6 +65,8 @@ impl PrintUi {
             &self.parent_window,
             self.activation_token.as_deref(),
         );
+
+        let send_clone = send.clone();
 
         dialog.connect_response(move |d, r| {
             let res = match r {
@@ -107,12 +111,14 @@ impl PrintUi {
                         // after `PreparePrint` successfully returns a token. We allow a 300-second (5 minute)
                         // timeout for the application to generate its print document (e.g. PDF) and call `Print`.
                         // If it takes longer or crashes, we evict the cached job to prevent a memory leak.
-                        let source_id =
-                            gtk4::glib::timeout_add_seconds_local_once(300, move || {
+                        let source_id = gtk4::glib::timeout_add_seconds_local_once(
+                            PRINT_TOKEN_TIMEOUT_SECS,
+                            move || {
                                 PRINT_JOBS.with(|jobs| {
                                     jobs.borrow_mut().remove(&token_clone);
                                 });
-                            });
+                            },
+                        );
 
                         PRINT_JOBS.with(|jobs| {
                             jobs.borrow_mut().insert(
@@ -140,13 +146,13 @@ impl PrintUi {
                 }
                 _ => Err(UiError::Rejected),
             };
-            let _ = send.send_blocking(res);
+            let _ = send_clone.dispatch(res);
             d.close();
         });
 
         dialog.show();
         context.spawn_local(async move {
-            let _ = close_on_close.recv().await;
+            let _ = close_on_close.await;
             gtk4::glib::timeout_future(std::time::Duration::from_secs(5)).await;
             dialog.destroy();
         });
@@ -163,7 +169,7 @@ impl ExecutePrintUi {
         crate::gui::run_ui_task(proxy, |send, _, _| self.run_impl(send), || UiError::Closed).await
     }
 
-    fn run_impl(self, send: Sender<Result<(), UiError>>) {
+    fn run_impl(self, send: crate::gui::UiDispatcher<Result<(), UiError>>) {
         let job = PRINT_JOBS.with(|jobs| jobs.borrow_mut().remove(&self.token));
 
         if let Some(cached) = job {
@@ -178,7 +184,7 @@ impl ExecutePrintUi {
             );
             if let Err(e) = print_job.set_source_fd(self.fd) {
                 tracing::error!("Failed to set source fd for print job: {}", e);
-                let _ = send.send_blocking(Err(UiError::Rejected));
+                let _ = send.dispatch(Err(UiError::Rejected));
                 return;
             }
 
@@ -189,10 +195,10 @@ impl ExecutePrintUi {
                     tracing::info!("Print job successfully sent to CUPS");
                 }
             });
-            let _ = send.send_blocking(Ok(()));
+            let _ = send.dispatch(Ok(()));
         } else {
             tracing::warn!("Received print request for unknown token: {}", self.token);
-            let _ = send.send_blocking(Err(UiError::Rejected));
+            let _ = send.dispatch(Err(UiError::Rejected));
         }
     }
 }

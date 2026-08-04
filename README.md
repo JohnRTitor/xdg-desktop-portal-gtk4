@@ -1,164 +1,128 @@
 # xdg-desktop-portal-gtk4
 
-This is a modern GTK4-based portal backend for [xdg-desktop-portal][portal].
+A GTK4-based backend for [xdg-desktop-portal](https://github.com/flatpak/xdg-desktop-portal).
 
-It provides native GTK4 dialogs for various desktop portals (like file picking, app choosing, and USB access). If your Wayland compositor typically defaults to the [GTK3 portal][gtk3] (such as Sway, Jay, or Hyprland), you can use this portal backend instead to benefit from modern GTK4 features, including native file picker thumbnails and updated UI elements.
+Enables sandboxed applications (like Flatpaks and Snaps) to securely interact with the host system, providing native GTK4 dialogs for file picking, app choosing, and more. Use this as your primary portal backend on Wayland compositors (like Sway, Hyprland) or X11 to benefit from modern GTK4 features like updated UI elements and native file picker thumbnails.
 
 ![screenshot.png](./static/screenshot.png)
 
-[portal]: http://github.com/flatpak/xdg-desktop-portal
-[gtk3]: http://github.com/flatpak/xdg-desktop-portal-gtk
-
 ## Supported Portals
 
-This implementation provides backend support for the following XDG Desktop Portal interfaces:
+| Portal Interface | Description |
+|------------------|-------------|
+| `Access` | Prompting for device/resource access |
+| `Account` | Providing user account information |
+| `AppChooser` | Selecting an application to open a file or URI |
+| `Clipboard` | Bridging clipboard access between sandboxes and host |
+| `DynamicLauncher`| Managing dynamic desktop launchers |
+| `Email` | Composing emails |
+| `FileChooser` | Opening and saving files (with native GTK4 UI) |
+| `Inhibit` | Inhibiting session state (like sleep or logout) |
+| `Lockdown` | Querying locked-down features |
+| `Notification` | Displaying desktop notifications |
+| `Print` | Printing documents |
+| `Settings` | Reading desktop settings (such as color-scheme for dark mode) |
+| `USB` | Managing USB device access |
 
-- **Access** (`org.freedesktop.impl.portal.Access`): Prompting for device/resource access.
-- **Account** (`org.freedesktop.impl.portal.Account`): Providing user account information.
-- **AppChooser** (`org.freedesktop.impl.portal.AppChooser`): Selecting an application to open a file or URI.
-- **Clipboard** (`org.freedesktop.impl.portal.Clipboard`): Bridging clipboard access between sandboxes and the host.
-- **DynamicLauncher** (`org.freedesktop.impl.portal.DynamicLauncher`): Managing dynamic desktop launchers.
-- **Email** (`org.freedesktop.impl.portal.Email`): Composing emails.
-- **FileChooser** (`org.freedesktop.impl.portal.FileChooser`): Opening and saving files (with GTK4 native UI/thumbnails).
-- **Inhibit** (`org.freedesktop.impl.portal.Inhibit`): Inhibiting session state (like sleep or logout).
-- **Lockdown** (`org.freedesktop.impl.portal.Lockdown`): Querying locked-down features (e.g. disable printing/saving).
-- **Notification** (`org.freedesktop.impl.portal.Notification`): Displaying desktop notifications.
-- **Print** (`org.freedesktop.impl.portal.Print`): Printing documents.
-- **Settings** (`org.freedesktop.impl.portal.Settings`): Reading desktop settings (such as color-scheme for dark mode).
-- **USB** (`org.freedesktop.impl.portal.Usb`): Managing USB device access.
+## Dependencies
 
-## Minimum Supported Rust Version (MSRV)
+**Build:** Rust >= 1.92, `pkg-config`, `make`, GTK 4, GLib 2.0  
+**Runtime:** `xdg-desktop-portal`
 
-This project explicitly documents and enforces its MSRV in the `rust-version` field of `Cargo.toml`.
+## Installation
 
-The project uses the **Rust 2024 edition** and relies on the GTK4 Rust bindings (`gtk4`, `gdk4`, etc.). The enforced `rust-version` is derived directly from the minimum requirements of these ecosystem dependencies.
+### Standard Build (Quick Start)
 
-The MSRV is updated only when required by language features, standard library APIs, or dependency requirements. Any planned MSRV increase will be documented in the changelog and release notes.
+Build the binary with Cargo and install the integration files using Meson:
 
-## Feature Flags
+```bash
+cargo build --release
 
-Every portal is optionally compiled using Cargo features. By default, all portals are enabled. You can disable the default features and selectively enable only the portals you need to reduce binary size and compile time.
+# Install the binary, DBus services, systemd units, and portal configurations
+sudo make install PREFIX=/usr
+```
 
-| Feature            | Portal          | Default | Extra Dependencies |
-| ------------------ | --------------- | ------- | ------------------ |
-| `access`           | Access          | Yes     | None               |
-| `account`          | Account         | Yes     | None               |
-| `app_chooser`      | AppChooser      | Yes     | None               |
-| `clipboard`        | Clipboard       | Yes     | None               |
-| `dynamic_launcher` | DynamicLauncher | Yes     | None               |
-| `email`            | Email           | Yes     | None               |
-| `file_chooser`     | FileChooser     | Yes     | None               |
-| `inhibit`          | Inhibit         | Yes     | None               |
-| `lockdown`         | Lockdown        | Yes     | None               |
-| `notification`     | Notification    | Yes     | `gdk-pixbuf`       |
-| `print`            | Print           | Yes     | `fastrand`         |
-| `settings`         | Settings        | Yes     | None               |
-| `usb`              | USB             | Yes     | None               |
+> [!NOTE]
+> For a complete list of dependencies, advanced build configurations, and CI details, please see **[BUILD.md](./BUILD.md)**.
 
-When using Nix, you can control these features by overriding the package definition:
+### Nix / NixOS
+
+A Flake is provided for Nix users:
+
+```bash
+nix build .#xdg-desktop-portal-gtk4
+nix develop # For a configured development shell
+```
+
+**NixOS Configuration:**
 
 ```nix
-xdg-desktop-portal-gtk4.override {
-  rustPlatform.buildRustPackage = args: args // {
-    cargoBuildNoDefaultFeatures = true;
-    cargoBuildFeatures = [
-      "settings"
-      "file_chooser"
+{ inputs, pkgs, ... }: {
+  xdg.portal = {
+    enable = true;
+    extraPortals = [
+      inputs.xdg-desktop-portal-gtk4.packages.${pkgs.stdenv.hostPlatform.system}.xdg-desktop-portal-gtk4
     ];
+    config.common.default = [ "gtk4" ];
   };
 }
 ```
 
-## Building & Installation
+## Configuration
 
-Please see [BUILD.md](./BUILD.md) for detailed dependencies and build instructions.
-
-## Configuring your Compositor
-
-To make your compositor use the portal, you have to modify its configuration file in
-
-- `/usr/share/xdg-desktop-portal/`
-
-Add
+To make your compositor use this backend, configure `xdg-desktop-portal`. Create or edit `~/.config/xdg-desktop-portal/portals.conf`:
 
 ```ini
+[preferred]
+default=gtk4
+```
+
+To only use it for specific portals (like the FileChooser), while keeping another backend as default:
+
+```ini
+[preferred]
+default=hyprland
 org.freedesktop.impl.portal.FileChooser=gtk4
 ```
 
-at the end to explicitly request the GTK4 portal for the file picker.
-
-For example
-
-```diff
---- jay-portals.conf.old    2024-09-20 14:55:49.029327860 +0200
-+++ jay-portals.conf        2024-09-20 14:55:54.699731749 +0200
-@@ -1,5 +1,6 @@
- [preferred]
- default=gtk
- org.freedesktop.impl.portal.ScreenCast=jay
- org.freedesktop.impl.portal.RemoteDesktop=jay
- org.freedesktop.impl.portal.Idle=none
-+org.freedesktop.impl.portal.FileChooser=gtk4
-```
-
-Restart `xdg-desktop-portal` afterwards to apply the configuration:
-
+Apply the changes:
 ```bash
 systemctl --user restart xdg-desktop-portal
 ```
 
-### NixOS Flake Installation
+## Logging & Debugging
 
-If you use NixOS with flakes, you can install and enable this portal directly in your `flake.nix` and system configuration.
+The daemon logs directly to the systemd journal using `tracing-journald`.
 
-Add the input to your `flake.nix`:
-
-```nix
-{
-  inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-    xdg-desktop-portal-gtk4.url = "github:JohnRTitor/xdg-desktop-portal-gtk4";
-  };
-  # ...
-
-}
+Enable debug logging via environment variables:
+```bash
+# Start manually for debugging
+RUST_LOG=debug xdg-desktop-portal-gtk4
 ```
 
-Then configure your portals (e.g. in `configuration.nix`):
-
-```nix
-{ inputs, ... }: {
-  xdg.portal = {
-    enable = true;
-
-    extraPortals = [
-      inputs.xdg-desktop-portal-gtk4.packages.${pkgs.stdenv.hostPlatform.system}.xdg-desktop-portal-gtk4
-    ];
-
-    config.hyprland = {
-      default = [
-        "gtk4"
-        # other portals like "hyprland", "wlr"
-      ];
-
-      # Set the default portal for file choosers
-      "org.freedesktop.impl.portal.FileChooser" = [ "gtk4" ];
-    };
-};
-}
+View background service logs:
+```bash
+journalctl --user -u xdg-desktop-portal-gtk4 -f
 ```
 
-## Acknowledgements
+## Compilation Features
 
-This project was originally created by [mahkoh](https://github.com/mahkoh) as [mahkoh/xdg-desktop-portal-gtk4](https://github.com/mahkoh/xdg-desktop-portal-gtk4). I extend my sincere gratitude to them for laying the foundation of this work.
+Portals can be selectively disabled at compile-time to reduce binary size. By default, **all portals** are enabled.
 
-I would also like to thank the KDE and GNOME communities for their respective portal implementations[^1][^2], which served as valuable references and inspiration for this project.
+Disable default features in Cargo to build only what you need:
+```bash
+cargo build --release --no-default-features --features "file_chooser,settings"
+```
+*(See `Cargo.toml` for the full list of portal features).*
 
-## License
+## Development & Architecture
 
-xdg-desktop-portal-gtk4 is free software licensed under the GNU Lesser General Public
-License v2.1.
+- **GTK Main Thread:** Runs the GTK4 event loop. GTK4 objects are `!Send` and `!Sync`, so all UI operations happen here.
+- **Tokio Runtime Thread:** A dedicated background thread handling `zbus` D-Bus connections. This ensures blocked clients never freeze the UI.
+- **Internationalization (i18n):** Uses `rust-i18n`. Locales are stored in `locales/`.
 
-[^1]: https://github.com/KDE/xdg-desktop-portal-kde
+## Acknowledgements & License
 
-[^2]: https://gitlab.gnome.org/GNOME/xdg-desktop-portal-gnome
+Originally created by [mahkoh](https://github.com/mahkoh). Inspired by the KDE and GNOME portal implementations.
+
+Licensed under the **GNU Lesser General Public License v2.1**.

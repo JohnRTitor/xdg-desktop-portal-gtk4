@@ -11,6 +11,10 @@ use {
     },
 };
 
+/// D-Bus interface wrapper for the Print portal.
+///
+/// This struct holds a proxy to the GTK main loop. The GTK printing implementation
+/// handles maintaining the state between `PreparePrint` and `Print` via the token.
 pub struct Print {
     proxy: UiProxy,
 }
@@ -91,7 +95,7 @@ impl Print {
                 has_selected_pages: Some(true),
             }),
             Err(e) => {
-                tracing::error!("PreparePrint failed: {}", anyhow::Error::new(e));
+                tracing::error!(error = %e, "PreparePrint failed");
                 Response::cancelled()
             }
         }
@@ -119,7 +123,7 @@ impl Print {
         match res {
             Ok(_) => Response::success(PrintResults::default()),
             Err(e) => {
-                tracing::error!("Print dispatch failed: {}", anyhow::Error::new(e));
+                tracing::error!(error = %e, "Print dispatch failed");
                 Response::cancelled()
             }
         }

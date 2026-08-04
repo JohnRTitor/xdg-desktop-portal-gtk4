@@ -1,6 +1,5 @@
 use {
-    crate::gui::{UiError, UiProxy},
-    async_channel::{Receiver, Sender},
+    crate::gui::{PortalDispatcher, UiError, UiProxy},
     gtk4::{
         FileChooserAction, FileChooserDialog, FileFilter, RecentData, RecentManager, ResponseType,
         gio::File,
@@ -16,6 +15,7 @@ use {
         collections::{HashMap, HashSet},
         rc::Rc,
     },
+    tokio::sync::oneshot::Receiver,
 };
 
 #[derive(Eq, PartialEq, Clone)]
@@ -90,7 +90,7 @@ impl FileChooserUi {
 
     fn run_impl(
         self,
-        send: Sender<Result<FileChooserResult, UiError>>,
+        send: crate::gui::UiDispatcher<Result<FileChooserResult, UiError>>,
         context: MainContext,
         close_on_close: Receiver<()>,
     ) {
@@ -105,13 +105,14 @@ impl FileChooserUi {
 
         // Channel to coordinate: the response handler signals this when the user
         // closes the dialog, so the spawn_local task knows to start the delayed destroy.
-        let (done_tx, done_rx) = async_channel::bounded::<()>(1);
+        let (done_tx, mut done_rx) = tokio::sync::mpsc::channel::<()>(1);
 
         let cf = current_filter.clone();
         let handler_id = Rc::new(Cell::new(None));
         let handler_id_clone = handler_id.clone();
         let filter_handler_id = Rc::new(Cell::new(Some(filter_handler)));
         let filter_handler_clone = filter_handler_id.clone();
+        let send_clone = send.clone();
         let response_handler = dialog.connect_response(move |dialog, r| {
             let res = match r {
                 ResponseType::Ok => {
@@ -156,7 +157,7 @@ impl FileChooserUi {
                 }
                 _ => Err(UiError::Rejected),
             };
-            let _ = send.send_blocking(res);
+            let _ = send_clone.dispatch(res);
 
             // Disconnect signal handlers to break reference cycles
             if let Some(id) = handler_id_clone.take() {
@@ -167,18 +168,17 @@ impl FileChooserUi {
             }
 
             dialog.close();
-            let _ = done_tx.send_blocking(());
+            let _ = done_tx.try_send(());
         });
         handler_id.set(Some(response_handler));
 
         dialog.show();
         context.spawn_local(async move {
             // Wait for either the dialog response or the D-Bus request cancellation
-            futures_util::future::select(
-                std::pin::pin!(done_rx.recv()),
-                std::pin::pin!(close_on_close.recv()),
-            )
-            .await;
+            tokio::select! {
+                _ = done_rx.recv() => {}
+                _ = close_on_close => {}
+            }
             // Delay destruction to work around GTK4 FileChooserWidget bugs where
             // background GIO tasks (like directory loading) can complete after
             // the dialog is disposed, causing use-after-free SEGVs (thaw_updates).

@@ -1,11 +1,9 @@
 use {
-    async_channel::{Receiver, Sender},
     gtk4::{gdk, gio, glib, prelude::*},
-    std::{
-        cell::RefCell,
-        os::fd::OwnedFd,
-    },
+    std::{cell::RefCell, os::fd::OwnedFd},
 };
+
+const CHANNEL_BUFFER_SIZE: usize = 5;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ClipboardError {
@@ -17,7 +15,7 @@ pub enum ClipboardError {
 
 pub struct GtkClipboardBackend {
     clipboard: gdk::Clipboard,
-    formats_receiver: Receiver<Vec<String>>,
+    formats_sender: tokio::sync::broadcast::Sender<Vec<String>>,
 }
 
 thread_local! {
@@ -30,10 +28,11 @@ where
 {
     BACKEND.with(|b| {
         let mut b_ref = b.borrow_mut();
-        if b_ref.is_none() {
-            *b_ref = Some(GtkClipboardBackend::new()?);
-        }
-        Ok(f(b_ref.as_mut().expect("backend is guaranteed to be Some after initialization")))
+        let backend = match &mut *b_ref {
+            Some(b) => b,
+            None => b_ref.insert(GtkClipboardBackend::new()?),
+        };
+        Ok(f(backend))
     })
 }
 
@@ -42,29 +41,30 @@ impl GtkClipboardBackend {
         let display = gdk::Display::default().ok_or(ClipboardError::NotAvailable)?;
         let clipboard = display.clipboard();
 
-        let (formats_tx, formats_rx) = async_channel::bounded(5);
+        let (formats_tx, _) = tokio::sync::broadcast::channel(CHANNEL_BUFFER_SIZE);
+        let formats_tx_clone = formats_tx.clone();
 
         clipboard.connect_formats_notify(move |cb| {
             let formats = cb.formats();
-            let mut mimes = Vec::new();
-            for mime in formats.mime_types() {
-                mimes.push(mime.to_string());
-            }
-            let _ = formats_tx.try_send(mimes);
+            let mimes: Vec<String> = formats.mime_types().into_iter().map(String::from).collect();
+            let _ = formats_tx_clone.send(mimes);
         });
 
         Ok(Self {
             clipboard,
-            formats_receiver: formats_rx,
+            formats_sender: formats_tx,
         })
     }
 }
 
 pub fn claim_selection(
     mimes: Vec<String>,
-) -> Result<Receiver<(String, Sender<OwnedFd>)>, ClipboardError> {
+) -> Result<
+    tokio::sync::mpsc::Receiver<(String, tokio::sync::oneshot::Sender<OwnedFd>)>,
+    ClipboardError,
+> {
     get_backend(|backend| {
-        let (request_tx, request_rx) = async_channel::bounded(10);
+        let (request_tx, request_rx) = tokio::sync::mpsc::channel(10);
         let provider =
             crate::portals::clipboard::provider::PortalContentProvider::new(mimes, request_tx);
 
@@ -81,43 +81,46 @@ pub fn read_selection(mime: String, fd: OwnedFd) -> Result<(), ClipboardError> {
     get_backend(|backend| {
         let clipboard = backend.clipboard.clone();
         glib::MainContext::default().spawn_local(async move {
-            let stream_res = clipboard
+            match clipboard
                 .read_future(&[&mime], glib::Priority::default())
-                .await;
-            if let Ok((in_stream, _)) = stream_res {
-                let file = std::fs::File::from(fd);
-                let out_stream = gio::WriteOutputStream::new(file);
-                let res = out_stream
-                    .splice_future(
-                        &in_stream,
-                        gio::OutputStreamSpliceFlags::CLOSE_SOURCE
-                            | gio::OutputStreamSpliceFlags::CLOSE_TARGET,
-                        glib::Priority::default(),
-                    )
-                    .await;
-                if let Err(e) = res {
-                    tracing::error!("splice_future failed: {}", e);
-                } else {
-                    tracing::debug!("splice_future succeeded");
+                .await
+            {
+                Ok((in_stream, _)) => {
+                    let file = std::fs::File::from(fd);
+                    let out_stream = gio::WriteOutputStream::new(file);
+                    match out_stream
+                        .splice_future(
+                            &in_stream,
+                            gio::OutputStreamSpliceFlags::CLOSE_SOURCE
+                                | gio::OutputStreamSpliceFlags::CLOSE_TARGET,
+                            glib::Priority::default(),
+                        )
+                        .await
+                    {
+                        Ok(_) => tracing::debug!("splice_future succeeded"),
+                        Err(e) => tracing::error!("splice_future failed: {}", e),
+                    }
                 }
-            } else if let Err(e) = stream_res {
-                tracing::error!("clipboard.read_future failed: {}", e);
+                Err(e) => tracing::error!("clipboard.read_future failed: {}", e),
             }
         });
     })?;
     Ok(())
 }
 
-pub fn subscribe_changes() -> Result<Receiver<Vec<String>>, ClipboardError> {
-    get_backend(|backend| backend.formats_receiver.clone())
+pub fn subscribe_changes() -> Result<tokio::sync::broadcast::Receiver<Vec<String>>, ClipboardError>
+{
+    get_backend(|backend| backend.formats_sender.subscribe())
 }
 
 pub fn current_formats() -> Result<Vec<String>, ClipboardError> {
     get_backend(|backend| {
-        let mut mimes = Vec::new();
-        for mime in backend.clipboard.formats().mime_types() {
-            mimes.push(mime.to_string());
-        }
-        mimes
+        backend
+            .clipboard
+            .formats()
+            .mime_types()
+            .into_iter()
+            .map(String::from)
+            .collect()
     })
 }

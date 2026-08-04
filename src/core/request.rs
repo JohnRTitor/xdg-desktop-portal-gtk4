@@ -1,8 +1,7 @@
 use {
     crate::core::response::Response,
-    async_channel::Sender,
-    futures_util::{FutureExt, select},
-    std::future::Future,
+    std::{future::Future, sync::Arc},
+    tokio::sync::Notify,
     zbus::{
         ObjectServer, interface,
         zvariant::{OwnedObjectPath, Type},
@@ -23,12 +22,20 @@ where
     T: Default + Type,
     F: Future<Output = Response<T>>,
 {
-    let (send, recv) = async_channel::bounded(1);
-    let request_exported = server.at(&handle, Request { send }).await.is_ok();
+    let notify = Arc::new(Notify::new());
+    let request_exported = server
+        .at(
+            &handle,
+            Request {
+                notify: notify.clone(),
+            },
+        )
+        .await
+        .is_ok();
 
-    let response = select! {
-        v = f.fuse() => v,
-        _ = recv.recv().fuse() => Response::cancelled(),
+    let response = tokio::select! {
+        v = f => v,
+        _ = notify.notified() => Response::cancelled(),
     };
 
     if request_exported {
@@ -39,7 +46,7 @@ where
 }
 
 struct Request {
-    send: Sender<()>,
+    notify: Arc<Notify>,
 }
 
 /// The implementation of the `org.freedesktop.impl.portal.Request` D-Bus interface.
@@ -48,7 +55,7 @@ impl Request {
     /// Called by the portal frontend to cancel the ongoing request.
     async fn close(&self) {
         // Notify the `export_request` task that cancellation was requested.
-        let _ = self.send.send(()).await;
+        self.notify.notify_one();
     }
 }
 
@@ -58,12 +65,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_request_close() {
-        let (send, recv) = async_channel::bounded(1);
-        let req = Request { send };
+        let notify = Arc::new(Notify::new());
+        let req = Request {
+            notify: notify.clone(),
+        };
 
         req.close().await;
 
-        assert!(recv.try_recv().is_ok());
+        notify.notified().await; // Should complete immediately
     }
 
     #[tokio::test]

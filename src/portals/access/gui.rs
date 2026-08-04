@@ -1,12 +1,12 @@
 use {
-    crate::gui::{UiError, UiProxy},
-    async_channel::{Receiver, Sender},
+    crate::gui::{PortalDispatcher, UiError, UiProxy},
     gtk4::{
         Button, CheckButton, Image, Label,
         glib::{self, MainContext},
         prelude::{BoxExt, ButtonExt, CheckButtonExt, GtkWindowExt, WidgetExt},
     },
     rust_i18n::t,
+    tokio::sync::oneshot::Receiver,
 };
 
 pub struct Choice {
@@ -56,7 +56,7 @@ impl AccessUi {
 
     fn run_impl(
         self,
-        send: Sender<Result<AccessResult, UiError>>,
+        send: crate::gui::UiDispatcher<Result<AccessResult, UiError>>,
         context: MainContext,
         close_on_close: Receiver<()>,
     ) {
@@ -88,9 +88,9 @@ impl AccessUi {
         if !self.body.is_empty() {
             let body_label = Label::new(Some(&self.body));
             body_label.set_halign(gtk4::Align::Start);
-            body_label.set_margin_top(10);
+            body_label.set_margin_top(crate::gui::ELEMENT_MARGIN);
             body_label.set_wrap(true);
-            body_label.set_max_width_chars(50);
+            body_label.set_max_width_chars(crate::gui::LABEL_MAX_WIDTH_CHARS);
             dialog.content_area.append(&body_label);
         }
 
@@ -101,7 +101,7 @@ impl AccessUi {
             for choice in choices {
                 if choice.variants.is_empty() {
                     let button = CheckButton::with_label(&choice.label);
-                    button.set_margin_top(10);
+                    button.set_margin_top(crate::gui::ELEMENT_MARGIN);
                     if choice.default == "true" {
                         button.set_active(true);
                     }
@@ -110,7 +110,7 @@ impl AccessUi {
                 } else {
                     let label = Label::new(Some(&choice.label));
                     label.set_halign(gtk4::Align::Start);
-                    label.set_margin_top(10);
+                    label.set_margin_top(crate::gui::ELEMENT_MARGIN);
                     label.add_css_class("dim-label");
                     dialog.content_area.append(&label);
 
@@ -155,7 +155,7 @@ impl AccessUi {
         // Handle the user clicking the "X" button or pressing Escape.
         let send_close = send.clone();
         window.connect_close_request(move |_| {
-            let _ = send_close.send_blocking(Err(UiError::Rejected));
+            let _ = send_close.dispatch(Err(UiError::Rejected));
             // Let GTK handle the actual window destruction.
             gtk4::glib::Propagation::Proceed
         });
@@ -165,7 +165,7 @@ impl AccessUi {
             #[weak]
             window,
             move |_| {
-                let _ = send_deny.send_blocking(Err(UiError::Rejected));
+                let _ = send_deny.dispatch(Err(UiError::Rejected));
                 window.close();
             }
         ));
@@ -198,7 +198,7 @@ impl AccessUi {
                     }
                     final_choices = Some(fc);
                 }
-                let _ = send_grant.send_blocking(Ok(AccessResult { final_choices }));
+                let _ = send_grant.dispatch(Ok(AccessResult { final_choices }));
                 window.close();
             }
         ));
@@ -214,9 +214,13 @@ impl AccessUi {
 
         // Spawn a background task to close the window if the D-Bus request is cancelled.
         // This task runs on the GTK MainContext, so it can safely manipulate the `window`.
-        context.spawn_local(async move {
-            let _ = close_on_close.recv().await;
-            window.close();
-        });
+        context.spawn_local(gtk4::glib::clone!(
+            #[weak]
+            window,
+            async move {
+                let _ = close_on_close.await;
+                window.close();
+            }
+        ));
     }
 }

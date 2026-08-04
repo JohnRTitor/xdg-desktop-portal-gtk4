@@ -7,6 +7,10 @@ use {
     },
 };
 
+/// D-Bus interface wrapper for the Email portal.
+///
+/// This struct holds no state because it simply constructs a `mailto:` URI
+/// and uses GIO to launch the host system's default email client.
 pub struct Email;
 
 impl Default for Email {
@@ -60,7 +64,7 @@ impl Email {
         match AppInfo::launch_default_for_uri(&url, Some(&launch_context)) {
             Ok(_) => Response::success(EmailResults::default()),
             Err(e) => {
-                tracing::error!("ComposeEmail failed: {}", anyhow::Error::new(e));
+                tracing::error!(error = %e, "ComposeEmail failed");
                 Response::cancelled()
             }
         }
@@ -69,53 +73,60 @@ impl Email {
 
 fn build_mailto_url(options: &ComposeEmailOptions) -> String {
     let mut url = String::from("mailto:");
-    let mut all_addresses = Vec::new();
-    if let Some(address) = &options.address {
-        all_addresses.push(address.clone());
-    }
-    if let Some(addresses) = &options.addresses {
-        all_addresses.extend(addresses.iter().cloned());
-    }
+    let all_addresses: Vec<&str> = options
+        .address
+        .as_deref()
+        .into_iter()
+        .chain(options.addresses.iter().flatten().map(|s| s.as_str()))
+        .collect();
+
     if !all_addresses.is_empty() {
         url.push_str(&all_addresses.join(","));
     }
 
     url.push('?');
 
+    use std::fmt::Write;
+
     if let Some(cc) = &options.cc {
         for addr in cc {
-            url.push_str(&format!(
+            let _ = write!(
+                &mut url,
                 "cc={}&",
                 glib::uri_escape_string(addr, None::<&str>, true)
-            ));
+            );
         }
     }
     if let Some(bcc) = &options.bcc {
         for addr in bcc {
-            url.push_str(&format!(
+            let _ = write!(
+                &mut url,
                 "bcc={}&",
                 glib::uri_escape_string(addr, None::<&str>, true)
-            ));
+            );
         }
     }
     if let Some(subject) = &options.subject {
-        url.push_str(&format!(
+        let _ = write!(
+            &mut url,
             "subject={}&",
             glib::uri_escape_string(subject, None::<&str>, true)
-        ));
+        );
     }
     if let Some(body) = &options.body {
-        url.push_str(&format!(
+        let _ = write!(
+            &mut url,
             "body={}&",
             glib::uri_escape_string(body, None::<&str>, true)
-        ));
+        );
     }
     if let Some(attachments) = &options.attachments {
         for att in attachments {
-            url.push_str(&format!(
+            let _ = write!(
+                &mut url,
                 "attachment={}&",
                 glib::uri_escape_string(att, None::<&str>, true)
-            ));
+            );
         }
     }
 

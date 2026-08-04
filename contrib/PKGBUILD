@@ -6,7 +6,7 @@ arch=('x86_64')
 url="https://github.com/JohnRTitor/xdg-desktop-portal-gtk4"
 license=('LGPL-2.1')
 depends=('gtk4' 'xdg-desktop-portal')
-makedepends=('cargo' 'meson' 'git')
+makedepends=('cargo' 'make' 'git')
 source=("git+https://github.com/JohnRTitor/xdg-desktop-portal-gtk4.git")
 sha256sums=('SKIP')
 
@@ -14,12 +14,10 @@ build() {
   cd "$pkgname"
 
   cargo build --release
-  meson setup build -Dprefix=/usr
 }
 
 package() {
   cd "$pkgname"
 
-  install -Dm755 target/release/xdg-desktop-portal-gtk4 "$pkgdir/usr/bin/xdg-desktop-portal-gtk4"
-  DESTDIR="$pkgdir" meson install -C build
+  make install DESTDIR="$pkgdir" PREFIX=/usr
 }

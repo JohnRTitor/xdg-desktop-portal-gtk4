@@ -1,29 +1,54 @@
+//! D-Bus implementation of the Clipboard portal.
+//!
+//! This module coordinates clipboard access between sandboxed applications and the host GTK
+//! environment. It heavily relies on passing file descriptors (FDs) over D-Bus to stream
+//! clipboard content without buffering large amounts of data in the portal memory.
+//!
+//! # Threading Model
+//! The D-Bus interface methods are executed by zbus on Tokio threads. However, clipboard
+//! interaction strictly requires GTK main thread access. Thus, requests are often routed
+//! through `UiProxy` to the GTK thread.
+
 use {
-    crate::portals::clipboard::gtk_backend,
-    async_channel::Sender,
+    crate::{
+        gui::{PortalDispatcher, UiProxy},
+        portals::clipboard::gtk_backend,
+    },
     std::{
         collections::HashMap,
         os::fd::OwnedFd,
         sync::{
-            atomic::{AtomicU32, Ordering},
             Arc, Mutex,
+            atomic::{AtomicU32, Ordering},
         },
     },
     zbus::{
-        fdo, interface, object_server::SignalEmitter,
+        Connection, fdo, interface,
+        object_server::SignalEmitter,
         zvariant::{Fd, ObjectPath, Value},
-        Connection,
     },
-    crate::gui::UiProxy,
 };
 
 struct TransferRequest {
-    fd_sender: Sender<OwnedFd>,
+    fd_sender: tokio::sync::oneshot::Sender<OwnedFd>,
 }
 
+/// D-Bus interface wrapper for the Clipboard portal.
+///
+/// This struct holds the shared state for clipboard operations, notably managing
+/// the active sessions (which need to be notified of host clipboard changes) and
+/// pending file descriptor transfers.
 pub struct ClipboardPortal {
+    /// Tracks active sessions that have requested clipboard access.
+    /// We emit `SelectionOwnerChanged` signals to all these sessions when the host clipboard changes.
     active_sessions: Arc<Mutex<Vec<ObjectPath<'static>>>>,
+
+    /// Maps a unique serial number to an active transfer request.
+    /// When the host wants to read from a sandboxed app, we generate a serial, pass it to the app
+    /// via `SelectionTransfer`, and when the app calls `SelectionWrite` with that serial, we map
+    /// it back to the `fd_sender` to provide the writing end of a pipe.
     pending_transfers: Arc<Mutex<HashMap<u32, TransferRequest>>>,
+
     connection: Connection,
     proxy: UiProxy,
 }
@@ -36,38 +61,47 @@ impl ClipboardPortal {
         let conn_clone = connection.clone();
         let sessions_clone = active_sessions.clone();
 
-        gtk4::glib::MainContext::default().spawn_local(async move {
-            // Wait until GTK is fully initialized and a display is available.
-            // Since this runs concurrently with Portal::create, GTK might not be initialized yet.
-            while gtk4::gdk::Display::default().is_none() {
-                gtk4::glib::timeout_future(std::time::Duration::from_millis(50)).await;
-            }
+        let (tx, rx) = tokio::sync::oneshot::channel();
 
-            match gtk_backend::subscribe_changes() {
-                Ok(formats_rx) => {
-                    while let Ok(mimes) = formats_rx.recv().await {
-                        let emitter = match SignalEmitter::new(&conn_clone, "/org/freedesktop/portal/desktop") {
-                            Ok(e) => e,
-                            Err(err) => {
-                                tracing::error!("Failed to create SignalEmitter: {}", err);
-                                return;
-                            }
-                        };
-
-                        let mut options = HashMap::new();
-                        let mimes_val = Value::from(mimes.clone());
-                        options.insert("mime_types", &mimes_val);
-                        let is_owner = Value::from(false);
-                        options.insert("session_is_owner", &is_owner);
-
-                        let sessions: Vec<_> = sessions_clone.lock().unwrap_or_else(|e| e.into_inner()).clone();
-                        for session in sessions {
-                            let _ = Self::selection_owner_changed(&emitter, &session, options.clone()).await;
-                        }
+        // Run GTK-specific initialization on the main thread and pipe the event stream back to Tokio
+        let _ = proxy.sender.send(Box::new(move || {
+            gtk4::glib::MainContext::default().spawn_local(async move {
+                match gtk_backend::subscribe_changes() {
+                    Ok(formats_rx) => {
+                        let _ = tx.send(formats_rx);
+                    }
+                    Err(e) => {
+                        tracing::warn!("Clipboard portal backend unavailable: {}", e);
                     }
                 }
-                Err(e) => {
-                    tracing::warn!("Clipboard portal backend unavailable: {}", e);
+            });
+        }));
+
+        // Process GTK events and emit D-Bus signals entirely on the Tokio background thread
+        // to avoid bogging down the GTK main loop. The GTK thread sends us updates via `rx`.
+        tokio::spawn(async move {
+            if let Ok(mut formats_rx) = rx.await {
+                while let Ok(mimes) = formats_rx.recv().await {
+                    let emitter = match SignalEmitter::new(&conn_clone, crate::core::DBUS_PATH) {
+                        Ok(e) => e,
+                        Err(err) => {
+                            tracing::error!("Failed to create SignalEmitter: {}", err);
+                            return;
+                        }
+                    };
+
+                    let mut options = HashMap::new();
+                    let mimes_val = Value::from(mimes.clone());
+                    options.insert("mime_types", &mimes_val);
+                    let is_owner = Value::from(false);
+                    options.insert("session_is_owner", &is_owner);
+
+                    let sessions: Vec<_> =
+                        sessions_clone.lock().expect("Mutex was poisoned").clone();
+                    for session in sessions {
+                        let _ = Self::selection_owner_changed(&emitter, &session, options.clone())
+                            .await;
+                    }
                 }
             }
         });
@@ -89,33 +123,47 @@ impl ClipboardPortal {
         _options: HashMap<&str, Value<'_>>,
     ) -> fdo::Result<()> {
         tracing::debug!("RequestClipboard called for session: {:?}", session_handle);
-        let mut sessions = self.active_sessions.lock().unwrap_or_else(|e| e.into_inner());
         let session_handle_owned = session_handle.into_owned();
-        if !sessions.contains(&session_handle_owned) {
-            sessions.push(session_handle_owned.clone());
+        {
+            let mut sessions = self.active_sessions.lock().expect("Mutex was poisoned");
+            if !sessions.contains(&session_handle_owned) {
+                sessions.push(session_handle_owned.clone());
+            }
         }
 
         let conn_clone = self.connection.clone();
-        self.proxy.context.invoke(move || {
-            let mimes = gtk_backend::current_formats().unwrap_or_default();
-            gtk4::glib::MainContext::default().spawn_local(async move {
-                if let Ok(emitter) = SignalEmitter::new(&conn_clone, "/org/freedesktop/portal/desktop") {
-                    let mut options = HashMap::new();
-                    let mimes_val = Value::from(mimes);
-                    options.insert("mime_types", &mimes_val);
-                    let is_owner = Value::from(false);
-                    options.insert("session_is_owner", &is_owner);
-                    tracing::debug!("Emitting SelectionOwnerChanged for {:?} with mimes: {:?}", session_handle_owned, mimes_val);
-                    if let Err(e) = Self::selection_owner_changed(&emitter, &session_handle_owned, options).await {
-                        tracing::error!("Failed to emit SelectionOwnerChanged: {}", e);
-                    } else {
-                        tracing::debug!("Successfully emitted SelectionOwnerChanged");
-                    }
-                } else {
-                    tracing::error!("Failed to create SignalEmitter");
-                }
-            });
-        });
+        let mimes = crate::gui::run_ui_task(
+            &self.proxy,
+            |tx, _, _| {
+                let mimes = gtk_backend::current_formats().unwrap_or_default();
+                let _ = tx.dispatch(Ok::<_, fdo::Error>(mimes));
+            },
+            || fdo::Error::Failed("UI task cancelled".into()),
+        )
+        .await
+        .unwrap_or_default();
+
+        if let Ok(emitter) = SignalEmitter::new(&conn_clone, crate::core::DBUS_PATH) {
+            let mut options = HashMap::new();
+            let mimes_val = Value::from(mimes);
+            options.insert("mime_types", &mimes_val);
+            let is_owner = Value::from(false);
+            options.insert("session_is_owner", &is_owner);
+            tracing::debug!(
+                "Emitting SelectionOwnerChanged for {:?} with mimes: {:?}",
+                session_handle_owned,
+                mimes_val
+            );
+            if let Err(e) =
+                Self::selection_owner_changed(&emitter, &session_handle_owned, options).await
+            {
+                tracing::error!("Failed to emit SelectionOwnerChanged: {}", e);
+            } else {
+                tracing::debug!("Successfully emitted SelectionOwnerChanged");
+            }
+        } else {
+            tracing::error!("Failed to create SignalEmitter");
+        }
         Ok(())
     }
 
@@ -134,13 +182,14 @@ impl ClipboardPortal {
             }
         }
 
-        let (tx, rx) = async_channel::bounded(1);
-        self.proxy.context.invoke(move || {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let _ = self.proxy.sender.send(Box::new(move || {
             let res = gtk_backend::claim_selection(mimes);
-            let _ = tx.try_send(res);
-        });
+            let _ = tx.send(res);
+        }));
 
-        let request_rx = rx.recv().await
+        let mut request_rx = rx
+            .await
             .map_err(|_| fdo::Error::Failed("UI thread dropped channel".into()))?
             .map_err(|e| fdo::Error::Failed(format!("Failed to claim selection: {}", e)))?;
 
@@ -148,32 +197,34 @@ impl ClipboardPortal {
         let conn_clone = self.connection.clone();
         let session_handle_owned = session_handle.into_owned();
 
-        self.proxy.context.invoke(move || {
-            gtk4::glib::MainContext::default().spawn_local(async move {
-                // This task dies when `request_rx` is dropped, which happens when the host copies
-                // something else and our ContentProvider is destroyed.
-                while let Ok((mime, fd_sender)) = request_rx.recv().await {
-                    let emitter = match SignalEmitter::new(&conn_clone, "/org/freedesktop/portal/desktop") {
-                        Ok(e) => e,
-                        Err(_) => return,
-                    };
-                    
-                    static SERIAL: AtomicU32 = AtomicU32::new(1);
-                    let serial = SERIAL.fetch_add(1, Ordering::SeqCst);
+        tokio::spawn(async move {
+            // This task handles the host requesting data *from* the sandbox.
+            // It dies when `request_rx` is dropped, which happens when the host copies
+            // something else and our ContentProvider is destroyed.
+            while let Some((mime, fd_sender)) = request_rx.recv().await {
+                let emitter = match SignalEmitter::new(&conn_clone, crate::core::DBUS_PATH) {
+                    Ok(e) => e,
+                    Err(_) => return,
+                };
 
-                    pending_transfers.lock().unwrap_or_else(|e| e.into_inner()).insert(
-                        serial,
-                        TransferRequest {
-                            fd_sender,
-                        },
-                    );
+                static SERIAL: AtomicU32 = AtomicU32::new(1);
+                let serial = SERIAL.fetch_add(1, Ordering::SeqCst);
 
-                    if let Err(e) = Self::selection_transfer(&emitter, &session_handle_owned, &mime, serial).await {
-                        tracing::error!("Failed to emit SelectionTransfer: {}", e);
-                        pending_transfers.lock().unwrap_or_else(|e| e.into_inner()).remove(&serial);
-                    }
+                pending_transfers
+                    .lock()
+                    .expect("Mutex was poisoned")
+                    .insert(serial, TransferRequest { fd_sender });
+
+                if let Err(e) =
+                    Self::selection_transfer(&emitter, &session_handle_owned, &mime, serial).await
+                {
+                    tracing::error!("Failed to emit SelectionTransfer: {}", e);
+                    pending_transfers
+                        .lock()
+                        .expect("Mutex was poisoned")
+                        .remove(&serial);
                 }
-            });
+            }
         });
 
         Ok(())
@@ -184,24 +235,28 @@ impl ClipboardPortal {
         session_handle: ObjectPath<'_>,
         serial: u32,
     ) -> fdo::Result<Fd<'_>> {
-        tracing::debug!("SelectionWrite called for session: {:?} serial: {}", session_handle, serial);
+        tracing::debug!(
+            "SelectionWrite called for session: {:?} serial: {}",
+            session_handle,
+            serial
+        );
         let transfer = self
             .pending_transfers
             .lock()
-            .unwrap_or_else(|e| e.into_inner())
+            .expect("Mutex was poisoned")
             .remove(&serial)
             .ok_or_else(|| fdo::Error::InvalidArgs(format!("Invalid serial {}", serial)))?;
 
-        let (read_fd, write_fd) = rustix::pipe::pipe().map_err(|e| {
-            fdo::Error::Failed(format!("Failed to create pipe: {}", e))
-        })?;
+        let (read_fd, write_fd) = rustix::pipe::pipe()
+            .map_err(|e| fdo::Error::Failed(format!("Failed to create pipe: {}", e)))?;
 
         // Send the read end to the backend provider
-        if transfer.fd_sender.try_send(read_fd).is_err() {
+        if transfer.fd_sender.send(read_fd).is_err() {
             return Err(fdo::Error::Failed("Backend is no longer listening".into()));
         }
 
-        // Return the write end to the DBus caller
+        // Return the write end to the DBus caller so they can stream data directly
+        // to the GTK backend via the pipe.
         Ok(Fd::from(write_fd))
     }
 
@@ -211,8 +266,16 @@ impl ClipboardPortal {
         serial: u32,
         success: bool,
     ) -> fdo::Result<()> {
-        tracing::debug!("SelectionWriteDone called for session: {:?} serial: {} success: {}", session_handle, serial, success);
-        self.pending_transfers.lock().unwrap_or_else(|e| e.into_inner()).remove(&serial);
+        tracing::debug!(
+            "SelectionWriteDone called for session: {:?} serial: {} success: {}",
+            session_handle,
+            serial,
+            success
+        );
+        self.pending_transfers
+            .lock()
+            .expect("Mutex was poisoned")
+            .remove(&serial);
         Ok(())
     }
 
@@ -221,17 +284,20 @@ impl ClipboardPortal {
         session_handle: ObjectPath<'_>,
         mime_type: String,
     ) -> fdo::Result<Fd<'_>> {
-        tracing::debug!("SelectionRead called for session: {:?} mime_type: {}", session_handle, mime_type);
-        
-        let (read_fd, write_fd) = rustix::pipe::pipe().map_err(|e| {
-            fdo::Error::Failed(format!("Failed to create pipe: {}", e))
-        })?;
+        tracing::debug!(
+            "SelectionRead called for session: {:?} mime_type: {}",
+            session_handle,
+            mime_type
+        );
 
-        self.proxy.context.invoke(move || {
+        let (read_fd, write_fd) = rustix::pipe::pipe()
+            .map_err(|e| fdo::Error::Failed(format!("Failed to create pipe: {}", e)))?;
+
+        let _ = self.proxy.sender.send(Box::new(move || {
             if let Err(e) = gtk_backend::read_selection(mime_type, write_fd) {
                 tracing::error!("Failed to read selection: {}", e);
             }
-        });
+        }));
 
         Ok(Fd::from(read_fd))
     }

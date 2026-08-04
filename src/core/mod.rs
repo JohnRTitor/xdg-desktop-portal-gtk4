@@ -1,3 +1,23 @@
+//! Core abstractions for the XDG Desktop Portal.
+//!
+//! This module provides the central infrastructure for D-Bus communication, session
+//! management, and the Request/Response lifecycle.
+//!
+//! # Architecture
+//!
+//! The D-Bus objects (Portals, Requests, Sessions) all live within a Tokio async runtime.
+//! When a portal receives a D-Bus method call, it typically:
+//! 1. Starts a Tokio task to handle the request.
+//! 2. Uses `crate::gui::run_ui_task` to dispatch any necessary GTK operations to the main thread.
+//! 3. Creates a `Request` object on the D-Bus to allow the caller to track or cancel the operation.
+//! 4. Yields a `Response` back over D-Bus when the GTK task completes.
+//!
+//! # Invariants
+//!
+//! - All `zbus` interfaces implemented in this crate must execute their methods
+//!   without blocking the Tokio worker threads.
+//! - The `Portal` struct is the anchor. Its destruction unregisters the D-Bus name.
+//!
 use {
     crate::gui::UiProxy,
     thiserror::Error,
@@ -10,6 +30,8 @@ use crate::portals::access::dbus::Access;
 use crate::portals::account::dbus::Account;
 #[cfg(feature = "app_chooser")]
 use crate::portals::app_chooser::dbus::AppChooser;
+#[cfg(feature = "clipboard")]
+use crate::portals::clipboard::dbus::ClipboardPortal;
 #[cfg(feature = "dynamic_launcher")]
 use crate::portals::dynamic_launcher::dbus::DynamicLauncher;
 #[cfg(feature = "email")]
@@ -28,8 +50,6 @@ use crate::portals::print::dbus::Print;
 use crate::portals::settings::dbus::SettingsPortal;
 #[cfg(feature = "usb")]
 use crate::portals::usb::dbus::UsbPortal;
-#[cfg(feature = "clipboard")]
-use crate::portals::clipboard::dbus::ClipboardPortal;
 
 pub mod request;
 pub mod response;
@@ -37,7 +57,7 @@ pub mod session;
 pub mod session_manager;
 
 const NAME: &str = "org.freedesktop.impl.portal.desktop.gtk4";
-const PATH: &str = "/org/freedesktop/portal/desktop";
+pub(crate) const DBUS_PATH: &str = "/org/freedesktop/portal/desktop";
 
 #[derive(Debug, Error)]
 pub enum PortalError {
@@ -53,6 +73,11 @@ pub enum PortalError {
     SubscribeNameLost(#[source] zbus::Error),
 }
 
+/// The core portal state, holding the main D-Bus connection.
+///
+/// This struct acts as the central anchor for the D-Bus lifecycle. When this is dropped,
+/// the underlying zbus `Connection` and `ObjectServer` are torn down, which unregisters
+/// our D-Bus name.
 pub struct Portal {
     _session: Connection,
 }
@@ -61,6 +86,8 @@ impl Portal {
     /// Creates the D-Bus interfaces and attempts to acquire the portal name.
     ///
     /// This method registers all specific portal implementations on the session bus.
+    /// It must be called from within a Tokio async context, and typically runs on a
+    /// dedicated background thread to prevent blocking the GTK main loop.
     pub async fn create(proxy: &UiProxy, replace: bool) -> Result<Self, PortalError> {
         let session = Connection::session()
             .await
@@ -69,9 +96,8 @@ impl Portal {
         let session_manager =
             crate::core::session_manager::SessionManager::new(session.clone(), 10);
         let session_manager_clone = session_manager.clone();
-        let context = proxy.context.clone();
 
-        context.spawn_local(async move {
+        tokio::spawn(async move {
             if let Err(e) = session_manager_clone.run().await {
                 tracing::error!("SessionManager failed: {}", e);
             }
@@ -83,7 +109,7 @@ impl Portal {
             ($interface:expr) => {
                 session
                     .object_server()
-                    .at(PATH, $interface)
+                    .at(DBUS_PATH, $interface)
                     .await
                     .map_err(PortalError::AddInterface)?;
             };
@@ -122,10 +148,10 @@ impl Portal {
             .await
             .map_err(PortalError::SubscribeNameLost)?;
 
-        // Spawn a background task on the GTK MainContext to listen for name lost events.
+        // Spawn a background task on Tokio to listen for name lost events.
         // If another process acquires our D-Bus name (e.g., another instance started with --replace),
         // we must exit cleanly. The portal specification expects the portal to go away if it loses its name.
-        context.spawn_local(async move {
+        tokio::spawn(async move {
             use futures_util::stream::StreamExt;
             if name_lost_iterator.next().await.is_some() {
                 tracing::warn!("Lost name {}", NAME);

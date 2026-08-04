@@ -44,20 +44,26 @@ trait Login1Manager {
 }
 
 struct InhibitRequest {
-    send: async_channel::Sender<()>,
+    notify: std::sync::Arc<tokio::sync::Notify>,
 }
 
 #[interface(name = "org.freedesktop.impl.portal.Request")]
 impl InhibitRequest {
     async fn close(&self) {
-        let _ = self.send.send(()).await;
+        self.notify.notify_one();
     }
 }
 
+/// D-Bus interface wrapper for the Inhibit portal.
+///
+/// This struct holds the connection to the system bus (for logind) and the session bus
+/// (for ScreenSaver) to place inhibition locks on behalf of sandboxed apps.
 pub struct Inhibit {
+    /// Tracks active monitors (session handles) requesting state change notifications.
     active_monitors: std::sync::Arc<Mutex<HashMap<OwnedObjectPath, OwnedObjectPath>>>,
     init_once: std::sync::Once,
     session_manager: crate::core::session_manager::SessionManager,
+    /// System D-Bus connection used specifically to talk to `org.freedesktop.login1`.
     system_conn: Option<Connection>,
 }
 
@@ -94,8 +100,10 @@ impl Inhibit {
         options: InhibitOptions,
         #[zbus(object_server)] server: &ObjectServer,
     ) -> zbus::fdo::Result<()> {
-        let (send, recv) = async_channel::bounded(1);
-        let request = InhibitRequest { send: send.clone() };
+        let notify = std::sync::Arc::new(tokio::sync::Notify::new());
+        let request = InhibitRequest {
+            notify: notify.clone(),
+        };
 
         if let Err(e) = server.at(handle.clone(), request).await {
             tracing::error!("Failed to export Inhibit Request {}: {}", handle, e);
@@ -107,9 +115,11 @@ impl Inhibit {
             .map(|s| s.as_str().to_string())
             .ok_or_else(|| zbus::fdo::Error::Failed("Missing sender".into()))?;
 
+        let cancel_notify = std::sync::Arc::new(tokio::sync::Notify::new()); // We don't use this one in Inhibit itself but we must pass it
+
         if let Err(e) =
             self.session_manager
-                .register(&app_id, &sender, handle.as_str(), send.clone())
+                .register(&app_id, &sender, handle.as_str(), cancel_notify)
         {
             let _ = server.remove::<InhibitRequest, _>(handle.clone()).await;
             return Err(zbus::fdo::Error::Failed(format!(
@@ -125,7 +135,7 @@ impl Inhibit {
         let system_conn_clone = self.system_conn.clone();
         let session_conn_clone = self.session_manager.connection().clone();
 
-        gtk4::glib::MainContext::default().spawn(async move {
+        tokio::spawn(async move {
             {
                 let session_bus = session_conn_clone;
                 let mut screen_saver_cookie = None;
@@ -192,7 +202,7 @@ impl Inhibit {
                 }
 
                 // Wait for the Request to be closed
-                let _ = recv.recv().await;
+                notify.notified().await;
 
                 tracing::debug!("Inhibit Request {} closed, releasing locks", handle);
 
@@ -226,23 +236,25 @@ impl Inhibit {
         _window: String,
         #[zbus(object_server)] server: &ObjectServer,
     ) -> zbus::fdo::Result<u32> {
-        let (tx, rx) = async_channel::bounded(1);
-        let (cancel_tx, cancel_rx) = async_channel::bounded(1);
+        let notify = std::sync::Arc::new(tokio::sync::Notify::new());
+        let cancel_notify = std::sync::Arc::new(tokio::sync::Notify::new());
 
         let sender = match header.sender() {
             Some(s) => s.as_str().to_string(),
             None => return Ok(2),
         };
 
-        if let Err(e) =
-            self.session_manager
-                .register(&app_id, &sender, session_handle.as_str(), cancel_tx)
-        {
+        if let Err(e) = self.session_manager.register(
+            &app_id,
+            &sender,
+            session_handle.as_str(),
+            cancel_notify.clone(),
+        ) {
             tracing::warn!("Session limit exceeded for monitor: {}", e);
             return Ok(2);
         }
 
-        let session = Session::new(session_handle.as_str().to_string(), Some(tx));
+        let session = Session::new(session_handle.as_str().to_string(), Some(notify.clone()));
         if let Err(e) = server.at(session_handle.clone(), session).await {
             tracing::error!("Failed to export monitor session: {}", e);
             self.session_manager
@@ -250,9 +262,10 @@ impl Inhibit {
             return Ok(2); // Returning 2 as general error for create_monitor according to xdp-gtk
         }
 
-        if let Ok(mut lock) = self.active_monitors.lock() {
-            lock.insert(handle.clone(), session_handle.clone());
-        }
+        self.active_monitors
+            .lock()
+            .expect("Mutex was poisoned")
+            .insert(handle.clone(), session_handle.clone());
 
         let handle_clone = handle.clone();
         let session_handle_clone = session_handle.clone();
@@ -262,16 +275,16 @@ impl Inhibit {
         let sender_clone = sender.clone();
         let server_clone = server.clone();
 
-        gtk4::glib::MainContext::default().spawn(async move {
-            futures_util::future::select(
-                std::pin::pin!(rx.recv()),
-                std::pin::pin!(cancel_rx.recv()),
-            )
-            .await;
-
-            if let Ok(mut lock) = monitors_clone.lock() {
-                lock.remove(&handle_clone);
+        tokio::spawn(async move {
+            tokio::select! {
+                _ = notify.notified() => {}
+                _ = cancel_notify.notified() => {}
             }
+
+            monitors_clone
+                .lock()
+                .expect("Mutex was poisoned")
+                .remove(&handle_clone);
             session_manager_clone.unregister(
                 &app_id_clone,
                 &sender_clone,
@@ -289,7 +302,7 @@ impl Inhibit {
         let session_manager_clone2 = self.session_manager.clone();
 
         self.init_once.call_once(move || {
-            gtk4::glib::MainContext::default().spawn(async move {
+            tokio::spawn(async move {
                 {
                     let session_bus = session_manager_clone2.connection().clone();
                     if let Ok(proxy) = ScreenSaverProxy::new(&session_bus).await
@@ -299,24 +312,24 @@ impl Inhibit {
                             if let Ok(args) = signal.args() {
                                 let active = args.active;
                                 if let Ok(iface_ref) = server_clone
-                                    .interface::<_, Inhibit>("/org/freedesktop/portal/desktop")
+                                    .interface::<_, Inhibit>(crate::core::DBUS_PATH)
                                     .await
                                 {
                                     let mut state: HashMap<&str, Value<'_>> = HashMap::new();
                                     state.insert("screensaver-active", Value::Bool(active));
 
-                                    let sessions: Vec<OwnedObjectPath> =
-                                        if let Ok(lock) = monitors_clone.lock() {
-                                            lock.values().cloned().collect()
-                                        } else {
-                                            Vec::new()
-                                        };
+                                    let sessions: Vec<OwnedObjectPath> = monitors_clone
+                                        .lock()
+                                        .expect("Mutex was poisoned")
+                                        .values()
+                                        .cloned()
+                                        .collect();
 
                                     for session_h in sessions {
                                         let _ = Self::state_changed(
                                             iface_ref.signal_emitter(),
-                                            session_h,
-                                            state.clone(),
+                                            &session_h,
+                                            &state,
                                         )
                                         .await;
                                     }
@@ -338,8 +351,8 @@ impl Inhibit {
     #[zbus(signal)]
     async fn state_changed(
         ctx: &SignalEmitter<'_>,
-        session_handle: OwnedObjectPath,
-        state: HashMap<&str, Value<'_>>,
+        session_handle: &zbus::zvariant::ObjectPath<'_>,
+        state: &HashMap<&str, Value<'_>>,
     ) -> zbus::Result<()>;
 }
 

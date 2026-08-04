@@ -4,6 +4,8 @@ pub mod access;
 pub mod account;
 #[cfg(feature = "app_chooser")]
 pub mod app_chooser;
+#[cfg(feature = "clipboard")]
+pub mod clipboard;
 #[cfg(feature = "dynamic_launcher")]
 pub mod dynamic_launcher;
 #[cfg(feature = "email")]
@@ -22,5 +24,3 @@ pub mod print;
 pub mod settings;
 #[cfg(feature = "usb")]
 pub mod usb;
-#[cfg(feature = "clipboard")]
-pub mod clipboard;

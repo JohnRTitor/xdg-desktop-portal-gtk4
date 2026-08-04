@@ -1,5 +1,35 @@
-use xdg_desktop_portal_gtk4::{core::Portal, gui::Ui, logging};
+use xdg_desktop_portal_gtk4::{
+    core::Portal,
+    gui::{Ui, UiProxy},
+    logging,
+};
 
+#[tokio::main]
+async fn portal_worker(
+    proxy: UiProxy,
+    replace: bool,
+    tx: std::sync::mpsc::Sender<Result<(), xdg_desktop_portal_gtk4::core::PortalError>>,
+    shutdown_rx: tokio::sync::oneshot::Receiver<()>,
+) {
+    let portal = match Portal::create(&proxy, replace).await {
+        Ok(p) => p,
+        Err(e) => {
+            let _ = tx.send(Err(e));
+            return;
+        }
+    };
+
+    let _ = tx.send(Ok(()));
+
+    // Keep the Tokio runtime alive until the GTK main loop exits.
+    // We listen for a shutdown signal sent at the very end of `main()`.
+    let _ = shutdown_rx.await;
+
+    // Explicitly drop the portal here.
+    // This ensures the zbus `ObjectServer` and `Connection` are dropped on the Tokio
+    // thread, unregistering our D-Bus name gracefully before the process exits.
+    drop(portal);
+}
 fn main() {
     logging::init();
     init_i18n();
@@ -10,48 +40,49 @@ fn main() {
     // This allows us to pass a thread-safe Proxy to the D-Bus services.
     let ui = Ui::new();
 
-    // Acquire the MainContext so that no other thread can own it during startup.
+    // Initialize the D-Bus portal objects on a dedicated Tokio background thread.
     //
-    // When the MainContext has no owner, `context.invoke()` on a background
-    // thread (e.g. the zbus executor) will acquire it, then execute the closure
-    // **synchronously on that background thread**. If a D-Bus request arrives
-    // between `Portal::create()` (which registers the bus name) and `init_gtk()`
-    // (which initializes GTK), the zbus executor would try to create GTK widgets
-    // on its own thread before GTK is ready — causing a panic.
+    // GTK 4 objects are strictly `!Send` and `!Sync`. To prevent blocking the GTK main loop
+    // (which handles rendering and window events), all asynchronous D-Bus method handling
+    // happens on this Tokio thread.
     //
-    // By holding this guard, `invoke()` always queues closures as idle sources
-    // instead. They will only run once `main_loop.run()` starts processing the
-    // loop, which is after `init_gtk()`.
-    let guard = ui.hold_context();
+    // We block the main thread waiting for a success signal to ensure that name
+    // acquisition and object registration on D-Bus succeed *before* we start the
+    // GTK main loop. This prevents a race condition where the portal could claim
+    // readiness to the desktop environment before it is actually listening.
+    let (tx, rx) = std::sync::mpsc::channel();
+    let proxy = ui.proxy().clone();
 
-    // Initialize the D-Bus portal objects. We block on the GTK MainContext here
-    // to ensure that name acquisition and object registration on D-Bus succeed
-    // *before* we start the GTK main loop. If we fail to acquire the name (e.g.
-    // another portal is running and `replace` is false), we exit immediately.
-    //
-    // `block_on` recursively acquires the MainContext on the same thread,
-    // so it coexists safely with the guard we already hold.
-    let _portal = match ui
-        .proxy()
-        .context
-        .block_on(async { Portal::create(ui.proxy(), replace).await })
-    {
-        Ok(p) => p,
-        Err(e) => {
-            tracing::error!("Could not create the portal: {}", anyhow::Error::new(e));
+    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+
+    std::thread::spawn(move || {
+        portal_worker(proxy, replace, tx, shutdown_rx);
+    });
+
+    match rx.recv() {
+        Ok(Err(e)) => {
+            tracing::error!("Could not create the portal: {}", e);
             std::process::exit(1);
         }
-    };
+        Err(e) => {
+            tracing::error!(
+                "Portal background thread exited unexpectedly before initialization completed: {}",
+                e
+            );
+            std::process::exit(1);
+        }
+        Ok(Ok(())) => {} // initialized successfully
+    }
 
     // Now that D-Bus is set up, initialize GTK. Any closures queued by early
-    // D-Bus requests will see GTK as initialized when they finally execute.
+    // D-Bus requests (via `run_ui_task`) will see GTK as initialized when they finally execute.
     ui.init_gtk();
 
-    // Drop the guard before entering the main loop, because `MainLoop::run()`
-    // acquires the context itself. The queued closures will start executing
-    // once the loop begins iterating.
-    drop(guard);
+    // Start the GTK main loop. This will consume the current thread.
+    // The queued closures from `Ui::new()` will start executing once the loop begins iterating.
     ui.run();
+
+    let _ = shutdown_tx.send(());
 }
 
 fn init_i18n() {
@@ -59,8 +90,8 @@ fn init_i18n() {
         Ok(c) => c,
         Err(e) => {
             tracing::error!(
-                "Could not retrieve current locale: {}",
-                anyhow::Error::new(e)
+                error = %e,
+                "Could not retrieve current locale"
             );
             return;
         }
@@ -68,7 +99,7 @@ fn init_i18n() {
     let tags = match language_tags::LanguageTag::parse(&current) {
         Ok(t) => t,
         Err(e) => {
-            tracing::error!("Could not parse current localE: {}", anyhow::Error::new(e));
+            tracing::error!(error = %e, "Could not parse current locale");
             return;
         }
     };

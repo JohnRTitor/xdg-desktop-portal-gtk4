@@ -1,6 +1,5 @@
 use {
-    crate::gui::{UiError, UiProxy},
-    async_channel::{Receiver, Sender},
+    crate::gui::{PortalDispatcher, UiError, UiProxy},
     gtk4::{
         Box as GtkBox, Button, Image, Label, ListBox, ListBoxRow, Orientation, ScrolledWindow,
         gio::AppInfo,
@@ -8,6 +7,7 @@ use {
         prelude::*,
     },
     rust_i18n::t,
+    tokio::sync::{mpsc::Receiver as MpscReceiver, oneshot::Receiver as OneshotReceiver},
 };
 
 pub struct AppChooserUi {
@@ -29,7 +29,7 @@ impl AppChooserUi {
     pub async fn run(
         self,
         proxy: &UiProxy,
-        update_receiver: Receiver<Vec<String>>,
+        update_receiver: MpscReceiver<Vec<String>>,
     ) -> Result<AppChooserResult, UiError> {
         crate::gui::run_ui_task(
             proxy,
@@ -43,10 +43,10 @@ impl AppChooserUi {
 
     fn run_impl(
         self,
-        send: Sender<Result<AppChooserResult, UiError>>,
+        send: crate::gui::UiDispatcher<Result<AppChooserResult, UiError>>,
         context: MainContext,
-        close_on_close: Receiver<()>,
-        update_receiver: Receiver<Vec<String>>,
+        close_on_close: OneshotReceiver<()>,
+        mut update_receiver: MpscReceiver<Vec<String>>,
     ) {
         let dialog = crate::gui::dialog::CustomDialog::new(&self.title, true);
 
@@ -90,7 +90,7 @@ impl AppChooserUi {
         // It runs on the main thread, so it can safely call `populate_list_box` to update GTK widgets.
         let list_box_clone2 = list_box.clone();
         context.spawn_local(async move {
-            while let Ok(new_choices) = update_receiver.recv().await {
+            while let Some(new_choices) = update_receiver.recv().await {
                 populate_list_box(&list_box_clone2, &new_choices, &all_apps, &recommended_apps);
             }
         });
@@ -109,7 +109,7 @@ impl AppChooserUi {
 
         let send_close = send.clone();
         window.connect_close_request(move |_| {
-            let _ = send_close.send_blocking(Err(UiError::Rejected));
+            let _ = send_close.dispatch(Err(UiError::Rejected));
             gtk4::glib::Propagation::Proceed
         });
 
@@ -118,7 +118,7 @@ impl AppChooserUi {
             #[weak]
             window,
             move |_| {
-                let _ = send_cancel.send_blocking(Err(UiError::Rejected));
+                let _ = send_cancel.dispatch(Err(UiError::Rejected));
                 window.close();
             }
         ));
@@ -142,7 +142,7 @@ impl AppChooserUi {
                 } else {
                     Err(UiError::Rejected)
                 };
-                let _ = send_ok.send_blocking(res);
+                let _ = send_ok.dispatch(res);
                 window.close();
             }
         ));
@@ -155,7 +155,7 @@ impl AppChooserUi {
 
         window.show();
         context.spawn_local(async move {
-            let _ = close_on_close.recv().await;
+            let _ = close_on_close.await;
             window.close();
         });
     }
@@ -195,11 +195,11 @@ fn populate_list_box(
 
     for app in apps_to_show {
         let row = ListBoxRow::new();
-        let hbox = GtkBox::new(Orientation::Horizontal, 12);
-        hbox.set_margin_top(6);
-        hbox.set_margin_bottom(6);
-        hbox.set_margin_start(6);
-        hbox.set_margin_end(6);
+        let hbox = GtkBox::new(Orientation::Horizontal, crate::gui::DEFAULT_SPACING);
+        hbox.set_margin_top(crate::gui::SMALL_MARGIN);
+        hbox.set_margin_bottom(crate::gui::SMALL_MARGIN);
+        hbox.set_margin_start(crate::gui::SMALL_MARGIN);
+        hbox.set_margin_end(crate::gui::SMALL_MARGIN);
 
         if let Some(icon) = app.icon() {
             let image = Image::from_gicon(&icon);
