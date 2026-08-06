@@ -122,12 +122,69 @@ _(See `Cargo.toml` for the full list of portal features)._
 
 ## Development & Architecture
 
-- **GTK Main Thread:** Runs the GTK4 event loop. GTK4 objects are `!Send` and `!Sync`, so all UI operations happen here.
-- **Tokio Runtime Thread:** A dedicated background thread running a single-threaded Tokio runtime (`current_thread`). This handles `zbus` D-Bus connections, ensuring blocked clients never freeze the UI. CPU-heavy or blocking tasks are offloaded to dedicated background threads via `tokio::task::spawn_blocking`.
+`xdg-desktop-portal-gtk4` bridges the asynchronous, multi-threaded world of D-Bus with the single-threaded, thread-affine world of GTK 4. 
+
+### High-Level Overview
+
+The system strictly separates D-Bus communication from UI rendering to prevent blocking either subsystem. It achieves this by utilizing two primary threads:
+
+1. **GTK Main Thread**: The main process thread. It initializes GTK, runs the GLib `MainLoop`, and handles all widget creation, rendering, and window events.
+2. **Tokio Background Thread**: A dedicated OS thread running a single-threaded (`current_thread`) Tokio async runtime. It owns the `zbus` connection, the object server, and handles all incoming D-Bus requests and background async tasks. CPU-heavy or blocking tasks are offloaded to dedicated background threads via `tokio::task::spawn_blocking`.
+
+### Mermaid Diagram
+
+```mermaid
+sequenceDiagram
+    participant DBus as D-Bus Session Bus
+    participant Tokio as Tokio Thread (zbus)
+    participant GTK as GTK Main Thread (GLib)
+
+    DBus->>Tokio: Method Call (e.g., OpenFile)
+    activate Tokio
+    Tokio->>Tokio: Wrap in `run_request` (SessionManager)
+    Tokio->>GTK: `run_ui_task` sends closure via mpsc
+    activate GTK
+    GTK->>GTK: glib::spawn_local executes UI logic
+    GTK->>GTK: Create & Show Dialog
+    GTK-->>Tokio: (Tokio task awaits oneshot::Receiver)
+    deactivate GTK
+    
+    Note over GTK: User interacts with dialog
+    
+    GTK->>GTK: User makes a choice
+    activate GTK
+    GTK->>Tokio: Send result via oneshot::Sender
+    deactivate GTK
+    Tokio->>Tokio: Task resumes
+    Tokio->>DBus: Method Return (Response)
+    deactivate Tokio
+```
+
+### Component Responsibilities and Integration
+
+- **GTK & GLib**: At startup, `Ui::new()` establishes a `MainContext` and creates an `unbounded_channel` (`UiProxy`). The receiving end is attached to the GLib main loop via `spawn_local`, which continually executes received closures on the main thread.
+- **Tokio & zbus**: The background Tokio thread accepts D-Bus requests. Because GTK 4 objects are `!Send` and `!Sync`, Tokio tasks *never* touch UI elements directly.
+- **The Bridge (`run_ui_task`)**: When a D-Bus handler needs UI interaction, it calls `run_ui_task`. This sends a closure over the `UiProxy` channel to the GTK thread. The closure receives a `oneshot::Sender` to transmit the user's decision back to the suspended Tokio task.
+
+### Concurrency Model
+
+- **`std::sync::mpsc`**: Used during startup to block the main thread until the Tokio thread successfully acquires the D-Bus name.
+- **`tokio::sync::oneshot`**: Used for transferring results from the GTK thread back to Tokio, and for passing shutdown/cancellation signals.
+- **`tokio::sync::mpsc::unbounded_channel`**: Used by `UiProxy` to queue closures for the GTK main loop.
+- **`parking_lot::Mutex`**: Used for shared synchronous state (like session tracking), minimizing lock overhead in a fail-fast architecture without lock poisoning.
+
+### Design Rationale
+
+This architecture isolates I/O-bound D-Bus operations from the UI thread. Using closures dispatched over a channel keeps GTK thread-affinity guarantees intact while avoiding complex `Mutex` sharing of UI widgets. It is highly resilient: if the D-Bus name is lost (e.g., replaced by another portal instance), the Tokio thread receives the signal and gracefully initiates a shutdown of the GTK main loop.
+
+### Additional Subsystems
+
 - **Internationalization (i18n):** Uses `rust-i18n`. Locales are stored in `locales/`.
 
 ## Acknowledgements & License
 
 Originally created by [mahkoh](https://github.com/mahkoh). Inspired by the KDE and GNOME portal implementations.
+
+For a comprehensive list of other available backend implementations (such as `xdg-desktop-portal-kde`, `xdg-desktop-portal-gnome`, `xdg-desktop-portal-wlr`, `xdg-desktop-portal-hyprland`, `xdg-desktop-portal-cosmic`, etc.), please see the [Arch Linux Wiki](https://wiki.archlinux.org/title/XDG_Desktop_Portal#List_of_backends_and_interfaces) or the official [Flatpak Portal Documentation](https://flatpak.github.io/xdg-desktop-portal/docs/).
 
 Licensed under the **GNU Lesser General Public License v2.1**.
