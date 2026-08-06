@@ -36,6 +36,7 @@ This is a Linux desktop portal daemon implementing the `org.freedesktop.impl.por
 - **Never hold a `MutexGuard` across an `.await` point.** Scope the guard inside a separate block if necessary.
 - Group related magic values and repeated string literals into constants.
 - Prefer iterator chains (`.map().filter().collect()`) over manual for-loops allocating into a `Vec`.
+- For formatting, always use: `cargo fmt -- --config imports_granularity=One,unstable_features=true`
 
 ## Logging
 
@@ -46,3 +47,7 @@ This is a Linux desktop portal daemon implementing the `org.freedesktop.impl.por
 
 - Use `#[tokio::test]` for async test functions.
 - Gracefully skip integration tests that require a D-Bus session if `Connection::session()` fails.
+
+## Environment & Tooling
+
+- If `nix` is present in the environment, `nix shell` or `nix run` can be used to get the packages needed during agent session.
