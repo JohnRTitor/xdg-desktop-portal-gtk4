@@ -16,7 +16,10 @@ pub struct TempSoundFile {
 
 impl Drop for TempSoundFile {
     fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.path);
+        let path = self.path.clone();
+        tokio::task::spawn_blocking(move || {
+            let _ = std::fs::remove_file(&path);
+        });
     }
 }
 
@@ -85,7 +88,7 @@ pub type NotificationTargetData = (
     HashMap<String, OwnedValue>,
     Option<std::sync::Arc<TempSoundFile>>,
 );
-pub type ReverseMapType = std::sync::Arc<Mutex<HashMap<u32, NotificationTargetData>>>;
+pub type ReverseMapType = std::sync::Arc<Mutex<HashMap<u32, std::sync::Arc<NotificationTargetData>>>>;
 
 /// The D-Bus interface wrapper for the Notification portal.
 ///
@@ -110,15 +113,27 @@ pub struct Notification {
 
     init_once: std::sync::Once,
     connection: Option<Connection>,
+    proxy: Option<std::sync::Arc<NotificationsProxy<'static>>>,
 }
 
 impl Notification {
-    pub fn new(connection: Option<Connection>) -> Self {
+    pub async fn new(connection: Option<Connection>) -> Self {
+        let proxy = if let Some(session_bus) = &connection {
+            NotificationsProxy::builder(session_bus)
+                .build()
+                .await
+                .ok()
+                .map(std::sync::Arc::new)
+        } else {
+            None
+        };
+
         Self {
             active_notifications: std::sync::Arc::new(Mutex::new(HashMap::new())),
             reverse_map: std::sync::Arc::new(Mutex::new(HashMap::new())),
             init_once: std::sync::Once::new(),
             connection,
+            proxy,
         }
     }
 }
@@ -192,7 +207,7 @@ impl Notification {
                         path = std::path::PathBuf::from(runtime_dir);
                     }
                     path.push("xdg-desktop-portal-gtk4-sounds");
-                    let _ = std::fs::create_dir_all(&path);
+                    let _ = tokio::fs::create_dir_all(&path).await;
 
                     let timestamp = std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
@@ -204,7 +219,7 @@ impl Notification {
                         timestamp
                     ));
 
-                    let bytes = gtk4::gio::spawn_blocking(move || {
+                    let bytes = tokio::task::spawn_blocking(move || {
                         let mut data = Vec::new();
                         if file.read_to_end(&mut data).is_ok() {
                             return Some(data);
@@ -214,10 +229,10 @@ impl Notification {
                     .await
                     .unwrap_or(None);
 
-                    if let Some(data) = bytes
-                        && std::fs::write(&path, data).is_ok()
-                    {
-                        sound_file = Some(std::sync::Arc::new(TempSoundFile { path }));
+                    if let Some(data) = bytes {
+                        if tokio::fs::write(&path, data).await.is_ok() {
+                            sound_file = Some(std::sync::Arc::new(TempSoundFile { path }));
+                        }
                     }
                 } else {
                     tracing::error!("Failed to dup sound fd");
@@ -262,7 +277,7 @@ impl Notification {
                                 use std::os::fd::AsFd;
                                 if let Ok(owned_fd) = fd.as_fd().try_clone_to_owned() {
                                     let mut file = std::fs::File::from(owned_fd);
-                                    let image_data = gtk4::gio::spawn_blocking(move || {
+                                    let image_data = tokio::task::spawn_blocking(move || {
                                         use {
                                             gdk_pixbuf::Pixbuf,
                                             gtk4::{gio::MemoryInputStream, glib::Bytes},
@@ -301,7 +316,7 @@ impl Notification {
                         }
                         "bytes" => {
                             if let Ok(byte_array) = <Vec<u8>>::try_from(payload.clone()) {
-                                let image_data = gtk4::gio::spawn_blocking(move || {
+                                let image_data = tokio::task::spawn_blocking(move || {
                                     use {
                                         gdk_pixbuf::Pixbuf,
                                         gtk4::{gio::MemoryInputStream, glib::Bytes},
@@ -365,9 +380,7 @@ impl Notification {
 
         let actions: Vec<&str> = parsed_actions.iter().map(|s| s.as_str()).collect();
 
-        if let Some(session_bus) = &self.connection
-            && let Ok(proxy) = NotificationsProxy::new(session_bus).await
-        {
+        if let Some(proxy) = &self.proxy {
             let key = (app_id.clone(), id.clone());
             let replaces_id = {
                 let lock = self
@@ -403,37 +416,41 @@ impl Notification {
                     .insert(key, new_id);
                 self.reverse_map.lock().expect("Mutex was poisoned").insert(
                     new_id,
-                    (app_id.clone(), id.clone(), action_targets, sound_file),
+                    std::sync::Arc::new((app_id.clone(), id.clone(), action_targets, sound_file)),
                 );
             }
         }
 
-        let reverse_map_clone = self.reverse_map.clone();
         let server_clone = server.clone();
-        let conn_clone = self.connection.clone();
+        let proxy_opt = self.proxy.clone();
+        let conn_opt = self.connection.clone();
+        let reverse_map_clone = self.reverse_map.clone();
+        let active_notifications_clone = self.active_notifications.clone();
 
         self.init_once.call_once(move || {
-            let rm1 = reverse_map_clone.clone();
-            let s1 = server_clone.clone();
-            let c1 = conn_clone.clone();
-            tokio::spawn(async move {
-                if let Some(conn) = c1
-                    && let Err(e) = listen_for_action_invoked(rm1, s1, Some(conn)).await
-                {
-                    tracing::error!(error = ?e, "Action invoked listener failed");
-                }
-            });
+            if let Some(proxy) = proxy_opt
+                && let Some(session_bus) = conn_opt
+            {
+                let rm = reverse_map_clone.clone();
+                let server_clone2 = server_clone.clone();
+                let proxy_clone1 = proxy.clone();
+                let session_bus_clone = session_bus.clone();
+                tokio::spawn(async move {
+                    if let Err(e) = listen_for_action_invoked(rm, server_clone2, proxy_clone1, session_bus_clone).await
+                    {
+                        tracing::error!("Action invoked stream failed: {}", e);
+                    }
+                });
 
-            let rm2 = reverse_map_clone.clone();
-            let act2 = self.active_notifications.clone();
-            let c2 = conn_clone.clone();
-            tokio::spawn(async move {
-                if let Some(conn) = c2
-                    && let Err(e) = listen_for_notification_closed(rm2, act2, Some(conn)).await
-                {
-                    tracing::error!(error = ?e, "Notification closed listener failed");
-                }
-            });
+                let rm2 = reverse_map_clone.clone();
+                let an = active_notifications_clone.clone();
+                let proxy_clone2 = proxy.clone();
+                tokio::spawn(async move {
+                    if let Err(e) = listen_for_notification_closed(rm2, an, proxy_clone2).await {
+                        tracing::error!("Notification closed stream failed: {}", e);
+                    }
+                });
+            }
         });
     }
 
@@ -445,8 +462,7 @@ impl Notification {
             .expect("Mutex was poisoned")
             .remove(&key);
         if let Some(fdo_id) = fdo_id
-            && let Some(session_bus) = &self.connection
-            && let Ok(proxy) = NotificationsProxy::new(session_bus).await
+            && let Some(proxy) = &self.proxy
         {
             let _ = proxy.close_notification(fdo_id).await;
         }
@@ -493,10 +509,9 @@ impl Notification {
 async fn listen_for_action_invoked(
     reverse_map: ReverseMapType,
     server: ObjectServer,
-    session_bus_opt: Option<Connection>,
+    proxy: std::sync::Arc<NotificationsProxy<'static>>,
+    session_bus: Connection,
 ) -> zbus::Result<()> {
-    let session_bus = session_bus_opt.ok_or(zbus::Error::Failure("No connection".into()))?;
-    let proxy = NotificationsProxy::new(&session_bus).await?;
     let mut stream = proxy.receive_action_invoked().await?;
 
     while let Some(signal) = stream.next().await {
@@ -510,7 +525,7 @@ async fn listen_for_action_invoked(
             .get(&id)
             .cloned();
 
-        if let Some((app_id, portal_id, action_targets, _)) = target_data {
+        if let Some((app_id, portal_id, action_targets, _)) = target_data.as_deref() {
             let mut params: Vec<Value<'_>> = vec![];
 
             // XDG Notification spec requires parameter: av
@@ -528,6 +543,10 @@ async fn listen_for_action_invoked(
             app_path.push_str(&app_id.replace('.', "/").replace('-', "_"));
 
             if let Some(action_name) = action_key.strip_prefix("app.") {
+                // This proxy is used to talk back to the specific client application that triggered the notification
+                // (e.g., when a user clicks a notification action). Because the destination address
+                // (the app_id or unique connection name) changes dynamically on every single request,
+                // we must instantiate it on the fly.
                 let Ok(builder) =
                     ApplicationProxy::builder(&session_bus).destination(app_id.as_str())
                 else {
@@ -538,7 +557,7 @@ async fn listen_for_action_invoked(
                     tracing::error!("Invalid D-Bus path: {}", app_path);
                     continue;
                 };
-                let proxy_res = builder.build().await;
+                let proxy_res = builder.cache_properties(zbus::proxy::CacheProperties::No).build().await;
 
                 if let Ok(proxy) = proxy_res {
                     let _ = proxy
@@ -556,7 +575,7 @@ async fn listen_for_action_invoked(
                     tracing::error!("Invalid D-Bus path: {}", app_path);
                     continue;
                 };
-                let proxy_res = builder.build().await;
+                let proxy_res = builder.cache_properties(zbus::proxy::CacheProperties::No).build().await;
 
                 if let Ok(proxy) = proxy_res {
                     let _ = proxy.activate(&platform_data).await;
@@ -585,21 +604,19 @@ async fn listen_for_action_invoked(
 async fn listen_for_notification_closed(
     reverse_map: ReverseMapType,
     active_notifications: std::sync::Arc<Mutex<HashMap<(String, String), u32>>>,
-    session_bus_opt: Option<Connection>,
+    proxy: std::sync::Arc<NotificationsProxy<'static>>,
 ) -> zbus::Result<()> {
-    let session_bus = session_bus_opt.ok_or(zbus::Error::Failure("No connection".into()))?;
-    let proxy = NotificationsProxy::new(&session_bus).await?;
     let mut stream = proxy.receive_notification_closed().await?;
 
     while let Some(signal) = stream.next().await {
         let args = signal.args()?;
         let id = args.id;
 
-        let removed_key = if let Some((app_id, portal_id, _, _sound_file)) =
+        let removed_key = if let Some(target_data) =
             reverse_map.lock().expect("Mutex was poisoned").remove(&id)
         {
-            // _sound_file drops here and deletes the temp file via Drop trait
-            Some((app_id, portal_id))
+            // _sound_file drops here (or when target_data is dropped)
+            Some((target_data.0.clone(), target_data.1.clone()))
         } else {
             None
         };

@@ -123,13 +123,13 @@ impl Portal {
         #[cfg(feature = "account")]
         add!(Account::new(proxy));
         #[cfg(feature = "notification")]
-        add!(Notification::new(Some(session.clone())));
+        add!(Notification::new(Some(session.clone())).await);
         #[cfg(feature = "dynamic_launcher")]
         add!(DynamicLauncher::new(proxy));
         #[cfg(feature = "print")]
         add!(Print::new(proxy));
         #[cfg(feature = "inhibit")]
-        add!(Inhibit::new(session_manager.clone(), system_conn));
+        add!(Inhibit::new(session_manager.clone(), system_conn).await);
         #[cfg(feature = "settings")]
         add!(SettingsPortal::new(session.object_server().clone()));
         #[cfg(feature = "lockdown")]

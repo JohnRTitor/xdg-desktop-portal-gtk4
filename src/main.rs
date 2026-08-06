@@ -4,7 +4,7 @@ use xdg_desktop_portal_gtk4::{
     logging,
 };
 
-#[tokio::main]
+#[tokio::main(worker_threads = 2)]
 async fn portal_worker(
     proxy: UiProxy,
     replace: bool,

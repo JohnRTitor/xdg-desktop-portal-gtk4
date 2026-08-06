@@ -63,20 +63,37 @@ pub struct Inhibit {
     active_monitors: std::sync::Arc<Mutex<HashMap<OwnedObjectPath, OwnedObjectPath>>>,
     init_once: std::sync::Once,
     session_manager: crate::core::session_manager::SessionManager,
-    /// System D-Bus connection used specifically to talk to `org.freedesktop.login1`.
-    system_conn: Option<Connection>,
+    logind_proxy: Option<std::sync::Arc<Login1ManagerProxy<'static>>>,
+    screensaver_proxy: Option<std::sync::Arc<ScreenSaverProxy<'static>>>,
 }
 
 impl Inhibit {
-    pub fn new(
+    pub async fn new(
         session_manager: crate::core::session_manager::SessionManager,
         system_conn: Option<Connection>,
     ) -> Self {
+        let logind_proxy = if let Some(system_bus) = &system_conn {
+            Login1ManagerProxy::builder(system_bus)
+                .build()
+                .await
+                .ok()
+                .map(std::sync::Arc::new)
+        } else {
+            None
+        };
+
+        let screensaver_proxy = ScreenSaverProxy::builder(session_manager.connection())
+            .build()
+            .await
+            .ok()
+            .map(std::sync::Arc::new);
+
         Self {
             active_monitors: std::sync::Arc::new(Mutex::new(HashMap::new())),
             init_once: std::sync::Once::new(),
             session_manager,
-            system_conn,
+            logind_proxy,
+            screensaver_proxy,
         }
     }
 }
@@ -132,16 +149,13 @@ impl Inhibit {
         let session_manager_clone = self.session_manager.clone();
         let app_id_clone = app_id.clone();
         let handle_clone = handle.clone();
-        let system_conn_clone = self.system_conn.clone();
-        let session_conn_clone = self.session_manager.connection().clone();
+        let logind_proxy_clone = self.logind_proxy.clone();
+        let screensaver_proxy_clone = self.screensaver_proxy.clone();
 
         tokio::spawn(async move {
             {
-                let session_bus = session_conn_clone;
                 let mut screen_saver_cookie = None;
                 let mut logind_fd = None;
-
-                let system_bus_opt = system_conn_clone;
 
                 let mut inhibit_what = Vec::new();
 
@@ -165,8 +179,7 @@ impl Inhibit {
                 // Try logind first for sleep/shutdown/idle.
                 // logind provides a robust system-level inhibition API via file descriptors.
                 if !inhibit_what.is_empty()
-                    && let Some(system_bus) = &system_bus_opt
-                    && let Ok(logind_proxy) = Login1ManagerProxy::new(system_bus).await
+                    && let Some(logind_proxy) = &logind_proxy_clone
                 {
                     let what_str = inhibit_what.join(":");
                     match logind_proxy
@@ -188,7 +201,7 @@ impl Inhibit {
                 // Some desktop environments (like GNOME) don't fully honor logind idle locks
                 // for screen blanking, so using the standard D-Bus ScreenSaver API is recommended.
                 if reason & 8 != 0
-                    && let Ok(ss_proxy) = ScreenSaverProxy::new(&session_bus).await
+                    && let Some(ss_proxy) = &screensaver_proxy_clone
                 {
                     match ss_proxy.inhibit(&app_id, reason_str).await {
                         Ok(cookie) => {
@@ -297,15 +310,16 @@ impl Inhibit {
                 .await;
         });
 
+        let ss_proxy_opt = self.screensaver_proxy.clone();
+        let active_monitors_clone2 = self.active_monitors.clone();
         let server_clone = server.clone();
-        let monitors_clone = self.active_monitors.clone();
-        let session_manager_clone2 = self.session_manager.clone();
 
         self.init_once.call_once(move || {
+            let active_monitors_clone = active_monitors_clone2;
+
             tokio::spawn(async move {
                 {
-                    let session_bus = session_manager_clone2.connection().clone();
-                    if let Ok(proxy) = ScreenSaverProxy::new(&session_bus).await
+                    if let Some(proxy) = ss_proxy_opt
                         && let Ok(mut stream) = proxy.receive_active_changed().await
                     {
                         while let Some(signal) = stream.next().await {
@@ -318,7 +332,7 @@ impl Inhibit {
                                     let mut state: HashMap<&str, Value<'_>> = HashMap::new();
                                     state.insert("screensaver-active", Value::Bool(active));
 
-                                    let sessions: Vec<OwnedObjectPath> = monitors_clone
+                                    let sessions: Vec<OwnedObjectPath> = active_monitors_clone
                                         .lock()
                                         .expect("Mutex was poisoned")
                                         .values()
