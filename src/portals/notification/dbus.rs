@@ -2,8 +2,8 @@
 
 use {
     futures_util::stream::StreamExt,
-    std::collections::HashMap,
     parking_lot::Mutex,
+    std::collections::HashMap,
     zbus::{
         Connection, ObjectServer, interface,
         object_server::SignalEmitter,
@@ -89,7 +89,8 @@ pub type NotificationTargetData = (
     HashMap<String, OwnedValue>,
     Option<std::sync::Arc<TempSoundFile>>,
 );
-pub type ReverseMapType = std::sync::Arc<Mutex<HashMap<u32, std::sync::Arc<NotificationTargetData>>>>;
+pub type ReverseMapType =
+    std::sync::Arc<Mutex<HashMap<u32, std::sync::Arc<NotificationTargetData>>>>;
 
 /// The D-Bus interface wrapper for the Notification portal.
 ///
@@ -384,16 +385,12 @@ impl Notification {
         if let Some(proxy) = &self.proxy {
             let key = (app_id.clone(), id.clone());
             let replaces_id = {
-                let lock = self
-                    .active_notifications
-                    .lock();
+                let lock = self.active_notifications.lock();
                 *lock.get(&key).unwrap_or(&0)
             };
 
             if replaces_id != 0 {
-                self.reverse_map
-                    .lock()
-                    .remove(&replaces_id);
+                self.reverse_map.lock().remove(&replaces_id);
             }
 
             if let Ok(new_id) = proxy
@@ -409,9 +406,7 @@ impl Notification {
                 )
                 .await
             {
-                self.active_notifications
-                    .lock()
-                    .insert(key, new_id);
+                self.active_notifications.lock().insert(key, new_id);
                 self.reverse_map.lock().insert(
                     new_id,
                     std::sync::Arc::new((app_id.clone(), id.clone(), action_targets, sound_file)),
@@ -434,7 +429,13 @@ impl Notification {
                 let proxy_clone1 = proxy.clone();
                 let session_bus_clone = session_bus.clone();
                 tokio::spawn(async move {
-                    if let Err(e) = listen_for_action_invoked(rm, server_clone2, proxy_clone1, session_bus_clone).await
+                    if let Err(e) = listen_for_action_invoked(
+                        rm,
+                        server_clone2,
+                        proxy_clone1,
+                        session_bus_clone,
+                    )
+                    .await
                     {
                         tracing::error!("Action invoked stream failed: {}", e);
                     }
@@ -454,10 +455,7 @@ impl Notification {
 
     async fn remove_notification(&self, app_id: String, id: String) {
         let key = (app_id, id);
-        let fdo_id = self
-            .active_notifications
-            .lock()
-            .remove(&key);
+        let fdo_id = self.active_notifications.lock().remove(&key);
         if let Some(fdo_id) = fdo_id
             && let Some(proxy) = &self.proxy
         {
@@ -516,10 +514,7 @@ async fn listen_for_action_invoked(
         let id = args.id;
         let action_key = args.action_key;
 
-        let target_data = reverse_map
-            .lock()
-            .get(&id)
-            .cloned();
+        let target_data = reverse_map.lock().get(&id).cloned();
 
         if let Some((app_id, portal_id, action_targets, _)) = target_data.as_deref() {
             let mut params: Vec<Value<'_>> = vec![];
@@ -553,8 +548,8 @@ async fn listen_for_action_invoked(
                     // (e.g., when a user clicks a notification action). Because the destination address
                     // (the app_id or unique connection name) changes dynamically on every single request,
                     // we must instantiate it on the fly.
-                    let Ok(builder) =
-                        ApplicationProxy::builder(&session_bus_clone).destination(app_id_clone.as_str())
+                    let Ok(builder) = ApplicationProxy::builder(&session_bus_clone)
+                        .destination(app_id_clone.as_str())
                     else {
                         tracing::error!("Invalid D-Bus destination: {}", app_id_clone);
                         return;
@@ -563,7 +558,10 @@ async fn listen_for_action_invoked(
                         tracing::error!("Invalid D-Bus path: {}", app_path_clone);
                         return;
                     };
-                    let proxy_res = builder.cache_properties(zbus::proxy::CacheProperties::No).build().await;
+                    let proxy_res = builder
+                        .cache_properties(zbus::proxy::CacheProperties::No)
+                        .build()
+                        .await;
 
                     if let Ok(proxy) = proxy_res {
                         let _ = proxy
@@ -571,8 +569,8 @@ async fn listen_for_action_invoked(
                             .await;
                     }
                 } else {
-                    let Ok(builder) =
-                        ApplicationProxy::builder(&session_bus_clone).destination(app_id_clone.as_str())
+                    let Ok(builder) = ApplicationProxy::builder(&session_bus_clone)
+                        .destination(app_id_clone.as_str())
                     else {
                         tracing::error!("Invalid D-Bus destination: {}", app_id_clone);
                         return;
@@ -581,7 +579,10 @@ async fn listen_for_action_invoked(
                         tracing::error!("Invalid D-Bus path: {}", app_path_clone);
                         return;
                     };
-                    let proxy_res = builder.cache_properties(zbus::proxy::CacheProperties::No).build().await;
+                    let proxy_res = builder
+                        .cache_properties(zbus::proxy::CacheProperties::No)
+                        .build()
+                        .await;
 
                     if let Ok(proxy) = proxy_res {
                         let _ = proxy.activate(&platform_data_clone).await;
@@ -619,9 +620,7 @@ async fn listen_for_notification_closed(
         let args = signal.args()?;
         let id = args.id;
 
-        let removed_key = if let Some(target_data) =
-            reverse_map.lock().remove(&id)
-        {
+        let removed_key = if let Some(target_data) = reverse_map.lock().remove(&id) {
             // _sound_file drops here (or when target_data is dropped)
             Some((target_data.0.clone(), target_data.1.clone()))
         } else {
@@ -644,9 +643,9 @@ async fn listen_for_notification_closed(
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_notification_properties() {
-        let notification = Notification::new(None);
+    #[tokio::test]
+    async fn test_notification_properties() {
+        let notification = Notification::new(None).await;
         assert_eq!(notification.version(), 2);
 
         let options = notification.supported_options();

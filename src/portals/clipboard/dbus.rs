@@ -52,10 +52,15 @@ pub struct ClipboardPortal {
 
     connection: Connection,
     proxy: UiProxy,
+    session_manager: crate::core::session_manager::SessionManager,
 }
 
 impl ClipboardPortal {
-    pub fn new(connection: Connection, proxy: UiProxy) -> Self {
+    pub fn new(
+        connection: Connection,
+        proxy: UiProxy,
+        session_manager: crate::core::session_manager::SessionManager,
+    ) -> Self {
         let pending_transfers = Arc::new(Mutex::new(HashMap::new()));
         let active_sessions = Arc::new(Mutex::new(Vec::new()));
 
@@ -111,6 +116,7 @@ impl ClipboardPortal {
             pending_transfers,
             connection,
             proxy,
+            session_manager,
         }
     }
 }
@@ -119,9 +125,15 @@ impl ClipboardPortal {
 impl ClipboardPortal {
     async fn request_clipboard(
         &self,
+        #[zbus(header)] header: zbus::message::Header<'_>,
         session_handle: ObjectPath<'_>,
         _options: HashMap<&str, Value<'_>>,
     ) -> fdo::Result<()> {
+        let sender = header
+            .sender()
+            .map(|s| s.as_str().to_string())
+            .ok_or_else(|| fdo::Error::Failed("Missing sender".into()))?;
+
         tracing::debug!("RequestClipboard called for session: {:?}", session_handle);
         let session_handle_owned = session_handle.into_owned();
         {
@@ -129,6 +141,37 @@ impl ClipboardPortal {
             if !sessions.contains(&session_handle_owned) {
                 sessions.push(session_handle_owned.clone());
             }
+        }
+
+        let cancel_notify = std::sync::Arc::new(tokio::sync::Notify::new());
+        if let Err(e) = self.session_manager.register(
+            "clipboard", // app_id isn't directly available, but we can use "clipboard" or just skip rate limiting
+            &sender,
+            session_handle_owned.as_str(),
+            cancel_notify.clone(),
+        ) {
+            tracing::warn!("Session limit exceeded for clipboard: {}", e);
+            // Even if it fails, we continue, but we won't clean up automatically
+        } else {
+            let active_sessions_clone = self.active_sessions.clone();
+            let session_handle_clone = session_handle_owned.clone();
+            let session_manager_clone = self.session_manager.clone();
+            tokio::spawn(async move {
+                cancel_notify.notified().await;
+                tracing::debug!(
+                    "App {} disconnected, cleaning up clipboard session {:?}",
+                    sender,
+                    session_handle_clone
+                );
+                active_sessions_clone
+                    .lock()
+                    .retain(|s| s != &session_handle_clone);
+                session_manager_clone.unregister(
+                    "clipboard",
+                    &sender,
+                    session_handle_clone.as_str(),
+                );
+            });
         }
 
         let conn_clone = self.connection.clone();
@@ -218,9 +261,15 @@ impl ClipboardPortal {
                     Self::selection_transfer(&emitter, &session_handle_owned, &mime, serial).await
                 {
                     tracing::error!("Failed to emit SelectionTransfer: {}", e);
-                    pending_transfers_clone
-                        .lock()
-                        .remove(&serial);
+                    pending_transfers_clone.lock().remove(&serial);
+                } else {
+                    let pending = pending_transfers_clone.clone();
+                    tokio::spawn(async move {
+                        tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+                        if pending.lock().remove(&serial).is_some() {
+                            tracing::warn!("Clipboard transfer request {} timed out", serial);
+                        }
+                    });
                 }
             }
         });
@@ -269,9 +318,7 @@ impl ClipboardPortal {
             serial,
             success
         );
-        self.pending_transfers
-            .lock()
-            .remove(&serial);
+        self.pending_transfers.lock().remove(&serial);
         Ok(())
     }
 

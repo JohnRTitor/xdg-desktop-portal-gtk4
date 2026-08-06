@@ -119,19 +119,19 @@ impl Portal {
             };
         }
         #[cfg(feature = "file_chooser")]
-        add!(FileChooser::new(proxy));
+        add!(FileChooser::new(proxy, session_manager.clone()));
         #[cfg(feature = "email")]
-        add!(Email::new());
+        add!(Email::new(session_manager.clone()));
         #[cfg(feature = "access")]
-        add!(Access::new(proxy));
+        add!(Access::new(proxy, session_manager.clone()));
         #[cfg(feature = "account")]
-        add!(Account::new(proxy));
+        add!(Account::new(proxy, session_manager.clone()));
         #[cfg(feature = "notification")]
         add!(Notification::new(Some(session.clone())).await);
         #[cfg(feature = "dynamic_launcher")]
-        add!(DynamicLauncher::new(proxy));
+        add!(DynamicLauncher::new(proxy, session_manager.clone()));
         #[cfg(feature = "print")]
-        add!(Print::new(proxy));
+        add!(Print::new(proxy, session_manager.clone()));
         #[cfg(feature = "inhibit")]
         add!(Inhibit::new(session_manager.clone(), system_conn).await);
         #[cfg(feature = "settings")]
@@ -139,11 +139,15 @@ impl Portal {
         #[cfg(feature = "lockdown")]
         add!(LockdownPortal::new());
         #[cfg(feature = "app_chooser")]
-        add!(AppChooser::new(proxy));
+        add!(AppChooser::new(proxy, session_manager.clone()));
         #[cfg(feature = "usb")]
-        add!(UsbPortal::new(proxy));
+        add!(UsbPortal::new(proxy, session_manager.clone()));
         #[cfg(feature = "clipboard")]
-        add!(ClipboardPortal::new(session.clone(), proxy.clone()));
+        add!(ClipboardPortal::new(
+            session.clone(),
+            proxy.clone(),
+            session_manager.clone()
+        ));
 
         let mut name_lost_iterator = zbus::fdo::DBusProxy::new(&session)
             .await

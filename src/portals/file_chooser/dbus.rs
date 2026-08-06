@@ -24,12 +24,17 @@ use {
 /// and uses the proxy to spawn a GTK `FileChooserDialog`.
 pub struct FileChooser {
     proxy: UiProxy,
+    session_manager: crate::core::session_manager::SessionManager,
 }
 
 impl FileChooser {
-    pub fn new(proxy: &UiProxy) -> Self {
+    pub fn new(
+        proxy: &UiProxy,
+        session_manager: crate::core::session_manager::SessionManager,
+    ) -> Self {
         Self {
             proxy: proxy.clone(),
+            session_manager,
         }
     }
 }
@@ -329,55 +334,79 @@ impl FileChooser {
     #[tracing::instrument(skip_all, fields(app_id = %app_id, handle = %handle.as_str()))]
     async fn open_file(
         &self,
+        #[zbus(header)] header: zbus::message::Header<'_>,
         handle: OwnedObjectPath,
         app_id: String,
         parent_window: String,
         title: String,
         options: OpenFileOptions,
         #[zbus(object_server)] server: &ObjectServer,
-    ) -> Response<OpenFileResults> {
-        run_request(
+    ) -> Result<Response<OpenFileResults>, zbus::fdo::Error> {
+        let sender = header
+            .sender()
+            .ok_or_else(|| zbus::fdo::Error::Failed("Missing sender".to_string()))?
+            .to_string();
+        Ok(run_request(
             server,
+            self.session_manager.clone(),
+            &app_id,
+            &sender,
             handle,
-            self.open_file_impl(app_id, parent_window, title, options),
+            self.open_file_impl(app_id.clone(), parent_window, title, options),
         )
-        .await
+        .await)
     }
 
     #[tracing::instrument(skip_all, fields(app_id = %app_id, handle = %handle.as_str()))]
     async fn save_file(
         &self,
+        #[zbus(header)] header: zbus::message::Header<'_>,
         handle: OwnedObjectPath,
         app_id: String,
         parent_window: String,
         title: String,
         options: SaveFileOptions,
         #[zbus(object_server)] server: &ObjectServer,
-    ) -> Response<SaveFileResults> {
-        run_request(
+    ) -> Result<Response<SaveFileResults>, zbus::fdo::Error> {
+        let sender = header
+            .sender()
+            .ok_or_else(|| zbus::fdo::Error::Failed("Missing sender".to_string()))?
+            .to_string();
+        Ok(run_request(
             server,
+            self.session_manager.clone(),
+            &app_id,
+            &sender,
             handle,
-            self.save_file_impl(app_id, parent_window, title, options),
+            self.save_file_impl(app_id.clone(), parent_window, title, options),
         )
-        .await
+        .await)
     }
 
     #[tracing::instrument(skip_all, fields(app_id = %app_id, handle = %handle.as_str()))]
     async fn save_files(
         &self,
+        #[zbus(header)] header: zbus::message::Header<'_>,
         handle: OwnedObjectPath,
         app_id: String,
         parent_window: String,
         title: String,
         options: SaveFilesOptions,
         #[zbus(object_server)] server: &ObjectServer,
-    ) -> Response<SaveFilesResults> {
-        run_request(
+    ) -> Result<Response<SaveFilesResults>, zbus::fdo::Error> {
+        let sender = header
+            .sender()
+            .ok_or_else(|| zbus::fdo::Error::Failed("Missing sender".to_string()))?
+            .to_string();
+        Ok(run_request(
             server,
+            self.session_manager.clone(),
+            &app_id,
+            &sender,
             handle,
-            self.save_files_impl(app_id, parent_window, title, options),
+            self.save_files_impl(app_id.clone(), parent_window, title, options),
         )
-        .await
+        .await)
     }
 }
 
@@ -536,7 +565,14 @@ mod tests {
             context: gtk4::glib::MainContext::default(),
             sender: tokio::sync::mpsc::unbounded_channel().0,
         };
-        let chooser = FileChooser::new(&proxy);
+        let conn = match zbus::Connection::session().await {
+            Ok(c) => c,
+            Err(_) => return,
+        };
+        let chooser = FileChooser::new(
+            &proxy,
+            crate::core::session_manager::SessionManager::new(conn, 10),
+        );
         let options = SaveFilesOptions {
             files: Some(vec![FilePath("/absolute/path".into())]),
             ..Default::default()
@@ -553,7 +589,14 @@ mod tests {
             context: gtk4::glib::MainContext::default(),
             sender: tokio::sync::mpsc::unbounded_channel().0,
         };
-        let chooser = FileChooser::new(&proxy);
+        let conn = match zbus::Connection::session().await {
+            Ok(c) => c,
+            Err(_) => return,
+        };
+        let chooser = FileChooser::new(
+            &proxy,
+            crate::core::session_manager::SessionManager::new(conn, 10),
+        );
         let options = SaveFilesOptions {
             files: Some(vec![FilePath("relative/path".into())]),
             ..Default::default()
@@ -570,7 +613,14 @@ mod tests {
             context: gtk4::glib::MainContext::default(),
             sender: tokio::sync::mpsc::unbounded_channel().0,
         };
-        let chooser = FileChooser::new(&proxy);
+        let conn = match zbus::Connection::session().await {
+            Ok(c) => c,
+            Err(_) => return,
+        };
+        let chooser = FileChooser::new(
+            &proxy,
+            crate::core::session_manager::SessionManager::new(conn, 10),
+        );
         let options = SaveFilesOptions {
             files: Some(vec![FilePath(".".into())]),
             ..Default::default()
@@ -587,7 +637,14 @@ mod tests {
             context: gtk4::glib::MainContext::default(),
             sender: tokio::sync::mpsc::unbounded_channel().0,
         };
-        let chooser = FileChooser::new(&proxy);
+        let conn = match zbus::Connection::session().await {
+            Ok(c) => c,
+            Err(_) => return,
+        };
+        let chooser = FileChooser::new(
+            &proxy,
+            crate::core::session_manager::SessionManager::new(conn, 10),
+        );
         let options = SaveFilesOptions {
             files: Some(vec![FilePath("..".into())]),
             ..Default::default()

@@ -11,17 +11,13 @@ use {
 ///
 /// This struct holds no state because it simply constructs a `mailto:` URI
 /// and uses GIO to launch the host system's default email client.
-pub struct Email;
-
-impl Default for Email {
-    fn default() -> Self {
-        Self::new()
-    }
+pub struct Email {
+    session_manager: crate::core::session_manager::SessionManager,
 }
 
 impl Email {
-    pub fn new() -> Self {
-        Self
+    pub fn new(session_manager: crate::core::session_manager::SessionManager) -> Self {
+        Self { session_manager }
     }
 }
 
@@ -144,18 +140,26 @@ impl Email {
     #[tracing::instrument(skip_all, fields(app_id = %app_id, handle = %handle.as_str()))]
     async fn compose_email(
         &self,
+        #[zbus(header)] header: zbus::message::Header<'_>,
         handle: OwnedObjectPath,
         app_id: String,
         parent_window: String,
         options: ComposeEmailOptions,
         #[zbus(object_server)] server: &ObjectServer,
-    ) -> Response<EmailResults> {
-        run_request(
+    ) -> Result<Response<EmailResults>, zbus::fdo::Error> {
+        let sender = header
+            .sender()
+            .ok_or_else(|| zbus::fdo::Error::Failed("Missing sender".to_string()))?
+            .to_string();
+        Ok(run_request(
             server,
+            self.session_manager.clone(),
+            &app_id,
+            &sender,
             handle,
-            self.compose_email_impl(app_id, parent_window, options),
+            self.compose_email_impl(app_id.clone(), parent_window, options),
         )
-        .await
+        .await)
     }
 }
 

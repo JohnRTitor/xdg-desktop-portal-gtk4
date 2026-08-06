@@ -11,11 +11,8 @@
 
 use {
     futures_util::stream::StreamExt,
-    std::{
-        collections::HashMap,
-        sync::Arc,
-    },
     parking_lot::Mutex,
+    std::{collections::HashMap, sync::Arc},
     tokio::sync::Notify,
     zbus::{Connection, fdo::DBusProxy},
 };
@@ -82,9 +79,7 @@ impl SessionManager {
         object_path: &str,
         cancel: CancellableSender,
     ) -> Result<(), SessionError> {
-        let mut state = self
-            .state
-            .lock();
+        let mut state = self.state.lock();
 
         let count = state.app_sessions.get_mut(app_id);
         if let Some(count_ref) = count {
@@ -116,9 +111,7 @@ impl SessionManager {
     /// This should be called when a request naturally completes (either success, cancellation, or error)
     /// so that we don't leak cancellation senders and the application's session count decrements.
     pub fn unregister(&self, app_id: &str, sender: &str, object_path: &str) {
-        let mut state = self
-            .state
-            .lock();
+        let mut state = self.state.lock();
 
         if let Some(count) = state.app_sessions.get_mut(app_id) {
             *count = count.saturating_sub(1);
@@ -154,9 +147,7 @@ impl SessionManager {
                 let name = args.name().as_str();
 
                 let objects_to_close = {
-                    let mut state = self
-                        .state
-                        .lock();
+                    let mut state = self.state.lock();
                     let closed = state.sender_objects.remove(name).unwrap_or_default();
 
                     for (_, app_id, _) in &closed {
@@ -228,9 +219,7 @@ mod tests {
         manager.unregister("app1", "sender1", "/path2");
         manager.unregister("app1", "sender2", "/path3");
 
-        let state = manager
-            .state
-            .lock();
+        let state = manager.state.lock();
         assert!(state.app_sessions.is_empty());
         assert!(state.sender_objects.is_empty());
     }

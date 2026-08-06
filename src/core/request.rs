@@ -17,12 +17,25 @@ use {
 /// This is inherently racy because the request might get cancelled before we export the
 /// path. However, the portal frontend usually waits for the method reply before considering
 /// the request fully established, so the race window is small.
-pub async fn run_request<T, F>(server: &ObjectServer, handle: OwnedObjectPath, f: F) -> Response<T>
+pub async fn run_request<T, F>(
+    server: &ObjectServer,
+    session_manager: crate::core::session_manager::SessionManager,
+    app_id: &str,
+    sender: &str,
+    handle: OwnedObjectPath,
+    f: F,
+) -> Response<T>
 where
     T: Default + Type,
     F: Future<Output = Response<T>>,
 {
     let notify = Arc::new(Notify::new());
+    let cancel_notify = Arc::new(Notify::new());
+    if let Err(e) = session_manager.register(app_id, sender, handle.as_str(), cancel_notify.clone())
+    {
+        tracing::error!("Failed to register request with SessionManager: {}", e);
+    }
+
     let request_exported = server
         .at(
             &handle,
@@ -36,11 +49,14 @@ where
     let response = tokio::select! {
         v = f => v,
         _ = notify.notified() => Response::cancelled(),
+        _ = cancel_notify.notified() => Response::cancelled(),
     };
 
     if request_exported {
         let _ = server.remove::<Request, _>(&handle).await;
     }
+
+    session_manager.unregister(app_id, sender, handle.as_str());
 
     response
 }

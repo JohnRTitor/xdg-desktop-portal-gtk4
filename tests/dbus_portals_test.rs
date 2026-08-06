@@ -149,7 +149,8 @@ async fn test_inhibit_returns_success() -> Result<(), Box<dyn std::error::Error>
                     10,
                 ),
                 None,
-            ),
+            )
+            .await,
         )?
         .build()
         .await?;

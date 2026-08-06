@@ -17,12 +17,17 @@ use {
 /// handles maintaining the state between `PreparePrint` and `Print` via the token.
 pub struct Print {
     proxy: UiProxy,
+    session_manager: crate::core::session_manager::SessionManager,
 }
 
 impl Print {
-    pub fn new(proxy: &UiProxy) -> Self {
+    pub fn new(
+        proxy: &UiProxy,
+        session_manager: crate::core::session_manager::SessionManager,
+    ) -> Self {
         Self {
             proxy: proxy.clone(),
+            session_manager,
         }
     }
 }
@@ -143,6 +148,7 @@ impl Print {
     #[tracing::instrument(skip_all, fields(app_id = %app_id, handle = %handle.as_str()))]
     async fn prepare_print(
         &self,
+        #[zbus(header)] header: zbus::message::Header<'_>,
         handle: OwnedObjectPath,
         app_id: String,
         parent_window: String,
@@ -151,19 +157,34 @@ impl Print {
         page_setup: HashMap<String, Value<'_>>,
         options: PreparePrintOptions,
         #[zbus(object_server)] server: &ObjectServer,
-    ) -> Response<PreparePrintResults> {
-        run_request(
+    ) -> Result<Response<PreparePrintResults>, zbus::fdo::Error> {
+        let sender = header
+            .sender()
+            .ok_or_else(|| zbus::fdo::Error::Failed("Missing sender".to_string()))?
+            .to_string();
+        Ok(run_request(
             server,
+            self.session_manager.clone(),
+            &app_id,
+            &sender,
             handle,
-            self.prepare_print_impl(app_id, parent_window, title, settings, page_setup, options),
+            self.prepare_print_impl(
+                app_id.clone(),
+                parent_window,
+                title,
+                settings,
+                page_setup,
+                options,
+            ),
         )
-        .await
+        .await)
     }
 
     #[allow(clippy::too_many_arguments)]
     #[tracing::instrument(skip_all, fields(app_id = %app_id, handle = %handle.as_str()))]
     async fn print(
         &self,
+        #[zbus(header)] header: zbus::message::Header<'_>,
         handle: OwnedObjectPath,
         app_id: String,
         parent_window: String,
@@ -171,13 +192,20 @@ impl Print {
         fd: Fd<'_>,
         options: PrintOptions,
         #[zbus(object_server)] server: &ObjectServer,
-    ) -> Response<PrintResults> {
-        run_request(
+    ) -> Result<Response<PrintResults>, zbus::fdo::Error> {
+        let sender = header
+            .sender()
+            .ok_or_else(|| zbus::fdo::Error::Failed("Missing sender".to_string()))?
+            .to_string();
+        Ok(run_request(
             server,
+            self.session_manager.clone(),
+            &app_id,
+            &sender,
             handle,
-            self.print_impl(app_id, parent_window, title, fd, options),
+            self.print_impl(app_id.clone(), parent_window, title, fd, options),
         )
-        .await
+        .await)
     }
 }
 

@@ -18,12 +18,17 @@ use {
 pub struct Access {
     // Keep a cloned UI proxy to dispatch GTK tasks.
     proxy: UiProxy,
+    session_manager: crate::core::session_manager::SessionManager,
 }
 
 impl Access {
-    pub fn new(proxy: &UiProxy) -> Self {
+    pub fn new(
+        proxy: &UiProxy,
+        session_manager: crate::core::session_manager::SessionManager,
+    ) -> Self {
         Self {
             proxy: proxy.clone(),
+            session_manager,
         }
     }
 }
@@ -121,6 +126,7 @@ impl Access {
     #[tracing::instrument(skip_all, fields(app_id = %app_id, handle = %handle.as_str()))]
     async fn access_dialog(
         &self,
+        #[zbus(header)] header: zbus::message::Header<'_>,
         handle: OwnedObjectPath,
         app_id: String,
         parent_window: String,
@@ -129,16 +135,30 @@ impl Access {
         body: String,
         options: AccessDialogOptions,
         #[zbus(object_server)] server: &ObjectServer,
-    ) -> Response<AccessResults> {
+    ) -> Result<Response<AccessResults>, zbus::fdo::Error> {
+        let sender = header
+            .sender()
+            .ok_or_else(|| zbus::fdo::Error::Failed("Missing sender".to_string()))?
+            .to_string();
         // Run the request concurrently with a cancellation listener.
         // If the frontend calls `Close()` on the request object path, `run_request`
         // will return `Response::cancelled()` and drop the future.
-        run_request(
+        Ok(run_request(
             server,
+            self.session_manager.clone(),
+            &app_id,
+            &sender,
             handle,
-            self.access_dialog_impl(app_id, parent_window, title, subtitle, body, options),
+            self.access_dialog_impl(
+                app_id.clone(),
+                parent_window,
+                title,
+                subtitle,
+                body,
+                options,
+            ),
         )
-        .await
+        .await)
     }
 }
 

@@ -28,12 +28,17 @@ pub struct UsbResults {
 /// This struct acts as a factory to spawn the USB device chooser UI.
 pub struct UsbPortal {
     proxy: UiProxy,
+    session_manager: crate::core::session_manager::SessionManager,
 }
 
 impl UsbPortal {
-    pub fn new(proxy: &UiProxy) -> Self {
+    pub fn new(
+        proxy: &UiProxy,
+        session_manager: crate::core::session_manager::SessionManager,
+    ) -> Self {
         Self {
             proxy: proxy.clone(),
+            session_manager,
         }
     }
 
@@ -134,19 +139,27 @@ impl UsbPortal {
     #[zbus(name = "AcquireDevices")]
     async fn acquire_devices(
         &self,
+        #[zbus(header)] header: zbus::message::Header<'_>,
         handle: OwnedObjectPath,
         parent_window: String,
         app_id: String,
         devices: Vec<UsbDeviceData>,
         options: HashMap<String, OwnedValue>,
         #[zbus(object_server)] server: &zbus::ObjectServer,
-    ) -> Response<UsbResults> {
-        run_request(
+    ) -> Result<Response<UsbResults>, zbus::fdo::Error> {
+        let sender = header
+            .sender()
+            .ok_or_else(|| zbus::fdo::Error::Failed("Missing sender".to_string()))?
+            .to_string();
+        Ok(run_request(
             server,
+            self.session_manager.clone(),
+            &app_id,
+            &sender,
             handle,
-            self.acquire_devices_impl(app_id, parent_window, devices, options),
+            self.acquire_devices_impl(app_id.clone(), parent_window, devices, options),
         )
-        .await
+        .await)
     }
 
     #[zbus(property, name = "version")]

@@ -4,11 +4,11 @@ use {
         core::{request::run_request, response::Response},
         gui::{UiError, UiProxy},
     },
-    std::collections::HashMap,
     parking_lot::Mutex,
+    std::collections::HashMap,
     tokio::sync::mpsc::Sender,
     zbus::{
-        interface,
+        ObjectServer, interface,
         zvariant::{DeserializeDict, OwnedObjectPath, SerializeDict, Type},
     },
 };
@@ -53,13 +53,18 @@ pub struct AppChooser {
     /// because insertion and removal only happen during setup and teardown, and
     /// we do not hold the lock across `.await` points.
     active_dialogs: std::sync::Arc<Mutex<HashMap<OwnedObjectPath, Sender<Vec<String>>>>>,
+    session_manager: crate::core::session_manager::SessionManager,
 }
 
 impl AppChooser {
-    pub fn new(proxy: &UiProxy) -> Self {
+    pub fn new(
+        proxy: &UiProxy,
+        session_manager: crate::core::session_manager::SessionManager,
+    ) -> Self {
         Self {
             proxy: proxy.clone(),
             active_dialogs: std::sync::Arc::new(Mutex::new(HashMap::new())),
+            session_manager,
         }
     }
 
@@ -133,19 +138,27 @@ impl AppChooser {
     #[tracing::instrument(skip_all, fields(app_id = %app_id, handle = %handle.as_str()))]
     async fn choose_application(
         &self,
+        #[zbus(header)] header: zbus::message::Header<'_>,
         handle: OwnedObjectPath,
         app_id: String,
         parent_window: String,
         choices: Vec<String>,
         options: ChooseApplicationOptions,
-        #[zbus(object_server)] server: &zbus::ObjectServer,
-    ) -> Response<ChooseApplicationResults> {
-        run_request(
+        #[zbus(object_server)] server: &ObjectServer,
+    ) -> Result<Response<ChooseApplicationResults>, zbus::fdo::Error> {
+        let sender = header
+            .sender()
+            .ok_or_else(|| zbus::fdo::Error::Failed("Missing sender".to_string()))?
+            .to_string();
+        Ok(run_request(
             server,
+            self.session_manager.clone(),
+            &app_id,
+            &sender,
             handle.clone(),
-            self.choose_application_impl(handle, app_id, parent_window, choices, options),
+            self.choose_application_impl(handle, app_id.clone(), parent_window, choices, options),
         )
-        .await
+        .await)
     }
 
     #[zbus(name = "UpdateChoices")]
@@ -158,11 +171,7 @@ impl AppChooser {
         // Look up the channel sender for this specific request handle.
         // If found, send the new list of choices to the GTK task.
         // This runs on the Tokio thread, while the receiving end runs on the GTK thread.
-        if let Some(sender) = self
-            .active_dialogs
-            .lock()
-            .get(&handle)
-        {
+        if let Some(sender) = self.active_dialogs.lock().get(&handle) {
             let _ = sender.try_send(choices);
         }
         Ok(())
@@ -189,7 +198,14 @@ mod tests {
             context: gtk4::glib::MainContext::default(),
             sender: tokio::sync::mpsc::unbounded_channel().0,
         };
-        let chooser = AppChooser::new(&proxy);
+        let conn = match zbus::Connection::session().await {
+            Ok(c) => c,
+            Err(_) => return,
+        };
+        let chooser = AppChooser::new(
+            &proxy,
+            crate::core::session_manager::SessionManager::new(conn, 10),
+        );
         let (sender, mut receiver) = tokio::sync::mpsc::channel(1);
 
         let path = OwnedObjectPath::try_from("/test/handle").unwrap();
@@ -213,7 +229,14 @@ mod tests {
             context: gtk4::glib::MainContext::default(),
             sender: tokio::sync::mpsc::unbounded_channel().0,
         };
-        let chooser = AppChooser::new(&proxy);
+        let conn = match zbus::Connection::session().await {
+            Ok(c) => c,
+            Err(_) => return,
+        };
+        let chooser = AppChooser::new(
+            &proxy,
+            crate::core::session_manager::SessionManager::new(conn, 10),
+        );
         let path = OwnedObjectPath::try_from("/unknown/handle").unwrap();
 
         // Should succeed but do nothing

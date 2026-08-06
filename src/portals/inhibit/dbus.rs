@@ -1,8 +1,8 @@
 use {
     crate::core::session::Session,
     futures_util::stream::StreamExt,
-    std::collections::HashMap,
     parking_lot::Mutex,
+    std::collections::HashMap,
     zbus::{
         Connection, ObjectServer, interface,
         object_server::SignalEmitter,
@@ -137,7 +137,7 @@ impl Inhibit {
 
         if let Err(e) =
             self.session_manager
-                .register(&app_id, &sender, handle.as_str(), cancel_notify)
+                .register(&app_id, &sender, handle.as_str(), cancel_notify.clone())
         {
             let _ = server.remove::<InhibitRequest, _>(handle.clone()).await;
             return Err(zbus::fdo::Error::Failed(format!(
@@ -214,10 +214,11 @@ impl Inhibit {
                         }
                     }
                 }
-
-                // Wait for the Request to be closed
-                notify.notified().await;
-
+                // Wait for the Request to be closed or the app to disconnect
+                tokio::select! {
+                    _ = notify.notified() => {}
+                    _ = cancel_notify.notified() => {}
+                }
                 tracing::debug!("Inhibit Request {} closed, releasing locks", handle);
 
                 // Release ScreenSaver cookie
@@ -294,9 +295,7 @@ impl Inhibit {
                 _ = cancel_notify.notified() => {}
             }
 
-            monitors_clone
-                .lock()
-                .remove(&handle_clone);
+            monitors_clone.lock().remove(&handle_clone);
             session_manager_clone.unregister(
                 &app_id_clone,
                 &sender_clone,
@@ -331,11 +330,8 @@ impl Inhibit {
                                     let mut state: HashMap<&str, Value<'_>> = HashMap::new();
                                     state.insert("screensaver-active", Value::Bool(active));
 
-                                    let sessions: Vec<OwnedObjectPath> = active_monitors_clone
-                                        .lock()
-                                        .values()
-                                        .cloned()
-                                        .collect();
+                                    let sessions: Vec<OwnedObjectPath> =
+                                        active_monitors_clone.lock().values().cloned().collect();
 
                                     for session_h in sessions {
                                         let _ = Self::state_changed(

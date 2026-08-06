@@ -33,12 +33,17 @@ trait User {
 /// access dialog prompting the user to share their account information.
 pub struct Account {
     proxy: UiProxy,
+    session_manager: crate::core::session_manager::SessionManager,
 }
 
 impl Account {
-    pub fn new(proxy: &UiProxy) -> Self {
+    pub fn new(
+        proxy: &UiProxy,
+        session_manager: crate::core::session_manager::SessionManager,
+    ) -> Self {
         Self {
             proxy: proxy.clone(),
+            session_manager,
         }
     }
 }
@@ -108,18 +113,26 @@ impl Account {
     #[tracing::instrument(skip_all, fields(app_id = %app_id, handle = %handle.as_str()))]
     async fn get_user_information(
         &self,
+        #[zbus(header)] header: zbus::message::Header<'_>,
         handle: OwnedObjectPath,
         app_id: String,
         parent_window: String,
         options: GetUserInformationOptions,
         #[zbus(object_server)] server: &ObjectServer,
-    ) -> Response<UserInformation> {
-        run_request(
+    ) -> Result<Response<UserInformation>, zbus::fdo::Error> {
+        let sender = header
+            .sender()
+            .ok_or_else(|| zbus::fdo::Error::Failed("Missing sender".to_string()))?
+            .to_string();
+        Ok(run_request(
             server,
+            self.session_manager.clone(),
+            &app_id,
+            &sender,
             handle,
-            self.get_user_information_impl(app_id, parent_window, options),
+            self.get_user_information_impl(app_id.clone(), parent_window, options),
         )
-        .await
+        .await)
     }
 }
 

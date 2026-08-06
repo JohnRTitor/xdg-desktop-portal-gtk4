@@ -16,12 +16,17 @@ use {
 /// per request.
 pub struct DynamicLauncher {
     proxy: UiProxy,
+    session_manager: crate::core::session_manager::SessionManager,
 }
 
 impl DynamicLauncher {
-    pub fn new(proxy: &UiProxy) -> Self {
+    pub fn new(
+        proxy: &UiProxy,
+        session_manager: crate::core::session_manager::SessionManager,
+    ) -> Self {
         Self {
             proxy: proxy.clone(),
+            session_manager,
         }
     }
 }
@@ -109,6 +114,7 @@ impl DynamicLauncher {
     #[tracing::instrument(skip_all, fields(app_id = %app_id, handle = %handle.as_str()))]
     async fn prepare_install(
         &self,
+        #[zbus(header)] header: zbus::message::Header<'_>,
         handle: OwnedObjectPath,
         app_id: String,
         parent_window: String,
@@ -116,20 +122,27 @@ impl DynamicLauncher {
         icon_v: Value<'_>,
         options: PrepareInstallOptions,
         #[zbus(object_server)] server: &ObjectServer,
-    ) -> Response<PrepareInstallResults> {
+    ) -> Result<Response<PrepareInstallResults>, zbus::fdo::Error> {
+        let sender = header
+            .sender()
+            .ok_or_else(|| zbus::fdo::Error::Failed("Missing sender".to_string()))?
+            .to_string();
         let icon_owned = match OwnedValue::try_from(icon_v) {
             Ok(v) => v,
             Err(e) => {
                 tracing::error!("Failed to allocate OwnedValue: {}", e);
-                return Response::cancelled();
+                return Ok(Response::cancelled());
             }
         };
-        run_request(
+        Ok(run_request(
             server,
+            self.session_manager.clone(),
+            &app_id,
+            &sender,
             handle,
-            self.prepare_install_impl(app_id, parent_window, name, icon_owned, options),
+            self.prepare_install_impl(app_id.clone(), parent_window, name, icon_owned, options),
         )
-        .await
+        .await)
     }
 
     /// Determines whether the application is allowed to skip the confirmation dialog.
@@ -275,7 +288,14 @@ mod tests {
             context: gtk4::glib::MainContext::default(),
             sender: tokio::sync::mpsc::unbounded_channel().0,
         };
-        let launcher = DynamicLauncher::new(&proxy);
+        let conn = match zbus::Connection::session().await {
+            Ok(c) => c,
+            Err(_) => return,
+        };
+        let launcher = DynamicLauncher::new(
+            &proxy,
+            crate::core::session_manager::SessionManager::new(conn, 10),
+        );
 
         assert_eq!(
             launcher
@@ -303,7 +323,14 @@ mod tests {
             context: gtk4::glib::MainContext::default(),
             sender: tokio::sync::mpsc::unbounded_channel().0,
         };
-        let launcher = DynamicLauncher::new(&proxy);
+        let conn = match zbus::Connection::session().await {
+            Ok(c) => c,
+            Err(_) => return,
+        };
+        let launcher = DynamicLauncher::new(
+            &proxy,
+            crate::core::session_manager::SessionManager::new(conn, 10),
+        );
 
         assert_eq!(
             launcher
@@ -316,13 +343,20 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_dynamic_launcher_properties() {
+    #[tokio::test]
+    async fn test_dynamic_launcher_properties() {
         let proxy = UiProxy {
             context: gtk4::glib::MainContext::default(),
             sender: tokio::sync::mpsc::unbounded_channel().0,
         };
-        let launcher = DynamicLauncher::new(&proxy);
+        let conn = match zbus::Connection::session().await {
+            Ok(c) => c,
+            Err(_) => return,
+        };
+        let launcher = DynamicLauncher::new(
+            &proxy,
+            crate::core::session_manager::SessionManager::new(conn, 10),
+        );
         assert_eq!(launcher.supported_launcher_types(), 3);
         assert_eq!(launcher.version(), 1);
     }
