@@ -60,9 +60,12 @@ fn main() {
     let (shutdown_tx, shutdown_rx) = channel::<()>();
     let (name_lost_tx, name_lost_rx) = channel::<()>();
 
-    std::thread::spawn(move || {
-        portal_worker(proxy, replace, tx, shutdown_rx, name_lost_tx);
-    });
+    std::thread::Builder::new()
+        .name("tokio-zbus".into())
+        .spawn(move || {
+            portal_worker(proxy, replace, tx, shutdown_rx, name_lost_tx);
+        })
+        .expect("Failed to spawn tokio runtime thread for zbus");
 
     match rx.recv() {
         Ok(Err(e)) => {
