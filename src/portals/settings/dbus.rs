@@ -1,9 +1,9 @@
 use {
     gtk4::gio::{Settings, SettingsSchemaSource, prelude::SettingsExt},
     parking_lot::RwLock,
-    std::{collections::HashMap, sync::Arc},
+    std::{collections::HashMap, sync::Arc, time::Duration},
     zbus::{
-        interface,
+        fdo, interface,
         object_server::SignalEmitter,
         zvariant::{OwnedValue, Value},
     },
@@ -76,12 +76,12 @@ impl SettingsPortal {
                     }
                 })
                 .ok()
-                .and_then(|mut w| {
+                .map(|mut w| {
                     let config_dir = glib::user_config_dir();
                     let _ = w.watch(&config_dir.join("gtk-3.0"), RecursiveMode::NonRecursive);
                     let _ = w.watch(&config_dir.join("gtk-4.0"), RecursiveMode::NonRecursive);
                     let _ = w.watch(&config_dir.join("kdeglobals"), RecursiveMode::NonRecursive);
-                    Some(w)
+                    w
                 });
 
             // Initial load
@@ -90,7 +90,7 @@ impl SettingsPortal {
             // Event loop: react to change notifications and emit D-Bus signals.
             while let Some(()) = rx.recv().await {
                 // Debounce: coalesce rapid-fire events into a single reload.
-                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                tokio::time::sleep(Duration::from_millis(50)).await;
                 while rx.try_recv().is_ok() {}
 
                 let changes = agg.reload_all();
@@ -126,19 +126,19 @@ pub(crate) fn map_color_scheme(val: &str) -> u32 {
 
 #[interface(name = "org.freedesktop.impl.portal.Settings")]
 impl SettingsPortal {
-    async fn read(&self, namespace: String, key: String) -> Result<OwnedValue, zbus::fdo::Error> {
+    async fn read(&self, namespace: String, key: String) -> Result<OwnedValue, fdo::Error> {
         let state = self.aggregator.read();
         if let Some(val) = state.get(&namespace, &key) {
             Ok(val)
         } else {
-            Err(zbus::fdo::Error::Failed("Setting not found".to_string()))
+            Err(fdo::Error::Failed("Setting not found".to_string()))
         }
     }
 
     async fn read_all(
         &self,
         namespaces: Vec<String>,
-    ) -> Result<HashMap<String, HashMap<String, OwnedValue>>, zbus::fdo::Error> {
+    ) -> Result<HashMap<String, HashMap<String, OwnedValue>>, fdo::Error> {
         let state = self.aggregator.read();
         let mut result = HashMap::new();
 

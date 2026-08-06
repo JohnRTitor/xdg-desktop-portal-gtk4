@@ -5,10 +5,11 @@ use {
         gui::{UiError, UiProxy},
     },
     parking_lot::Mutex,
-    std::collections::HashMap,
-    tokio::sync::mpsc::Sender,
+    std::{collections::HashMap, sync::Arc},
+    tokio::sync::mpsc::{Sender, channel},
     zbus::{
-        ObjectServer, interface,
+        ObjectServer, fdo, interface,
+        message::Header,
         zvariant::{DeserializeDict, OwnedObjectPath, SerializeDict, Type},
     },
 };
@@ -52,7 +53,7 @@ pub struct AppChooser {
     /// A `parking_lot::Mutex` is sufficient here (rather than RwLock or Tokio Mutex)
     /// because insertion and removal only happen during setup and teardown, and
     /// we do not hold the lock across `.await` points.
-    active_dialogs: std::sync::Arc<Mutex<HashMap<OwnedObjectPath, Sender<Vec<String>>>>>,
+    active_dialogs: Arc<Mutex<HashMap<OwnedObjectPath, Sender<Vec<String>>>>>,
     session_manager: crate::core::session_manager::SessionManager,
 }
 
@@ -63,7 +64,7 @@ impl AppChooser {
     ) -> Self {
         Self {
             proxy: proxy.clone(),
-            active_dialogs: std::sync::Arc::new(Mutex::new(HashMap::new())),
+            active_dialogs: Arc::new(Mutex::new(HashMap::new())),
             session_manager,
         }
     }
@@ -80,7 +81,7 @@ impl AppChooser {
         // when this method exits, regardless of whether it returned successfully, was cancelled,
         // or panicked. This prevents a memory leak of stale handles.
         struct ActiveDialogGuard {
-            active_dialogs: std::sync::Arc<Mutex<HashMap<OwnedObjectPath, Sender<Vec<String>>>>>,
+            active_dialogs: Arc<Mutex<HashMap<OwnedObjectPath, Sender<Vec<String>>>>>,
             handle: OwnedObjectPath,
         }
 
@@ -91,7 +92,7 @@ impl AppChooser {
             }
         }
 
-        let (update_sender, update_receiver) = tokio::sync::mpsc::channel(CHANNEL_BUFFER_SIZE);
+        let (update_sender, update_receiver) = channel(CHANNEL_BUFFER_SIZE);
 
         {
             let mut lock = self.active_dialogs.lock();
@@ -138,17 +139,17 @@ impl AppChooser {
     #[tracing::instrument(skip_all, fields(app_id = %app_id, handle = %handle.as_str()))]
     async fn choose_application(
         &self,
-        #[zbus(header)] header: zbus::message::Header<'_>,
+        #[zbus(header)] header: Header<'_>,
         handle: OwnedObjectPath,
         app_id: String,
         parent_window: String,
         choices: Vec<String>,
         options: ChooseApplicationOptions,
         #[zbus(object_server)] server: &ObjectServer,
-    ) -> Result<Response<ChooseApplicationResults>, zbus::fdo::Error> {
+    ) -> Result<Response<ChooseApplicationResults>, fdo::Error> {
         let sender = header
             .sender()
-            .ok_or_else(|| zbus::fdo::Error::Failed("Missing sender".to_string()))?
+            .ok_or_else(|| fdo::Error::Failed("Missing sender".to_string()))?
             .to_string();
         Ok(run_request(
             server,
@@ -166,7 +167,7 @@ impl AppChooser {
         &self,
         handle: OwnedObjectPath,
         choices: Vec<String>,
-    ) -> zbus::fdo::Result<()> {
+    ) -> fdo::Result<()> {
         tracing::info!("UpdateChoices called for handle: {}", handle.as_str());
         // Look up the channel sender for this specific request handle.
         // If found, send the new list of choices to the GTK task.
@@ -180,7 +181,12 @@ impl AppChooser {
 
 #[cfg(test)]
 mod tests {
-    use {super::*, zbus::zvariant::Type};
+    use {
+        super::*,
+        gtk4::glib::MainContext,
+        tokio::sync::mpsc::unbounded_channel,
+        zbus::{Connection, zvariant::Type},
+    };
 
     #[test]
     fn test_choose_application_options_signature() {
@@ -195,10 +201,10 @@ mod tests {
     #[tokio::test]
     async fn test_update_choices_sends_message() {
         let proxy = UiProxy {
-            context: gtk4::glib::MainContext::default(),
-            sender: tokio::sync::mpsc::unbounded_channel().0,
+            context: MainContext::default(),
+            sender: unbounded_channel().0,
         };
-        let conn = match zbus::Connection::session().await {
+        let conn = match Connection::session().await {
             Ok(c) => c,
             Err(_) => return,
         };
@@ -206,7 +212,7 @@ mod tests {
             &proxy,
             crate::core::session_manager::SessionManager::new(conn, 10),
         );
-        let (sender, mut receiver) = tokio::sync::mpsc::channel(1);
+        let (sender, mut receiver) = channel(1);
 
         let path = OwnedObjectPath::try_from("/test/handle").unwrap();
 
@@ -226,10 +232,10 @@ mod tests {
     #[tokio::test]
     async fn test_update_choices_unknown_handle() {
         let proxy = UiProxy {
-            context: gtk4::glib::MainContext::default(),
-            sender: tokio::sync::mpsc::unbounded_channel().0,
+            context: MainContext::default(),
+            sender: unbounded_channel().0,
         };
-        let conn = match zbus::Connection::session().await {
+        let conn = match Connection::session().await {
             Ok(c) => c,
             Err(_) => return,
         };
@@ -248,7 +254,7 @@ mod tests {
     fn test_choose_application_options_deserialize() {
         use {
             std::collections::HashMap,
-            zbus::zvariant::{Endian, Value, serialized::Context},
+            zbus::zvariant::{self, Endian, Value, serialized::Context},
         };
 
         let mut dict = HashMap::new();
@@ -256,7 +262,7 @@ mod tests {
         dict.insert("uri", Value::from("file:///tmp/test.txt"));
 
         let ctxt = Context::new_dbus(Endian::Little, 0);
-        let encoded = zbus::zvariant::to_bytes(ctxt, &dict).unwrap();
+        let encoded = zvariant::to_bytes(ctxt, &dict).unwrap();
         let options: ChooseApplicationOptions = encoded.deserialize().unwrap().0;
 
         assert_eq!(options.modal, Some(true));
@@ -267,7 +273,7 @@ mod tests {
     fn test_choose_application_results_serialize() {
         use {
             std::collections::HashMap,
-            zbus::zvariant::{Endian, Value, serialized::Context},
+            zbus::zvariant::{self, Endian, Value, serialized::Context},
         };
 
         let results = ChooseApplicationResults {
@@ -276,7 +282,7 @@ mod tests {
         };
 
         let ctxt = Context::new_dbus(Endian::Little, 0);
-        let encoded = zbus::zvariant::to_bytes(ctxt, &results).unwrap();
+        let encoded = zvariant::to_bytes(ctxt, &results).unwrap();
         let decoded: HashMap<String, Value> = encoded.deserialize().unwrap().0;
 
         assert_eq!(

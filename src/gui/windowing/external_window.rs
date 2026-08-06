@@ -4,7 +4,10 @@ use {
     },
     gdk4_wayland::WaylandDisplay,
     gdk4_x11::X11Display,
-    gtk4::prelude::{Cast, GtkWindowExt, IsA, WidgetExt},
+    gtk4::{
+        Widget,
+        prelude::{Cast, GtkWindowExt, IsA, WidgetExt},
+    },
 };
 
 /// Configures the window to act as a proper dialog for the requesting application.
@@ -15,7 +18,7 @@ use {
 ///
 /// Note: This method must be called **before** the widget is realized if the window
 /// display needs to be changed (e.g., for the XWayland fallback).
-pub fn setup_window<W: IsA<gtk4::Window> + IsA<gtk4::Widget>>(
+pub fn setup_window<W: IsA<gtk4::Window> + IsA<Widget>>(
     window: &W,
     parent_handle: &str,
     activation_token: Option<&str>,
@@ -43,7 +46,7 @@ pub fn setup_window<W: IsA<gtk4::Window> + IsA<gtk4::Widget>>(
         WindowIdentifier::Wayland(handle) => {
             if is_wayland_display {
                 window.realize();
-                set_wayland_parent(window.upcast_ref::<gtk4::Widget>(), &handle);
+                set_wayland_parent(window.upcast_ref::<Widget>(), &handle);
             } else {
                 tracing::warn!(
                     "Wayland parent handle provided but portal is not running on Wayland."
@@ -53,7 +56,7 @@ pub fn setup_window<W: IsA<gtk4::Window> + IsA<gtk4::Widget>>(
         WindowIdentifier::X11(xid) => {
             if is_x11_display {
                 window.realize();
-                set_x11_parent(window.upcast_ref::<gtk4::Widget>(), xid);
+                set_x11_parent(window.upcast_ref::<Widget>(), xid);
             } else if is_wayland_display {
                 // XWayland Fallback:
                 // If the portal is on Wayland, but the client is XWayland (x11 handle),
@@ -77,7 +80,7 @@ pub fn setup_window<W: IsA<gtk4::Window> + IsA<gtk4::Widget>>(
 
                     window.set_display(x11_display);
                     window.realize();
-                    set_x11_parent(window.upcast_ref::<gtk4::Widget>(), xid);
+                    set_x11_parent(window.upcast_ref::<Widget>(), xid);
                 });
             } else {
                 tracing::warn!("X11 parent handle provided but portal backend is unsupported.");

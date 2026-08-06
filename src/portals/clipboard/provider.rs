@@ -1,13 +1,16 @@
 use {
     gtk4::{gdk, gio, glib},
     std::{cell::RefCell, os::fd::OwnedFd},
-    tokio::sync::mpsc::Sender,
+    tokio::sync::{
+        mpsc::Sender as MpscSender,
+        oneshot::{Sender as OneshotSender, channel},
+    },
 };
 
 mod imp {
     use {super::*, gtk4::gdk::subclass::prelude::*};
 
-    pub type FdRequestSender = Sender<(String, tokio::sync::oneshot::Sender<OwnedFd>)>;
+    pub type FdRequestSender = MpscSender<(String, OneshotSender<OwnedFd>)>;
 
     #[derive(Default)]
     pub struct PortalContentProvider {
@@ -59,7 +62,7 @@ mod imp {
                 };
 
                 // Create a channel for receiving the file descriptor
-                let (fd_tx, fd_rx) = tokio::sync::oneshot::channel();
+                let (fd_tx, fd_rx) = channel();
 
                 // Send the request for a file descriptor
                 if tx.send((mime_type.to_string(), fd_tx)).await.is_err() {

@@ -1,6 +1,9 @@
-use gtk4::{
-    glib,
-    glib::{MainContext, MainLoop},
+use {
+    gtk4::{
+        glib,
+        glib::{MainContext, MainLoop},
+    },
+    tokio::sync::mpsc::unbounded_channel,
 };
 
 pub type UiTask = Box<dyn FnOnce() + Send + 'static>;
@@ -29,7 +32,7 @@ impl Ui {
     pub fn new() -> Self {
         let main_loop = MainLoop::new(None, false);
 
-        let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel::<UiTask>();
+        let (sender, mut receiver) = unbounded_channel::<UiTask>();
 
         // spawn_local is crucial here: it attaches the future to the GTK MainContext
         // rather than the Tokio runtime. This ensures that the queued tasks (which

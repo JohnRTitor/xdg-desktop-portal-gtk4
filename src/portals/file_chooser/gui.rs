@@ -2,8 +2,8 @@ use {
     crate::gui::{PortalDispatcher, UiError, UiProxy},
     gtk4::{
         FileChooserAction, FileChooserDialog, FileFilter, RecentData, RecentManager, ResponseType,
-        gio::File,
-        glib::MainContext,
+        gio::{self, File},
+        glib::{self, MainContext},
         prelude::{
             Cast, DialogExt, FileChooserExt, FileChooserExtManual, FileExt, GtkWindowExt,
             ObjectExt, RecentManagerExt, WidgetExt,
@@ -14,8 +14,9 @@ use {
         cell::Cell,
         collections::{HashMap, HashSet},
         rc::Rc,
+        time::Duration,
     },
-    tokio::sync::oneshot::Receiver,
+    tokio::sync::{mpsc::channel, oneshot::Receiver},
 };
 
 #[derive(Eq, PartialEq, Clone)]
@@ -105,7 +106,7 @@ impl FileChooserUi {
 
         // Channel to coordinate: the response handler signals this when the user
         // closes the dialog, so the spawn_local task knows to start the delayed destroy.
-        let (done_tx, mut done_rx) = tokio::sync::mpsc::channel::<()>(1);
+        let (done_tx, mut done_rx) = channel::<()>(1);
 
         let cf = current_filter.clone();
         let handler_id = Rc::new(Cell::new(None));
@@ -119,13 +120,13 @@ impl FileChooserUi {
                     let files: Vec<_> = dialog
                         .files()
                         .into_iter()
-                        .filter_map(|f| f.ok().and_then(|f| f.downcast::<gtk4::gio::File>().ok()))
+                        .filter_map(|f| f.ok().and_then(|f| f.downcast::<gio::File>().ok()))
                         .map(|f| {
                             let uri = f.uri();
                             if !uri.starts_with("file://")
                                 && let Some(path) = f.path()
                             {
-                                return gtk4::gio::File::for_path(path).uri().into();
+                                return gio::File::for_path(path).uri().into();
                             }
                             uri.into()
                         })
@@ -182,7 +183,7 @@ impl FileChooserUi {
             // Delay destruction to work around GTK4 FileChooserWidget bugs where
             // background GIO tasks (like directory loading) can complete after
             // the dialog is disposed, causing use-after-free SEGVs (thaw_updates).
-            gtk4::glib::timeout_future(std::time::Duration::from_secs(5)).await;
+            glib::timeout_future(Duration::from_secs(5)).await;
             dialog.destroy();
         });
     }

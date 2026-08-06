@@ -2,8 +2,10 @@
 
 use {
     futures_util::stream::StreamExt,
+    gtk4::gio::Cancellable,
     parking_lot::Mutex,
-    std::collections::HashMap,
+    std::{collections::HashMap, sync::Arc},
+    tokio::task::spawn_blocking,
     zbus::{
         Connection, ObjectServer, interface,
         object_server::SignalEmitter,
@@ -18,7 +20,7 @@ pub struct TempSoundFile {
 impl Drop for TempSoundFile {
     fn drop(&mut self) {
         let path = self.path.clone();
-        tokio::task::spawn_blocking(move || {
+        spawn_blocking(move || {
             let _ = std::fs::remove_file(&path);
         });
     }
@@ -87,10 +89,9 @@ pub type NotificationTargetData = (
     String,
     String,
     HashMap<String, OwnedValue>,
-    Option<std::sync::Arc<TempSoundFile>>,
+    Option<Arc<TempSoundFile>>,
 );
-pub type ReverseMapType =
-    std::sync::Arc<Mutex<HashMap<u32, std::sync::Arc<NotificationTargetData>>>>;
+pub type ReverseMapType = Arc<Mutex<HashMap<u32, Arc<NotificationTargetData>>>>;
 
 /// The D-Bus interface wrapper for the Notification portal.
 ///
@@ -99,7 +100,7 @@ pub type ReverseMapType =
 pub struct Notification {
     /// Maps a composite key `(app_id, portal_id)` to the system notification ID (`u32`).
     /// This is used so we can replace or remove an existing notification.
-    active_notifications: std::sync::Arc<Mutex<HashMap<(String, String), u32>>>,
+    active_notifications: Arc<Mutex<HashMap<(String, String), u32>>>,
 
     /// Maps the system D-Bus notification ID (`u32`) back to the portal `app_id`, `portal_id`,
     /// action targets, and optional sound temp file.
@@ -115,7 +116,7 @@ pub struct Notification {
 
     init_once: std::sync::Once,
     connection: Option<Connection>,
-    proxy: Option<std::sync::Arc<NotificationsProxy<'static>>>,
+    proxy: Option<Arc<NotificationsProxy<'static>>>,
 }
 
 impl Notification {
@@ -125,14 +126,14 @@ impl Notification {
                 .build()
                 .await
                 .ok()
-                .map(std::sync::Arc::new)
+                .map(Arc::new)
         } else {
             None
         };
 
         Self {
-            active_notifications: std::sync::Arc::new(Mutex::new(HashMap::new())),
-            reverse_map: std::sync::Arc::new(Mutex::new(HashMap::new())),
+            active_notifications: Arc::new(Mutex::new(HashMap::new())),
+            reverse_map: Arc::new(Mutex::new(HashMap::new())),
             init_once: std::sync::Once::new(),
             connection,
             proxy,
@@ -190,7 +191,7 @@ impl Notification {
             }
         }
 
-        let mut sound_file: Option<std::sync::Arc<TempSoundFile>> = None;
+        let mut sound_file: Option<Arc<TempSoundFile>> = None;
         if let Some(sound) = notification.sound.as_ref() {
             let inner = match std::ops::Deref::deref(sound) {
                 Value::Value(v) => v.as_ref(),
@@ -221,7 +222,7 @@ impl Notification {
                         timestamp
                     ));
 
-                    let bytes = tokio::task::spawn_blocking(move || {
+                    let bytes = spawn_blocking(move || {
                         let mut data = Vec::new();
                         if file.read_to_end(&mut data).is_ok() {
                             return Some(data);
@@ -234,7 +235,7 @@ impl Notification {
                     if let Some(data) = bytes
                         && tokio::fs::write(&path, data).await.is_ok()
                     {
-                        sound_file = Some(std::sync::Arc::new(TempSoundFile { path }));
+                        sound_file = Some(Arc::new(TempSoundFile { path }));
                     }
                 } else {
                     tracing::error!("Failed to dup sound fd");
@@ -279,7 +280,7 @@ impl Notification {
                                 use std::os::fd::AsFd;
                                 if let Ok(owned_fd) = fd.as_fd().try_clone_to_owned() {
                                     let mut file = std::fs::File::from(owned_fd);
-                                    let image_data = tokio::task::spawn_blocking(move || {
+                                    let image_data = spawn_blocking(move || {
                                         use {
                                             gdk_pixbuf::Pixbuf,
                                             gtk4::{gio::MemoryInputStream, glib::Bytes},
@@ -289,10 +290,9 @@ impl Notification {
                                         if file.read_to_end(&mut data).is_ok() {
                                             let bytes = Bytes::from(&data);
                                             let stream = MemoryInputStream::from_bytes(&bytes);
-                                            if let Ok(pixbuf) = Pixbuf::from_stream(
-                                                &stream,
-                                                gtk4::gio::Cancellable::NONE,
-                                            ) {
+                                            if let Ok(pixbuf) =
+                                                Pixbuf::from_stream(&stream, Cancellable::NONE)
+                                            {
                                                 return OwnedValue::try_from(Value::new((
                                                     pixbuf.width(),
                                                     pixbuf.height(),
@@ -318,7 +318,7 @@ impl Notification {
                         }
                         "bytes" => {
                             if let Ok(byte_array) = <Vec<u8>>::try_from(payload.clone()) {
-                                let image_data = tokio::task::spawn_blocking(move || {
+                                let image_data = spawn_blocking(move || {
                                     use {
                                         gdk_pixbuf::Pixbuf,
                                         gtk4::{gio::MemoryInputStream, glib::Bytes},
@@ -326,7 +326,7 @@ impl Notification {
                                     let bytes = Bytes::from(&byte_array);
                                     let stream = MemoryInputStream::from_bytes(&bytes);
                                     if let Ok(pixbuf) =
-                                        Pixbuf::from_stream(&stream, gtk4::gio::Cancellable::NONE)
+                                        Pixbuf::from_stream(&stream, Cancellable::NONE)
                                     {
                                         return OwnedValue::try_from(Value::new((
                                             pixbuf.width(),
@@ -409,7 +409,7 @@ impl Notification {
                 self.active_notifications.lock().insert(key, new_id);
                 self.reverse_map.lock().insert(
                     new_id,
-                    std::sync::Arc::new((app_id.clone(), id.clone(), action_targets, sound_file)),
+                    Arc::new((app_id.clone(), id.clone(), action_targets, sound_file)),
                 );
             }
         }
@@ -504,7 +504,7 @@ impl Notification {
 async fn listen_for_action_invoked(
     reverse_map: ReverseMapType,
     server: ObjectServer,
-    proxy: std::sync::Arc<NotificationsProxy<'static>>,
+    proxy: Arc<NotificationsProxy<'static>>,
     session_bus: Connection,
 ) -> zbus::Result<()> {
     let mut stream = proxy.receive_action_invoked().await?;
@@ -530,7 +530,7 @@ async fn listen_for_action_invoked(
         }
 
         let platform_data: HashMap<&str, Value<'_>> = HashMap::new();
-        let platform_data_val = zbus::zvariant::Value::from(platform_data.clone());
+        let platform_data_val = Value::from(platform_data.clone());
         params.push(platform_data_val);
 
         let mut app_path = String::from("/");
@@ -613,8 +613,8 @@ async fn listen_for_action_invoked(
 
 async fn listen_for_notification_closed(
     reverse_map: ReverseMapType,
-    active_notifications: std::sync::Arc<parking_lot::Mutex<HashMap<(String, String), u32>>>,
-    proxy: std::sync::Arc<NotificationsProxy<'static>>,
+    active_notifications: Arc<parking_lot::Mutex<HashMap<(String, String), u32>>>,
+    proxy: Arc<NotificationsProxy<'static>>,
 ) -> zbus::Result<()> {
     let mut stream = proxy.receive_notification_closed().await?;
 
@@ -656,7 +656,7 @@ mod tests {
     fn test_portal_notification_deserialize() {
         use {
             std::collections::HashMap,
-            zbus::zvariant::{Endian, Value, serialized::Context},
+            zbus::zvariant::{self, Endian, Value, serialized::Context},
         };
 
         let mut dict = HashMap::new();
@@ -665,7 +665,7 @@ mod tests {
         dict.insert("priority", Value::from("high"));
 
         let ctxt = Context::new_dbus(Endian::Little, 0);
-        let encoded = zbus::zvariant::to_bytes(ctxt, &dict).unwrap();
+        let encoded = zvariant::to_bytes(ctxt, &dict).unwrap();
         let notification: PortalNotification = encoded.deserialize().unwrap().0;
 
         assert_eq!(notification.title.as_deref(), Some("Test Title"));

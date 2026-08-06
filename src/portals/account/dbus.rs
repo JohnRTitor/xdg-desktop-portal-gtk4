@@ -5,7 +5,8 @@ use {
         gui::UiProxy,
     },
     zbus::{
-        Connection, ObjectServer, interface,
+        Connection, ObjectServer, fdo, interface,
+        message::Header,
         zvariant::{DeserializeDict, OwnedObjectPath, SerializeDict, Type},
     },
 };
@@ -113,16 +114,16 @@ impl Account {
     #[tracing::instrument(skip_all, fields(app_id = %app_id, handle = %handle.as_str()))]
     async fn get_user_information(
         &self,
-        #[zbus(header)] header: zbus::message::Header<'_>,
+        #[zbus(header)] header: Header<'_>,
         handle: OwnedObjectPath,
         app_id: String,
         parent_window: String,
         options: GetUserInformationOptions,
         #[zbus(object_server)] server: &ObjectServer,
-    ) -> Result<Response<UserInformation>, zbus::fdo::Error> {
+    ) -> Result<Response<UserInformation>, fdo::Error> {
         let sender = header
             .sender()
-            .ok_or_else(|| zbus::fdo::Error::Failed("Missing sender".to_string()))?
+            .ok_or_else(|| fdo::Error::Failed("Missing sender".to_string()))?
             .to_string();
         Ok(run_request(
             server,
@@ -163,7 +164,7 @@ mod tests {
     use {
         super::*,
         std::collections::HashMap,
-        zbus::zvariant::{Endian, Value, serialized::Context},
+        zbus::zvariant::{self, Endian, Value, serialized::Context},
     };
 
     #[test]
@@ -173,7 +174,7 @@ mod tests {
         dict.insert("activation_token", Value::from("token123"));
 
         let ctxt = Context::new_dbus(Endian::Little, 0);
-        let encoded = zbus::zvariant::to_bytes(ctxt, &dict).unwrap();
+        let encoded = zvariant::to_bytes(ctxt, &dict).unwrap();
         let options: GetUserInformationOptions = encoded.deserialize().unwrap().0;
 
         assert_eq!(options.reason.as_deref(), Some("Because"));
@@ -184,7 +185,7 @@ mod tests {
     fn test_get_user_information_options_empty() {
         let dict: HashMap<&str, Value> = HashMap::new();
         let ctxt = Context::new_dbus(Endian::Little, 0);
-        let encoded = zbus::zvariant::to_bytes(ctxt, &dict).unwrap();
+        let encoded = zvariant::to_bytes(ctxt, &dict).unwrap();
         let options: GetUserInformationOptions = encoded.deserialize().unwrap().0;
 
         assert_eq!(options.reason, None);
@@ -200,7 +201,7 @@ mod tests {
         };
 
         let ctxt = Context::new_dbus(Endian::Little, 0);
-        let encoded = zbus::zvariant::to_bytes(ctxt, &info).unwrap();
+        let encoded = zvariant::to_bytes(ctxt, &info).unwrap();
 
         let decoded: HashMap<String, Value> = encoded.deserialize().unwrap().0;
 

@@ -12,7 +12,8 @@ use {
     std::{ffi::CString, path::Path},
     thiserror::Error,
     zbus::{
-        ObjectServer, interface,
+        ObjectServer, fdo, interface,
+        message::Header,
         zvariant::{DeserializeDict, OwnedObjectPath, SerializeDict, Type},
     },
 };
@@ -334,17 +335,17 @@ impl FileChooser {
     #[tracing::instrument(skip_all, fields(app_id = %app_id, handle = %handle.as_str()))]
     async fn open_file(
         &self,
-        #[zbus(header)] header: zbus::message::Header<'_>,
+        #[zbus(header)] header: Header<'_>,
         handle: OwnedObjectPath,
         app_id: String,
         parent_window: String,
         title: String,
         options: OpenFileOptions,
         #[zbus(object_server)] server: &ObjectServer,
-    ) -> Result<Response<OpenFileResults>, zbus::fdo::Error> {
+    ) -> Result<Response<OpenFileResults>, fdo::Error> {
         let sender = header
             .sender()
-            .ok_or_else(|| zbus::fdo::Error::Failed("Missing sender".to_string()))?
+            .ok_or_else(|| fdo::Error::Failed("Missing sender".to_string()))?
             .to_string();
         Ok(run_request(
             server,
@@ -360,17 +361,17 @@ impl FileChooser {
     #[tracing::instrument(skip_all, fields(app_id = %app_id, handle = %handle.as_str()))]
     async fn save_file(
         &self,
-        #[zbus(header)] header: zbus::message::Header<'_>,
+        #[zbus(header)] header: Header<'_>,
         handle: OwnedObjectPath,
         app_id: String,
         parent_window: String,
         title: String,
         options: SaveFileOptions,
         #[zbus(object_server)] server: &ObjectServer,
-    ) -> Result<Response<SaveFileResults>, zbus::fdo::Error> {
+    ) -> Result<Response<SaveFileResults>, fdo::Error> {
         let sender = header
             .sender()
-            .ok_or_else(|| zbus::fdo::Error::Failed("Missing sender".to_string()))?
+            .ok_or_else(|| fdo::Error::Failed("Missing sender".to_string()))?
             .to_string();
         Ok(run_request(
             server,
@@ -386,17 +387,17 @@ impl FileChooser {
     #[tracing::instrument(skip_all, fields(app_id = %app_id, handle = %handle.as_str()))]
     async fn save_files(
         &self,
-        #[zbus(header)] header: zbus::message::Header<'_>,
+        #[zbus(header)] header: Header<'_>,
         handle: OwnedObjectPath,
         app_id: String,
         parent_window: String,
         title: String,
         options: SaveFilesOptions,
         #[zbus(object_server)] server: &ObjectServer,
-    ) -> Result<Response<SaveFilesResults>, zbus::fdo::Error> {
+    ) -> Result<Response<SaveFilesResults>, fdo::Error> {
         let sender = header
             .sender()
-            .ok_or_else(|| zbus::fdo::Error::Failed("Missing sender".to_string()))?
+            .ok_or_else(|| fdo::Error::Failed("Missing sender".to_string()))?
             .to_string();
         Ok(run_request(
             server,
@@ -476,7 +477,12 @@ fn map_final_choice(c: FinalChoice) -> (String, String) {
 
 #[cfg(test)]
 mod tests {
-    use {super::*, zbus::zvariant::Type};
+    use {
+        super::*,
+        gtk4::glib::MainContext,
+        tokio::sync::mpsc::unbounded_channel,
+        zbus::{Connection, zvariant::Type},
+    };
 
     #[test]
     fn test_map_filter_glob() {
@@ -562,10 +568,10 @@ mod tests {
     #[tokio::test]
     async fn test_save_files_validation_absolute_path() {
         let proxy = crate::gui::UiProxy {
-            context: gtk4::glib::MainContext::default(),
-            sender: tokio::sync::mpsc::unbounded_channel().0,
+            context: MainContext::default(),
+            sender: unbounded_channel().0,
         };
-        let conn = match zbus::Connection::session().await {
+        let conn = match Connection::session().await {
             Ok(c) => c,
             Err(_) => return,
         };
@@ -586,10 +592,10 @@ mod tests {
     #[tokio::test]
     async fn test_save_files_validation_multiple_components() {
         let proxy = crate::gui::UiProxy {
-            context: gtk4::glib::MainContext::default(),
-            sender: tokio::sync::mpsc::unbounded_channel().0,
+            context: MainContext::default(),
+            sender: unbounded_channel().0,
         };
-        let conn = match zbus::Connection::session().await {
+        let conn = match Connection::session().await {
             Ok(c) => c,
             Err(_) => return,
         };
@@ -610,10 +616,10 @@ mod tests {
     #[tokio::test]
     async fn test_save_files_validation_special_path_dot() {
         let proxy = crate::gui::UiProxy {
-            context: gtk4::glib::MainContext::default(),
-            sender: tokio::sync::mpsc::unbounded_channel().0,
+            context: MainContext::default(),
+            sender: unbounded_channel().0,
         };
-        let conn = match zbus::Connection::session().await {
+        let conn = match Connection::session().await {
             Ok(c) => c,
             Err(_) => return,
         };
@@ -634,10 +640,10 @@ mod tests {
     #[tokio::test]
     async fn test_save_files_validation_special_path_dot_dot() {
         let proxy = crate::gui::UiProxy {
-            context: gtk4::glib::MainContext::default(),
-            sender: tokio::sync::mpsc::unbounded_channel().0,
+            context: MainContext::default(),
+            sender: unbounded_channel().0,
         };
-        let conn = match zbus::Connection::session().await {
+        let conn = match Connection::session().await {
             Ok(c) => c,
             Err(_) => return,
         };
@@ -659,7 +665,7 @@ mod tests {
     fn test_open_file_options_deserialize() {
         use {
             std::collections::HashMap,
-            zbus::zvariant::{Endian, Value, serialized::Context},
+            zbus::zvariant::{self, Endian, Value, serialized::Context},
         };
 
         let mut dict = HashMap::new();
@@ -668,7 +674,7 @@ mod tests {
         dict.insert("directory", Value::from(true));
 
         let ctxt = Context::new_dbus(Endian::Little, 0);
-        let encoded = zbus::zvariant::to_bytes(ctxt, &dict).unwrap();
+        let encoded = zvariant::to_bytes(ctxt, &dict).unwrap();
         let options: OpenFileOptions = encoded.deserialize().unwrap().0;
 
         assert_eq!(options.modal, Some(true));
@@ -680,7 +686,7 @@ mod tests {
     fn test_save_file_options_deserialize() {
         use {
             std::collections::HashMap,
-            zbus::zvariant::{Endian, Value, serialized::Context},
+            zbus::zvariant::{self, Endian, Value, serialized::Context},
         };
 
         let mut dict = HashMap::new();
@@ -688,7 +694,7 @@ mod tests {
         dict.insert("current_name", Value::from("new_file.txt"));
 
         let ctxt = Context::new_dbus(Endian::Little, 0);
-        let encoded = zbus::zvariant::to_bytes(ctxt, &dict).unwrap();
+        let encoded = zvariant::to_bytes(ctxt, &dict).unwrap();
         let options: SaveFileOptions = encoded.deserialize().unwrap().0;
 
         assert_eq!(options.modal, Some(true));
@@ -699,7 +705,7 @@ mod tests {
     fn test_save_files_options_deserialize() {
         use {
             std::collections::HashMap,
-            zbus::zvariant::{Endian, Value, serialized::Context},
+            zbus::zvariant::{self, Endian, Value, serialized::Context},
         };
 
         let mut dict = HashMap::new();
@@ -707,7 +713,7 @@ mod tests {
         dict.insert("accept_label", Value::from("Save Here"));
 
         let ctxt = Context::new_dbus(Endian::Little, 0);
-        let encoded = zbus::zvariant::to_bytes(ctxt, &dict).unwrap();
+        let encoded = zvariant::to_bytes(ctxt, &dict).unwrap();
         let options: SaveFilesOptions = encoded.deserialize().unwrap().0;
 
         assert_eq!(options.modal, Some(true));
@@ -718,7 +724,7 @@ mod tests {
     fn test_open_file_results_serialize() {
         use {
             std::collections::HashMap,
-            zbus::zvariant::{Endian, Value, serialized::Context},
+            zbus::zvariant::{self, Endian, Value, serialized::Context},
         };
 
         let results = OpenFileResults {
@@ -729,7 +735,7 @@ mod tests {
         };
 
         let ctxt = Context::new_dbus(Endian::Little, 0);
-        let encoded = zbus::zvariant::to_bytes(ctxt, &results).unwrap();
+        let encoded = zvariant::to_bytes(ctxt, &results).unwrap();
         let decoded: HashMap<String, Value> = encoded.deserialize().unwrap().0;
 
         let uris_val = decoded.get("uris").unwrap();
@@ -745,7 +751,7 @@ mod tests {
     fn test_save_file_results_serialize() {
         use {
             std::collections::HashMap,
-            zbus::zvariant::{Endian, Value, serialized::Context},
+            zbus::zvariant::{self, Endian, Value, serialized::Context},
         };
 
         let results = SaveFileResults {
@@ -755,7 +761,7 @@ mod tests {
         };
 
         let ctxt = Context::new_dbus(Endian::Little, 0);
-        let encoded = zbus::zvariant::to_bytes(ctxt, &results).unwrap();
+        let encoded = zvariant::to_bytes(ctxt, &results).unwrap();
         let decoded: HashMap<String, Value> = encoded.deserialize().unwrap().0;
 
         let uris_val = decoded.get("uris").unwrap();
@@ -767,7 +773,7 @@ mod tests {
     fn test_save_files_results_serialize() {
         use {
             std::collections::HashMap,
-            zbus::zvariant::{Endian, Value, serialized::Context},
+            zbus::zvariant::{self, Endian, Value, serialized::Context},
         };
 
         let results = SaveFilesResults {
@@ -779,7 +785,7 @@ mod tests {
         };
 
         let ctxt = Context::new_dbus(Endian::Little, 0);
-        let encoded = zbus::zvariant::to_bytes(ctxt, &results).unwrap();
+        let encoded = zvariant::to_bytes(ctxt, &results).unwrap();
         let decoded: HashMap<String, Value> = encoded.deserialize().unwrap().0;
 
         let uris_val = decoded.get("uris").unwrap();

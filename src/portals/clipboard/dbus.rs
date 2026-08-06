@@ -14,6 +14,7 @@ use {
         gui::{PortalDispatcher, UiProxy},
         portals::clipboard::gtk_backend,
     },
+    gtk4::glib::MainContext,
     parking_lot::Mutex,
     std::{
         collections::HashMap,
@@ -22,16 +23,22 @@ use {
             Arc,
             atomic::{AtomicU32, Ordering},
         },
+        time::Duration,
+    },
+    tokio::sync::{
+        Notify,
+        oneshot::{Sender, channel},
     },
     zbus::{
         Connection, fdo, interface,
+        message::Header,
         object_server::SignalEmitter,
         zvariant::{Fd, ObjectPath, Value},
     },
 };
 
 struct TransferRequest {
-    fd_sender: tokio::sync::oneshot::Sender<OwnedFd>,
+    fd_sender: Sender<OwnedFd>,
 }
 
 /// D-Bus interface wrapper for the Clipboard portal.
@@ -67,11 +74,11 @@ impl ClipboardPortal {
         let conn_clone = connection.clone();
         let sessions_clone = active_sessions.clone();
 
-        let (tx, rx) = tokio::sync::oneshot::channel();
+        let (tx, rx) = channel();
 
         // Run GTK-specific initialization on the main thread and pipe the event stream back to Tokio
         let _ = proxy.sender.send(Box::new(move || {
-            gtk4::glib::MainContext::default().spawn_local(async move {
+            MainContext::default().spawn_local(async move {
                 match gtk_backend::subscribe_changes() {
                     Ok(formats_rx) => {
                         let _ = tx.send(formats_rx);
@@ -127,7 +134,7 @@ impl ClipboardPortal {
 impl ClipboardPortal {
     async fn request_clipboard(
         &self,
-        #[zbus(header)] header: zbus::message::Header<'_>,
+        #[zbus(header)] header: Header<'_>,
         session_handle: ObjectPath<'_>,
         _options: HashMap<&str, Value<'_>>,
     ) -> fdo::Result<()> {
@@ -145,7 +152,7 @@ impl ClipboardPortal {
             }
         }
 
-        let cancel_notify = std::sync::Arc::new(tokio::sync::Notify::new());
+        let cancel_notify = Arc::new(Notify::new());
         if let Err(e) = self.session_manager.register(
             "clipboard", // app_id isn't directly available, but we can use "clipboard" or just skip rate limiting
             &sender,
@@ -227,7 +234,7 @@ impl ClipboardPortal {
             }
         }
 
-        let (tx, rx) = tokio::sync::oneshot::channel();
+        let (tx, rx) = channel();
         let _ = self.proxy.sender.send(Box::new(move || {
             let res = gtk_backend::claim_selection(mimes);
             let _ = tx.send(res);
@@ -267,7 +274,7 @@ impl ClipboardPortal {
                 } else {
                     let pending = pending_transfers_clone.clone();
                     tokio::spawn(async move {
-                        tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+                        tokio::time::sleep(Duration::from_secs(10)).await;
                         if pending.lock().remove(&serial).is_some() {
                             tracing::warn!("Clipboard transfer request {} timed out", serial);
                         }

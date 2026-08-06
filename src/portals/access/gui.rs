@@ -1,7 +1,7 @@
 use {
     crate::gui::{PortalDispatcher, UiError, UiProxy},
     gtk4::{
-        Button, CheckButton, Image, Label,
+        Align, Button, CheckButton, Image, Label,
         glib::{self, MainContext},
         prelude::{BoxExt, ButtonExt, CheckButtonExt, GtkWindowExt, WidgetExt},
     },
@@ -81,13 +81,13 @@ impl AccessUi {
         if !self.subtitle.is_empty() {
             let subtitle_lbl = Label::new(Some(&self.subtitle));
             subtitle_lbl.add_css_class("title-2");
-            subtitle_lbl.set_halign(gtk4::Align::Start);
+            subtitle_lbl.set_halign(Align::Start);
             dialog.content_area.append(&subtitle_lbl);
         }
 
         if !self.body.is_empty() {
             let body_label = Label::new(Some(&self.body));
-            body_label.set_halign(gtk4::Align::Start);
+            body_label.set_halign(Align::Start);
             body_label.set_margin_top(crate::gui::ELEMENT_MARGIN);
             body_label.set_wrap(true);
             body_label.set_max_width_chars(crate::gui::LABEL_MAX_WIDTH_CHARS);
@@ -109,7 +109,7 @@ impl AccessUi {
                     boolean_choices.push((choice.id.clone(), button));
                 } else {
                     let label = Label::new(Some(&choice.label));
-                    label.set_halign(gtk4::Align::Start);
+                    label.set_halign(Align::Start);
                     label.set_margin_top(crate::gui::ELEMENT_MARGIN);
                     label.add_css_class("dim-label");
                     dialog.content_area.append(&label);
@@ -157,11 +157,11 @@ impl AccessUi {
         window.connect_close_request(move |_| {
             let _ = send_close.dispatch(Err(UiError::Rejected));
             // Let GTK handle the actual window destruction.
-            gtk4::glib::Propagation::Proceed
+            glib::Propagation::Proceed
         });
 
         let send_deny = send.clone();
-        deny_btn.connect_clicked(gtk4::glib::clone!(
+        deny_btn.connect_clicked(glib::clone!(
             #[weak]
             window,
             move |_| {
@@ -171,7 +171,7 @@ impl AccessUi {
         ));
 
         let send_grant = send.clone();
-        grant_btn.connect_clicked(gtk4::glib::clone!(
+        grant_btn.connect_clicked(glib::clone!(
             #[weak]
             window,
             move |_| {
@@ -214,7 +214,7 @@ impl AccessUi {
 
         // Spawn a background task to close the window if the D-Bus request is cancelled.
         // This task runs on the GTK MainContext, so it can safely manipulate the `window`.
-        context.spawn_local(gtk4::glib::clone!(
+        context.spawn_local(glib::clone!(
             #[weak]
             window,
             async move {

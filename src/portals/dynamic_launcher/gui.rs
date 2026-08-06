@@ -1,7 +1,7 @@
 use {
     crate::gui::{PortalDispatcher, UiError, UiProxy},
     gtk4::{
-        Button, Entry, Image, Label,
+        Align, Box, Button, Entry, Image, Label, gio,
         glib::{self, MainContext},
         prelude::{BoxExt, ButtonExt, EditableExt, GtkWindowExt, WidgetExt},
     },
@@ -53,17 +53,17 @@ impl DynamicLauncherUi {
 
         let subtitle_lbl = Label::new(Some(&subtitle));
         subtitle_lbl.add_css_class("title-2");
-        subtitle_lbl.set_halign(gtk4::Align::Start);
+        subtitle_lbl.set_halign(Align::Start);
         dialog.content_area.append(&subtitle_lbl);
 
-        let hbox = gtk4::Box::new(gtk4::Orientation::Horizontal, crate::gui::DEFAULT_SPACING);
+        let hbox = Box::new(gtk4::Orientation::Horizontal, crate::gui::DEFAULT_SPACING);
         hbox.set_margin_top(crate::gui::ELEMENT_MARGIN);
         dialog.content_area.append(&hbox);
 
         if let Some(bytes) = &self.icon_data {
             // Convert raw bytes to a GTK `BytesIcon`
-            let bytes_glib = gtk4::glib::Bytes::from(bytes);
-            let icon = gtk4::gio::BytesIcon::new(&bytes_glib);
+            let bytes_glib = glib::Bytes::from(bytes);
+            let icon = gio::BytesIcon::new(&bytes_glib);
             let image = Image::from_gicon(&icon);
             image.set_pixel_size(64);
             hbox.append(&image);
@@ -78,11 +78,11 @@ impl DynamicLauncherUi {
             hbox.append(&image);
         }
 
-        let vbox = gtk4::Box::new(gtk4::Orientation::Vertical, crate::gui::SMALL_MARGIN);
+        let vbox = Box::new(gtk4::Orientation::Vertical, crate::gui::SMALL_MARGIN);
         hbox.append(&vbox);
 
         let name_label = Label::new(Some(&t!("name")));
-        name_label.set_halign(gtk4::Align::Start);
+        name_label.set_halign(Align::Start);
         vbox.append(&name_label);
 
         let name_entry = Entry::new();
@@ -95,11 +95,11 @@ impl DynamicLauncherUi {
         let send_close = send.clone();
         window.connect_close_request(move |_| {
             let _ = send_close.dispatch(Err(UiError::Rejected));
-            gtk4::glib::Propagation::Proceed
+            glib::Propagation::Proceed
         });
 
         let send_cancel = send.clone();
-        cancel_button.connect_clicked(gtk4::glib::clone!(
+        cancel_button.connect_clicked(glib::clone!(
             #[weak]
             window,
             move |_| {
@@ -109,7 +109,7 @@ impl DynamicLauncherUi {
         ));
 
         let send_ok = send.clone();
-        ok_button.connect_clicked(gtk4::glib::clone!(
+        ok_button.connect_clicked(glib::clone!(
             #[weak]
             window,
             #[weak]

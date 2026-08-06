@@ -7,6 +7,7 @@
 //! D-Bus request handlers (which run on Tokio background threads) use [`run_ui_task`] to
 //! safely dispatch work to the GTK main loop and await the result.
 
+use tokio::sync::oneshot::{Receiver, Sender, channel};
 pub mod dialog;
 pub mod error;
 pub mod ui;
@@ -31,7 +32,7 @@ pub trait PortalDispatcher<T> {
     fn dispatch(&self, data: T) -> Result<(), T>;
 }
 
-pub type UiDispatcher<T> = std::rc::Rc<std::cell::RefCell<Option<tokio::sync::oneshot::Sender<T>>>>;
+pub type UiDispatcher<T> = std::rc::Rc<std::cell::RefCell<Option<Sender<T>>>>;
 
 impl<T> PortalDispatcher<T> for UiDispatcher<T> {
     fn dispatch(&self, data: T) -> Result<(), T> {
@@ -69,12 +70,10 @@ pub async fn run_ui_task<T, E, F, C>(proxy: &UiProxy, f: F, on_closed: C) -> Res
 where
     T: Send + 'static,
     E: Send + 'static,
-    F: FnOnce(UiDispatcher<Result<T, E>>, MainContext, tokio::sync::oneshot::Receiver<()>)
-        + Send
-        + 'static,
+    F: FnOnce(UiDispatcher<Result<T, E>>, MainContext, Receiver<()>) + Send + 'static,
     C: FnOnce() -> E,
 {
-    let (send, recv) = tokio::sync::oneshot::channel();
+    let (send, recv) = channel();
 
     // Cancellation Safety Pattern:
     // We create a oneshot channel here but DO NOT store the `_close_on_close_tx` anywhere.
@@ -83,7 +82,7 @@ where
     // automatically dropped. This cleanly closes the channel, notifying `close_on_close`
     // (which was passed to GTK) that the operation has been aborted, allowing GTK to close
     // the window or clean up.
-    let (_close_on_close_tx, close_on_close) = tokio::sync::oneshot::channel();
+    let (_close_on_close_tx, close_on_close) = channel();
 
     let context = proxy.context.clone();
 

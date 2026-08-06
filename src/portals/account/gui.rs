@@ -1,7 +1,7 @@
 use {
     crate::gui::{PortalDispatcher, UiError, UiProxy},
     gtk4::{
-        Button, Entry, Image, Label,
+        Align, Box, Button, Entry, Image, Label,
         glib::{self, MainContext},
         prelude::{BoxExt, ButtonExt, EditableExt, GtkWindowExt, WidgetExt},
     },
@@ -64,10 +64,10 @@ impl AccountUi {
 
         let subtitle_lbl = Label::new(Some(&subtitle));
         subtitle_lbl.add_css_class("title-2");
-        subtitle_lbl.set_halign(gtk4::Align::Start);
+        subtitle_lbl.set_halign(Align::Start);
         dialog.content_area.append(&subtitle_lbl);
 
-        let hbox = gtk4::Box::new(gtk4::Orientation::Horizontal, crate::gui::DEFAULT_SPACING);
+        let hbox = Box::new(gtk4::Orientation::Horizontal, crate::gui::DEFAULT_SPACING);
         hbox.set_margin_top(crate::gui::ELEMENT_MARGIN);
         dialog.content_area.append(&hbox);
 
@@ -79,7 +79,7 @@ impl AccountUi {
         image.set_pixel_size(64);
         hbox.append(&image);
 
-        let vbox = gtk4::Box::new(gtk4::Orientation::Vertical, 6);
+        let vbox = Box::new(gtk4::Orientation::Vertical, 6);
         hbox.append(&vbox);
 
         let real_name_entry = Entry::new();
@@ -97,11 +97,11 @@ impl AccountUi {
         let send_close = send.clone();
         window.connect_close_request(move |_| {
             let _ = send_close.dispatch(Err(UiError::Rejected));
-            gtk4::glib::Propagation::Proceed
+            glib::Propagation::Proceed
         });
 
         let send_cancel = send.clone();
-        cancel_button.connect_clicked(gtk4::glib::clone!(
+        cancel_button.connect_clicked(glib::clone!(
             #[weak]
             window,
             move |_| {
@@ -111,7 +111,7 @@ impl AccountUi {
         ));
 
         let send_ok = send.clone();
-        ok_button.connect_clicked(gtk4::glib::clone!(
+        ok_button.connect_clicked(glib::clone!(
             #[weak]
             window,
             #[weak]

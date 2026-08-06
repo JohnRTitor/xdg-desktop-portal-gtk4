@@ -1,9 +1,12 @@
 use {
     gdk4_wayland::WaylandToplevel,
-    gtk4::prelude::{Cast, IsA, NativeExt, WidgetExt},
+    gtk4::{
+        Widget,
+        prelude::{Cast, IsA, NativeExt, WidgetExt},
+    },
 };
 
-pub fn set_wayland_parent(widget: &impl IsA<gtk4::Widget>, parent_window: &str) {
+pub fn set_wayland_parent(widget: &impl IsA<Widget>, parent_window: &str) {
     let Some(surface) = widget.native().and_then(|n| n.surface()) else {
         return;
     };

@@ -1,4 +1,4 @@
-use zbus::interface;
+use zbus::{fdo, interface};
 
 /// D-Bus interface wrapper for the Lockdown portal.
 ///
@@ -35,8 +35,8 @@ impl LockdownPortal {
 
     // The properties are read-only for sandboxed apps, so setters always return NotSupported.
     #[zbus(property, name = "disable-printing")]
-    async fn set_disable_printing(&self, _value: bool) -> zbus::fdo::Result<()> {
-        Err(zbus::fdo::Error::NotSupported(
+    async fn set_disable_printing(&self, _value: bool) -> fdo::Result<()> {
+        Err(fdo::Error::NotSupported(
             "Lockdown portal is read-only".into(),
         ))
     }
@@ -47,8 +47,8 @@ impl LockdownPortal {
     }
 
     #[zbus(property, name = "disable-save-to-disk")]
-    async fn set_disable_save_to_disk(&self, _value: bool) -> zbus::fdo::Result<()> {
-        Err(zbus::fdo::Error::NotSupported(
+    async fn set_disable_save_to_disk(&self, _value: bool) -> fdo::Result<()> {
+        Err(fdo::Error::NotSupported(
             "Lockdown portal is read-only".into(),
         ))
     }
@@ -59,8 +59,8 @@ impl LockdownPortal {
     }
 
     #[zbus(property, name = "disable-application-handlers")]
-    async fn set_disable_application_handlers(&self, _value: bool) -> zbus::fdo::Result<()> {
-        Err(zbus::fdo::Error::NotSupported(
+    async fn set_disable_application_handlers(&self, _value: bool) -> fdo::Result<()> {
+        Err(fdo::Error::NotSupported(
             "Lockdown portal is read-only".into(),
         ))
     }
@@ -71,8 +71,8 @@ impl LockdownPortal {
     }
 
     #[zbus(property, name = "disable-location")]
-    async fn set_disable_location(&self, _value: bool) -> zbus::fdo::Result<()> {
-        Err(zbus::fdo::Error::NotSupported(
+    async fn set_disable_location(&self, _value: bool) -> fdo::Result<()> {
+        Err(fdo::Error::NotSupported(
             "Lockdown portal is read-only".into(),
         ))
     }
@@ -83,8 +83,8 @@ impl LockdownPortal {
     }
 
     #[zbus(property, name = "disable-camera")]
-    async fn set_disable_camera(&self, _value: bool) -> zbus::fdo::Result<()> {
-        Err(zbus::fdo::Error::NotSupported(
+    async fn set_disable_camera(&self, _value: bool) -> fdo::Result<()> {
+        Err(fdo::Error::NotSupported(
             "Lockdown portal is read-only".into(),
         ))
     }
@@ -95,8 +95,8 @@ impl LockdownPortal {
     }
 
     #[zbus(property, name = "disable-microphone")]
-    async fn set_disable_microphone(&self, _value: bool) -> zbus::fdo::Result<()> {
-        Err(zbus::fdo::Error::NotSupported(
+    async fn set_disable_microphone(&self, _value: bool) -> fdo::Result<()> {
+        Err(fdo::Error::NotSupported(
             "Lockdown portal is read-only".into(),
         ))
     }
@@ -107,8 +107,8 @@ impl LockdownPortal {
     }
 
     #[zbus(property, name = "disable-sound-output")]
-    async fn set_disable_sound_output(&self, _value: bool) -> zbus::fdo::Result<()> {
-        Err(zbus::fdo::Error::NotSupported(
+    async fn set_disable_sound_output(&self, _value: bool) -> fdo::Result<()> {
+        Err(fdo::Error::NotSupported(
             "Lockdown portal is read-only".into(),
         ))
     }
@@ -125,43 +125,43 @@ mod tests {
         assert!(!portal.disable_printing().await);
         assert!(matches!(
             portal.set_disable_printing(true).await,
-            Err(zbus::fdo::Error::NotSupported(_))
+            Err(fdo::Error::NotSupported(_))
         ));
 
         assert!(!portal.disable_save_to_disk().await);
         assert!(matches!(
             portal.set_disable_save_to_disk(true).await,
-            Err(zbus::fdo::Error::NotSupported(_))
+            Err(fdo::Error::NotSupported(_))
         ));
 
         assert!(!portal.disable_application_handlers().await);
         assert!(matches!(
             portal.set_disable_application_handlers(true).await,
-            Err(zbus::fdo::Error::NotSupported(_))
+            Err(fdo::Error::NotSupported(_))
         ));
 
         assert!(!portal.disable_location().await);
         assert!(matches!(
             portal.set_disable_location(true).await,
-            Err(zbus::fdo::Error::NotSupported(_))
+            Err(fdo::Error::NotSupported(_))
         ));
 
         assert!(!portal.disable_camera().await);
         assert!(matches!(
             portal.set_disable_camera(true).await,
-            Err(zbus::fdo::Error::NotSupported(_))
+            Err(fdo::Error::NotSupported(_))
         ));
 
         assert!(!portal.disable_microphone().await);
         assert!(matches!(
             portal.set_disable_microphone(true).await,
-            Err(zbus::fdo::Error::NotSupported(_))
+            Err(fdo::Error::NotSupported(_))
         ));
 
         assert!(!portal.disable_sound_output().await);
         assert!(matches!(
             portal.set_disable_sound_output(true).await,
-            Err(zbus::fdo::Error::NotSupported(_))
+            Err(fdo::Error::NotSupported(_))
         ));
     }
 }

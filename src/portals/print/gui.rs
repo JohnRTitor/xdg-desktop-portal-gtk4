@@ -1,13 +1,13 @@
 use {
     crate::gui::{PortalDispatcher, UiError, UiProxy},
     gtk4::{
-        PrintUnixDialog, ResponseType,
-        glib::MainContext,
+        PrintUnixDialog, Printer, ResponseType,
+        glib::{self, MainContext},
         prelude::{DialogExt, GtkWindowExt, WidgetExt},
     },
-    std::{cell::RefCell, collections::HashMap},
+    std::{cell::RefCell, collections::HashMap, time::Duration},
     tokio::sync::oneshot::Receiver,
-    zbus::zvariant::OwnedValue,
+    zbus::zvariant::{OwnedValue, Value},
 };
 
 const PRINT_TOKEN_TIMEOUT_SECS: u32 = 300;
@@ -15,10 +15,10 @@ const PRINT_TOKEN_TIMEOUT_SECS: u32 = 300;
 pub struct CachedPrintJob {
     pub app_id: String,
     pub title: String,
-    pub printer: gtk4::Printer,
+    pub printer: Printer,
     pub settings: gtk4::PrintSettings,
     pub page_setup: gtk4::PageSetup,
-    pub source_id: gtk4::glib::SourceId,
+    pub source_id: glib::SourceId,
 }
 
 // Since `gtk4::Printer` and related objects are `!Send`, we must cache the print jobs
@@ -79,24 +79,22 @@ impl PrintUi {
 
                 let settings = d.settings();
                 settings.foreach(|k, v| {
-                    if let Ok(owned) =
-                        zbus::zvariant::OwnedValue::try_from(zbus::zvariant::Value::from(v))
-                    {
+                    if let Ok(owned) = zbus::zvariant::OwnedValue::try_from(Value::from(v)) {
                         settings_map.insert(k.to_string(), owned);
                     }
                 });
 
                 let page_setup = d.page_setup();
-                let key_file = gtk4::glib::KeyFile::new();
+                let key_file = glib::KeyFile::new();
                 page_setup.to_key_file(&key_file, Some("Page Setup"));
                 if let Ok(keys) = key_file.keys("Page Setup") {
                     for key in keys {
                         let Ok(val) = key_file.value("Page Setup", &key) else {
                             continue;
                         };
-                        let Ok(owned) = zbus::zvariant::OwnedValue::try_from(
-                            zbus::zvariant::Value::from(val.as_str()),
-                        ) else {
+                        let Ok(owned) =
+                            zbus::zvariant::OwnedValue::try_from(Value::from(val.as_str()))
+                        else {
                             continue;
                         };
                         page_setup_map.insert(key.to_string(), owned);
@@ -119,14 +117,12 @@ impl PrintUi {
                 // after `PreparePrint` successfully returns a token. We allow a 300-second (5 minute)
                 // timeout for the application to generate its print document (e.g. PDF) and call `Print`.
                 // If it takes longer or crashes, we evict the cached job to prevent a memory leak.
-                let source_id = gtk4::glib::timeout_add_seconds_local_once(
-                    PRINT_TOKEN_TIMEOUT_SECS,
-                    move || {
+                let source_id =
+                    glib::timeout_add_seconds_local_once(PRINT_TOKEN_TIMEOUT_SECS, move || {
                         PRINT_JOBS.with(|jobs| {
                             jobs.borrow_mut().remove(&token_clone);
                         });
-                    },
-                );
+                    });
 
                 PRINT_JOBS.with(|jobs| {
                     jobs.borrow_mut().insert(
@@ -155,7 +151,7 @@ impl PrintUi {
         dialog.show();
         context.spawn_local(async move {
             let _ = close_on_close.await;
-            gtk4::glib::timeout_future(std::time::Duration::from_secs(5)).await;
+            glib::timeout_future(Duration::from_secs(5)).await;
             dialog.destroy();
         });
     }

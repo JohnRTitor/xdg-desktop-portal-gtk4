@@ -6,7 +6,8 @@ use {
     },
     std::collections::HashMap,
     zbus::{
-        interface,
+        fdo, interface,
+        message::Header,
         zvariant::{OwnedObjectPath, OwnedValue, SerializeDict, Type},
     },
 };
@@ -139,17 +140,17 @@ impl UsbPortal {
     #[zbus(name = "AcquireDevices")]
     async fn acquire_devices(
         &self,
-        #[zbus(header)] header: zbus::message::Header<'_>,
+        #[zbus(header)] header: Header<'_>,
         handle: OwnedObjectPath,
         parent_window: String,
         app_id: String,
         devices: Vec<UsbDeviceData>,
         options: HashMap<String, OwnedValue>,
         #[zbus(object_server)] server: &zbus::ObjectServer,
-    ) -> Result<Response<UsbResults>, zbus::fdo::Error> {
+    ) -> Result<Response<UsbResults>, fdo::Error> {
         let sender = header
             .sender()
-            .ok_or_else(|| zbus::fdo::Error::Failed("Missing sender".to_string()))?
+            .ok_or_else(|| fdo::Error::Failed("Missing sender".to_string()))?
             .to_string();
         Ok(run_request(
             server,
@@ -197,7 +198,7 @@ mod tests {
 
     #[test]
     fn test_usb_results_serialize() {
-        use zbus::zvariant::{Endian, Value, serialized::Context};
+        use zbus::zvariant::{self, Endian, Value, serialized::Context};
 
         let mut props = HashMap::new();
         props.insert(
@@ -210,7 +211,7 @@ mod tests {
         };
 
         let ctxt = Context::new_dbus(Endian::Little, 0);
-        let encoded = zbus::zvariant::to_bytes(ctxt, &results).unwrap();
+        let encoded = zvariant::to_bytes(ctxt, &results).unwrap();
         let decoded: HashMap<String, Value> = encoded.deserialize().unwrap().0;
 
         let _decoded_devices_val = decoded.get("devices").unwrap();

@@ -1,8 +1,9 @@
 use {
     crate::gui::{PortalDispatcher, UiError, UiProxy},
     gtk4::{
-        Box as GtkBox, Button, Image, Label, ListBox, ListBoxRow, Orientation, ScrolledWindow,
-        gio::AppInfo,
+        Align, Box as GtkBox, Button, Image, Label, ListBox, ListBoxRow, Orientation,
+        ScrolledWindow,
+        gio::{self, AppInfo},
         glib::{self, MainContext},
         prelude::*,
     },
@@ -95,7 +96,7 @@ impl AppChooserUi {
             }
         });
 
-        list_box.connect_row_selected(gtk4::glib::clone!(
+        list_box.connect_row_selected(glib::clone!(
             #[weak]
             ok_button,
             move |_, row| {
@@ -110,11 +111,11 @@ impl AppChooserUi {
         let send_close = send.clone();
         window.connect_close_request(move |_| {
             let _ = send_close.dispatch(Err(UiError::Rejected));
-            gtk4::glib::Propagation::Proceed
+            glib::Propagation::Proceed
         });
 
         let send_cancel = send.clone();
-        cancel_button.connect_clicked(gtk4::glib::clone!(
+        cancel_button.connect_clicked(glib::clone!(
             #[weak]
             window,
             move |_| {
@@ -124,16 +125,16 @@ impl AppChooserUi {
         ));
 
         let send_ok = send.clone();
-        ok_button.connect_clicked(gtk4::glib::clone!(
+        ok_button.connect_clicked(glib::clone!(
             #[weak]
             window,
             #[weak]
             list_box_clone,
             move |_| {
                 let res = if let Some(row) = list_box_clone.selected_row() {
-                    let launch_context = gtk4::gio::AppLaunchContext::new();
+                    let launch_context = gio::AppLaunchContext::new();
                     let token = launch_context
-                        .startup_notify_id(None::<&gtk4::gio::AppInfo>, &[])
+                        .startup_notify_id(None::<&gio::AppInfo>, &[])
                         .map(|s| s.to_string());
                     Ok(AppChooserResult {
                         choice: row.widget_name().to_string(),
@@ -208,7 +209,7 @@ fn populate_list_box(
         }
 
         let name_label = Label::new(Some(&app.name()));
-        name_label.set_halign(gtk4::Align::Start);
+        name_label.set_halign(Align::Start);
         hbox.append(&name_label);
 
         row.set_child(Some(&hbox));

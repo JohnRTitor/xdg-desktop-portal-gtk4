@@ -1,6 +1,9 @@
 use {
+    gtk4::glib::MainContext,
     std::collections::HashMap,
+    tokio::sync::mpsc::unbounded_channel,
     zbus::{
+        Connection,
         connection::Builder,
         proxy,
         zvariant::{OwnedObjectPath, OwnedValue, Value},
@@ -26,9 +29,9 @@ use xdg_desktop_portal_gtk4::{
 /// dropped, so any closures sent via the proxy are silently discarded.
 /// This is fine for settings tests that only exercise Read/ReadAll.
 fn dummy_proxy() -> UiProxy {
-    let (sender, _receiver) = tokio::sync::mpsc::unbounded_channel();
+    let (sender, _receiver) = unbounded_channel();
     UiProxy {
-        context: gtk4::glib::MainContext::default(),
+        context: MainContext::default(),
         sender,
     }
 }
@@ -88,7 +91,7 @@ async fn test_lockdown_all_properties_false() -> Result<(), Box<dyn std::error::
         .build()
         .await?;
 
-    let client_conn = zbus::Connection::session().await?;
+    let client_conn = Connection::session().await?;
     let proxy = LockdownProxy::builder(&client_conn)
         .destination(_conn.unique_name().unwrap().clone())?
         .build()
@@ -103,7 +106,7 @@ async fn test_lockdown_all_properties_false() -> Result<(), Box<dyn std::error::
 #[tokio::test]
 async fn test_settings_read_unknown_namespace() -> Result<(), Box<dyn std::error::Error>> {
     skip_if_dbus_tests_disabled!();
-    let _conn = zbus::Connection::session().await?;
+    let _conn = Connection::session().await?;
     let server = _conn.object_server();
     server
         .at(
@@ -112,7 +115,7 @@ async fn test_settings_read_unknown_namespace() -> Result<(), Box<dyn std::error
         )
         .await?;
 
-    let client_conn = zbus::Connection::session().await?;
+    let client_conn = Connection::session().await?;
     let proxy = SettingsProxy::builder(&client_conn)
         .destination(_conn.unique_name().unwrap().clone())?
         .build()
@@ -127,7 +130,7 @@ async fn test_settings_read_unknown_namespace() -> Result<(), Box<dyn std::error
 #[tokio::test]
 async fn test_settings_read_all_empty_namespaces() -> Result<(), Box<dyn std::error::Error>> {
     skip_if_dbus_tests_disabled!();
-    let _conn = zbus::Connection::session().await?;
+    let _conn = Connection::session().await?;
     let server = _conn.object_server();
     server
         .at(
@@ -136,7 +139,7 @@ async fn test_settings_read_all_empty_namespaces() -> Result<(), Box<dyn std::er
         )
         .await?;
 
-    let client_conn = zbus::Connection::session().await?;
+    let client_conn = Connection::session().await?;
     let proxy = SettingsProxy::builder(&client_conn)
         .destination(_conn.unique_name().unwrap().clone())?
         .build()
@@ -153,7 +156,7 @@ async fn test_settings_read_all_empty_namespaces() -> Result<(), Box<dyn std::er
 #[tokio::test]
 async fn test_inhibit_returns_success() -> Result<(), Box<dyn std::error::Error>> {
     skip_if_dbus_tests_disabled!();
-    let client_conn = zbus::Connection::session().await?;
+    let client_conn = Connection::session().await?;
     let _conn = Builder::session()?
         .serve_at(
             "/org/freedesktop/portal/desktop",
@@ -185,7 +188,7 @@ async fn test_inhibit_returns_success() -> Result<(), Box<dyn std::error::Error>
 #[tokio::test]
 async fn test_settings_read_all_wildcard_namespaces() -> Result<(), Box<dyn std::error::Error>> {
     skip_if_dbus_tests_disabled!();
-    let _conn = zbus::Connection::session().await?;
+    let _conn = Connection::session().await?;
     let server = _conn.object_server();
     server
         .at(
@@ -194,7 +197,7 @@ async fn test_settings_read_all_wildcard_namespaces() -> Result<(), Box<dyn std:
         )
         .await?;
 
-    let client_conn = zbus::Connection::session().await?;
+    let client_conn = Connection::session().await?;
     let proxy = SettingsProxy::builder(&client_conn)
         .destination(_conn.unique_name().unwrap().clone())?
         .build()
@@ -212,7 +215,7 @@ async fn test_settings_read_all_wildcard_namespaces() -> Result<(), Box<dyn std:
 #[tokio::test]
 async fn test_settings_portal_properties() -> Result<(), Box<dyn std::error::Error>> {
     skip_if_dbus_tests_disabled!();
-    let _conn = zbus::Connection::session().await?;
+    let _conn = Connection::session().await?;
     let server = _conn.object_server();
     server
         .at(
@@ -221,7 +224,7 @@ async fn test_settings_portal_properties() -> Result<(), Box<dyn std::error::Err
         )
         .await?;
 
-    let client_conn = zbus::Connection::session().await?;
+    let client_conn = Connection::session().await?;
     let proxy = SettingsProxy::builder(&client_conn)
         .destination(_conn.unique_name().unwrap().clone())?
         .build()

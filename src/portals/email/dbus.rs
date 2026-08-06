@@ -1,8 +1,9 @@
 use {
     crate::core::{request::run_request, response::Response},
-    gtk4::{gio::AppInfo, glib, prelude::AppLaunchContextExt},
+    gtk4::{gio, gio::AppInfo, glib, prelude::AppLaunchContextExt},
     zbus::{
-        ObjectServer, interface,
+        ObjectServer, fdo, interface,
+        message::Header,
         zvariant::{DeserializeDict, OwnedObjectPath, SerializeDict, Type},
     },
 };
@@ -49,7 +50,7 @@ impl Email {
         // default mail client using a `mailto:` URI.
         let url = build_mailto_url(&options);
 
-        let launch_context = gtk4::gio::AppLaunchContext::new();
+        let launch_context = gio::AppLaunchContext::new();
         if let Some(token) = &options.activation_token {
             // Pass the Wayland/X11 activation token so the mail client can raise its window.
             launch_context.setenv("DESKTOP_STARTUP_ID", token);
@@ -140,16 +141,16 @@ impl Email {
     #[tracing::instrument(skip_all, fields(app_id = %app_id, handle = %handle.as_str()))]
     async fn compose_email(
         &self,
-        #[zbus(header)] header: zbus::message::Header<'_>,
+        #[zbus(header)] header: Header<'_>,
         handle: OwnedObjectPath,
         app_id: String,
         parent_window: String,
         options: ComposeEmailOptions,
         #[zbus(object_server)] server: &ObjectServer,
-    ) -> Result<Response<EmailResults>, zbus::fdo::Error> {
+    ) -> Result<Response<EmailResults>, fdo::Error> {
         let sender = header
             .sender()
-            .ok_or_else(|| zbus::fdo::Error::Failed("Missing sender".to_string()))?
+            .ok_or_else(|| fdo::Error::Failed("Missing sender".to_string()))?
             .to_string();
         Ok(run_request(
             server,
@@ -258,7 +259,7 @@ mod tests {
     fn test_compose_email_options_deserialize() {
         use {
             std::collections::HashMap,
-            zbus::zvariant::{Endian, Value, serialized::Context},
+            zbus::zvariant::{self, Endian, Value, serialized::Context},
         };
 
         let mut dict = HashMap::new();
@@ -266,7 +267,7 @@ mod tests {
         dict.insert("subject", Value::from("Test Subject"));
 
         let ctxt = Context::new_dbus(Endian::Little, 0);
-        let encoded = zbus::zvariant::to_bytes(ctxt, &dict).unwrap();
+        let encoded = zvariant::to_bytes(ctxt, &dict).unwrap();
         let options: ComposeEmailOptions = encoded.deserialize().unwrap().0;
 
         assert_eq!(options.address.as_deref(), Some("test@example.com"));
@@ -277,12 +278,12 @@ mod tests {
     fn test_email_results_serialize() {
         use {
             std::collections::HashMap,
-            zbus::zvariant::{Endian, Value, serialized::Context},
+            zbus::zvariant::{self, Endian, Value, serialized::Context},
         };
 
         let results = EmailResults::default();
         let ctxt = Context::new_dbus(Endian::Little, 0);
-        let encoded = zbus::zvariant::to_bytes(ctxt, &results).unwrap();
+        let encoded = zvariant::to_bytes(ctxt, &results).unwrap();
         let decoded: HashMap<String, Value> = encoded.deserialize().unwrap().0;
 
         assert!(decoded.is_empty());

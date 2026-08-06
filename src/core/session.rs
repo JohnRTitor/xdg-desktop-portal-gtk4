@@ -4,7 +4,7 @@
 //! typically used when the application needs continuous access to a resource (e.g.,
 //! screen casting, remote desktop).
 
-use zbus::interface;
+use {std::sync::Arc, tokio::sync::Notify, zbus::interface};
 
 /// Represents a portal session on D-Bus.
 ///
@@ -23,11 +23,11 @@ use zbus::interface;
 /// notifier to signal a Tokio task that manages the GTK counterpart.
 pub struct Session {
     pub id: String,
-    pub on_close: Option<std::sync::Arc<tokio::sync::Notify>>,
+    pub on_close: Option<Arc<Notify>>,
 }
 
 impl Session {
-    pub fn new(id: String, on_close: Option<std::sync::Arc<tokio::sync::Notify>>) -> Self {
+    pub fn new(id: String, on_close: Option<Arc<Notify>>) -> Self {
         Self { id, on_close }
     }
 }
@@ -53,7 +53,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_session_close() {
-        let notify = std::sync::Arc::new(tokio::sync::Notify::new());
+        let notify = Arc::new(Notify::new());
         let session = Session::new("test_session_id".to_string(), Some(notify.clone()));
 
         assert_eq!(session.id, "test_session_id");

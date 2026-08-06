@@ -1,7 +1,10 @@
-use xdg_desktop_portal_gtk4::{
-    core::Portal,
-    gui::{Ui, UiProxy},
-    logging,
+use {
+    tokio::sync::oneshot::{Receiver, Sender, channel},
+    xdg_desktop_portal_gtk4::{
+        core::Portal,
+        gui::{Ui, UiProxy},
+        logging,
+    },
 };
 
 #[tokio::main(worker_threads = 2)]
@@ -9,8 +12,8 @@ async fn portal_worker(
     proxy: UiProxy,
     replace: bool,
     tx: std::sync::mpsc::Sender<Result<(), xdg_desktop_portal_gtk4::core::PortalError>>,
-    shutdown_rx: tokio::sync::oneshot::Receiver<()>,
-    name_lost_tx: tokio::sync::oneshot::Sender<()>,
+    shutdown_rx: Receiver<()>,
+    name_lost_tx: Sender<()>,
 ) {
     let portal = match Portal::create(&proxy, replace, name_lost_tx).await {
         Ok(p) => p,
@@ -54,8 +57,8 @@ fn main() {
     let (tx, rx) = std::sync::mpsc::channel();
     let proxy = ui.proxy().clone();
 
-    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-    let (name_lost_tx, name_lost_rx) = tokio::sync::oneshot::channel::<()>();
+    let (shutdown_tx, shutdown_rx) = channel::<()>();
+    let (name_lost_tx, name_lost_rx) = channel::<()>();
 
     std::thread::spawn(move || {
         portal_worker(proxy, replace, tx, shutdown_rx, name_lost_tx);

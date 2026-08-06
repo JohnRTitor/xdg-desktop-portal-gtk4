@@ -2,9 +2,11 @@ use {
     crate::core::session::Session,
     futures_util::stream::StreamExt,
     parking_lot::Mutex,
-    std::collections::HashMap,
+    std::{collections::HashMap, sync::Arc},
+    tokio::sync::Notify,
     zbus::{
-        Connection, ObjectServer, interface,
+        Connection, ObjectServer, fdo, interface,
+        message::Header,
         object_server::SignalEmitter,
         zvariant::{DeserializeDict, OwnedObjectPath, Type, Value},
     },
@@ -45,7 +47,7 @@ trait Login1Manager {
 }
 
 struct InhibitRequest {
-    notify: std::sync::Arc<tokio::sync::Notify>,
+    notify: Arc<Notify>,
 }
 
 #[interface(name = "org.freedesktop.impl.portal.Request")]
@@ -61,11 +63,11 @@ impl InhibitRequest {
 /// (for ScreenSaver) to place inhibition locks on behalf of sandboxed apps.
 pub struct Inhibit {
     /// Tracks active monitors (session handles) requesting state change notifications.
-    active_monitors: std::sync::Arc<Mutex<HashMap<OwnedObjectPath, OwnedObjectPath>>>,
+    active_monitors: Arc<Mutex<HashMap<OwnedObjectPath, OwnedObjectPath>>>,
     init_once: std::sync::Once,
     session_manager: crate::core::session_manager::SessionManager,
-    logind_proxy: Option<std::sync::Arc<Login1ManagerProxy<'static>>>,
-    screensaver_proxy: Option<std::sync::Arc<ScreenSaverProxy<'static>>>,
+    logind_proxy: Option<Arc<Login1ManagerProxy<'static>>>,
+    screensaver_proxy: Option<Arc<ScreenSaverProxy<'static>>>,
 }
 
 impl Inhibit {
@@ -78,7 +80,7 @@ impl Inhibit {
                 .build()
                 .await
                 .ok()
-                .map(std::sync::Arc::new)
+                .map(Arc::new)
         } else {
             None
         };
@@ -87,10 +89,10 @@ impl Inhibit {
             .build()
             .await
             .ok()
-            .map(std::sync::Arc::new);
+            .map(Arc::new);
 
         Self {
-            active_monitors: std::sync::Arc::new(Mutex::new(HashMap::new())),
+            active_monitors: Arc::new(Mutex::new(HashMap::new())),
             init_once: std::sync::Once::new(),
             session_manager,
             logind_proxy,
@@ -110,40 +112,37 @@ impl Inhibit {
     #[tracing::instrument(skip_all, fields(app_id = %app_id, handle = %handle.as_str()))]
     async fn inhibit(
         &self,
-        #[zbus(header)] header: zbus::message::Header<'_>,
+        #[zbus(header)] header: Header<'_>,
         handle: OwnedObjectPath,
         app_id: String,
         _window: String,
         reason: u32,
         options: InhibitOptions,
         #[zbus(object_server)] server: &ObjectServer,
-    ) -> zbus::fdo::Result<()> {
-        let notify = std::sync::Arc::new(tokio::sync::Notify::new());
+    ) -> fdo::Result<()> {
+        let notify = Arc::new(Notify::new());
         let request = InhibitRequest {
             notify: notify.clone(),
         };
 
         if let Err(e) = server.at(handle.clone(), request).await {
             tracing::error!("Failed to export Inhibit Request {}: {}", handle, e);
-            return Err(zbus::fdo::Error::Failed("Failed to export Request".into()));
+            return Err(fdo::Error::Failed("Failed to export Request".into()));
         }
 
         let sender = header
             .sender()
             .map(|s| s.as_str().to_string())
-            .ok_or_else(|| zbus::fdo::Error::Failed("Missing sender".into()))?;
+            .ok_or_else(|| fdo::Error::Failed("Missing sender".into()))?;
 
-        let cancel_notify = std::sync::Arc::new(tokio::sync::Notify::new()); // We don't use this one in Inhibit itself but we must pass it
+        let cancel_notify = Arc::new(Notify::new()); // We don't use this one in Inhibit itself but we must pass it
 
         if let Err(e) =
             self.session_manager
                 .register(&app_id, &sender, handle.as_str(), cancel_notify.clone())
         {
             let _ = server.remove::<InhibitRequest, _>(handle.clone()).await;
-            return Err(zbus::fdo::Error::Failed(format!(
-                "Session limit exceeded: {}",
-                e
-            )));
+            return Err(fdo::Error::Failed(format!("Session limit exceeded: {}", e)));
         }
 
         let server_clone = server.clone();
@@ -244,15 +243,15 @@ impl Inhibit {
     #[tracing::instrument(skip_all, fields(app_id = %app_id, handle = %handle.as_str()))]
     async fn create_monitor(
         &self,
-        #[zbus(header)] header: zbus::message::Header<'_>,
+        #[zbus(header)] header: Header<'_>,
         handle: OwnedObjectPath,
         session_handle: OwnedObjectPath,
         app_id: String,
         _window: String,
         #[zbus(object_server)] server: &ObjectServer,
-    ) -> zbus::fdo::Result<u32> {
-        let notify = std::sync::Arc::new(tokio::sync::Notify::new());
-        let cancel_notify = std::sync::Arc::new(tokio::sync::Notify::new());
+    ) -> fdo::Result<u32> {
+        let notify = Arc::new(Notify::new());
+        let cancel_notify = Arc::new(Notify::new());
 
         let sender = match header.sender() {
             Some(s) => s.as_str().to_string(),
@@ -369,7 +368,7 @@ mod tests {
     use {
         super::*,
         std::collections::HashMap,
-        zbus::zvariant::{Endian, Value, serialized::Context},
+        zbus::zvariant::{self, Endian, Value, serialized::Context},
     };
 
     #[test]
@@ -378,7 +377,7 @@ mod tests {
         dict.insert("reason", Value::from("Playing a movie"));
 
         let ctxt = Context::new_dbus(Endian::Little, 0);
-        let encoded = zbus::zvariant::to_bytes(ctxt, &dict).unwrap();
+        let encoded = zvariant::to_bytes(ctxt, &dict).unwrap();
         let options: InhibitOptions = encoded.deserialize().unwrap().0;
 
         assert_eq!(options.reason.as_deref(), Some("Playing a movie"));
@@ -388,7 +387,7 @@ mod tests {
     fn test_inhibit_options_empty() {
         let dict: HashMap<&str, Value> = HashMap::new();
         let ctxt = Context::new_dbus(Endian::Little, 0);
-        let encoded = zbus::zvariant::to_bytes(ctxt, &dict).unwrap();
+        let encoded = zvariant::to_bytes(ctxt, &dict).unwrap();
         let options: InhibitOptions = encoded.deserialize().unwrap().0;
 
         assert_eq!(options.reason, None);

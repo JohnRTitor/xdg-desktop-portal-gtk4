@@ -1,7 +1,7 @@
 use {
     crate::gui::{PortalDispatcher, UiError, UiProxy},
     gtk4::{
-        Box as GtkBox, Button, CheckButton, Label, ListBox, ListBoxRow, Orientation,
+        Align, Box as GtkBox, Button, CheckButton, Label, ListBox, ListBoxRow, Orientation,
         ScrolledWindow,
         glib::{self, MainContext},
         prelude::*,
@@ -76,7 +76,7 @@ impl UsbUi {
         let checks: Rc<Vec<CheckButton>> =
             Rc::new(self.devices.iter().map(|_| CheckButton::new()).collect());
 
-        let weak_checks: Rc<Vec<gtk4::glib::WeakRef<CheckButton>>> =
+        let weak_checks: Rc<Vec<glib::WeakRef<CheckButton>>> =
             Rc::new(checks.iter().map(|c| c.downgrade()).collect());
 
         for (i, device) in self.devices.iter().enumerate() {
@@ -93,11 +93,11 @@ impl UsbUi {
             let vbox = GtkBox::new(Orientation::Vertical, 4);
             let title_label = Label::builder()
                 .label(&device.title)
-                .halign(gtk4::Align::Start)
+                .halign(Align::Start)
                 .build();
             let subtitle_label = Label::builder()
                 .label(&device.subtitle)
-                .halign(gtk4::Align::Start)
+                .halign(Align::Start)
                 .build();
             subtitle_label.add_css_class("dim-label");
 
@@ -107,7 +107,7 @@ impl UsbUi {
             if let Some(serial) = &device.serial {
                 let serial_label = Label::builder()
                     .label(format!("SN: {}", serial))
-                    .halign(gtk4::Align::Start)
+                    .halign(Align::Start)
                     .build();
                 serial_label.add_css_class("dim-label");
                 vbox.append(&serial_label);
@@ -118,7 +118,7 @@ impl UsbUi {
             list_box.append(&row);
 
             let weak_checks_clone = weak_checks.clone();
-            check.connect_toggled(gtk4::glib::clone!(
+            check.connect_toggled(glib::clone!(
                 #[weak]
                 ok_button,
                 move |_| {
@@ -137,11 +137,11 @@ impl UsbUi {
         let send_close = send.clone();
         window.connect_close_request(move |_| {
             let _ = send_close.dispatch(Err(UiError::Rejected));
-            gtk4::glib::Propagation::Proceed
+            glib::Propagation::Proceed
         });
 
         let send_cancel = send.clone();
-        cancel_button.connect_clicked(gtk4::glib::clone!(
+        cancel_button.connect_clicked(glib::clone!(
             #[weak]
             window,
             move |_| {
@@ -152,7 +152,7 @@ impl UsbUi {
 
         let send_ok = send.clone();
         let checks_weak_ok = weak_checks.clone();
-        ok_button.connect_clicked(gtk4::glib::clone!(
+        ok_button.connect_clicked(glib::clone!(
             #[weak]
             window,
             move |_| {

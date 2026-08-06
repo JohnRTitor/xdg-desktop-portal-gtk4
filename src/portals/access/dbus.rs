@@ -6,7 +6,8 @@ use {
     },
     serde::Deserialize,
     zbus::{
-        ObjectServer, interface,
+        ObjectServer, fdo, interface,
+        message::Header,
         zvariant::{DeserializeDict, OwnedObjectPath, SerializeDict, Type},
     },
 };
@@ -126,7 +127,7 @@ impl Access {
     #[tracing::instrument(skip_all, fields(app_id = %app_id, handle = %handle.as_str()))]
     async fn access_dialog(
         &self,
-        #[zbus(header)] header: zbus::message::Header<'_>,
+        #[zbus(header)] header: Header<'_>,
         handle: OwnedObjectPath,
         app_id: String,
         parent_window: String,
@@ -135,10 +136,10 @@ impl Access {
         body: String,
         options: AccessDialogOptions,
         #[zbus(object_server)] server: &ObjectServer,
-    ) -> Result<Response<AccessResults>, zbus::fdo::Error> {
+    ) -> Result<Response<AccessResults>, fdo::Error> {
         let sender = header
             .sender()
-            .ok_or_else(|| zbus::fdo::Error::Failed("Missing sender".to_string()))?
+            .ok_or_else(|| fdo::Error::Failed("Missing sender".to_string()))?
             .to_string();
         // Run the request concurrently with a cancellation listener.
         // If the frontend calls `Close()` on the request object path, `run_request`
@@ -167,7 +168,7 @@ mod tests {
     use {
         super::*,
         std::collections::HashMap,
-        zbus::zvariant::{Endian, Value, serialized::Context},
+        zbus::zvariant::{self, Endian, Value, serialized::Context},
     };
 
     #[test]
@@ -194,7 +195,7 @@ mod tests {
         dict.insert("choices", Value::from(vec![choice]));
 
         let ctxt = Context::new_dbus(Endian::Little, 0);
-        let encoded = zbus::zvariant::to_bytes(ctxt, &dict).unwrap();
+        let encoded = zvariant::to_bytes(ctxt, &dict).unwrap();
         let options: AccessDialogOptions = encoded.deserialize().unwrap().0;
 
         assert_eq!(options.modal, Some(false));
@@ -209,7 +210,7 @@ mod tests {
     fn test_access_dialog_options_empty() {
         let dict: HashMap<&str, Value> = HashMap::new();
         let ctxt = Context::new_dbus(Endian::Little, 0);
-        let encoded = zbus::zvariant::to_bytes(ctxt, &dict).unwrap();
+        let encoded = zvariant::to_bytes(ctxt, &dict).unwrap();
         let options: AccessDialogOptions = encoded.deserialize().unwrap().0;
 
         assert_eq!(options.modal, None);
@@ -224,7 +225,7 @@ mod tests {
         };
 
         let ctxt = Context::new_dbus(Endian::Little, 0);
-        let encoded = zbus::zvariant::to_bytes(ctxt, &results).unwrap();
+        let encoded = zvariant::to_bytes(ctxt, &results).unwrap();
 
         let decoded: HashMap<String, Value> = encoded.deserialize().unwrap().0;
         let choices = decoded.get("choices").unwrap();

@@ -43,7 +43,7 @@ pub(crate) struct SessionManagerState {
 ///
 /// # Synchronization Strategy
 ///
-/// We use a standard `std::sync::Mutex` rather than `tokio::sync::Mutex` because
+/// We use a `parking_lot::Mutex` rather than `tokio::sync::Mutex` or `std::sync::Mutex` because
 /// the critical sections (register/unregister/cleanup) are extremely short (just
 /// HashMap operations) and never cross `.await` points. This avoids the overhead
 /// and potential deadlocks of asynchronous locking for simple state.

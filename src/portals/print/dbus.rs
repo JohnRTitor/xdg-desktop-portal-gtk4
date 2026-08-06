@@ -6,7 +6,8 @@ use {
     },
     std::collections::HashMap,
     zbus::{
-        ObjectServer, interface,
+        ObjectServer, fdo, interface,
+        message::Header,
         zvariant::{DeserializeDict, Fd, OwnedObjectPath, OwnedValue, SerializeDict, Type, Value},
     },
 };
@@ -148,7 +149,7 @@ impl Print {
     #[tracing::instrument(skip_all, fields(app_id = %app_id, handle = %handle.as_str()))]
     async fn prepare_print(
         &self,
-        #[zbus(header)] header: zbus::message::Header<'_>,
+        #[zbus(header)] header: Header<'_>,
         handle: OwnedObjectPath,
         app_id: String,
         parent_window: String,
@@ -157,10 +158,10 @@ impl Print {
         page_setup: HashMap<String, Value<'_>>,
         options: PreparePrintOptions,
         #[zbus(object_server)] server: &ObjectServer,
-    ) -> Result<Response<PreparePrintResults>, zbus::fdo::Error> {
+    ) -> Result<Response<PreparePrintResults>, fdo::Error> {
         let sender = header
             .sender()
-            .ok_or_else(|| zbus::fdo::Error::Failed("Missing sender".to_string()))?
+            .ok_or_else(|| fdo::Error::Failed("Missing sender".to_string()))?
             .to_string();
         Ok(run_request(
             server,
@@ -184,7 +185,7 @@ impl Print {
     #[tracing::instrument(skip_all, fields(app_id = %app_id, handle = %handle.as_str()))]
     async fn print(
         &self,
-        #[zbus(header)] header: zbus::message::Header<'_>,
+        #[zbus(header)] header: Header<'_>,
         handle: OwnedObjectPath,
         app_id: String,
         parent_window: String,
@@ -192,10 +193,10 @@ impl Print {
         fd: Fd<'_>,
         options: PrintOptions,
         #[zbus(object_server)] server: &ObjectServer,
-    ) -> Result<Response<PrintResults>, zbus::fdo::Error> {
+    ) -> Result<Response<PrintResults>, fdo::Error> {
         let sender = header
             .sender()
-            .ok_or_else(|| zbus::fdo::Error::Failed("Missing sender".to_string()))?
+            .ok_or_else(|| fdo::Error::Failed("Missing sender".to_string()))?
             .to_string();
         Ok(run_request(
             server,
@@ -237,7 +238,7 @@ mod tests {
     fn test_prepare_print_options_deserialize() {
         use {
             std::collections::HashMap,
-            zbus::zvariant::{Endian, Value, serialized::Context},
+            zbus::zvariant::{self, Endian, Value, serialized::Context},
         };
 
         let mut dict = HashMap::new();
@@ -245,7 +246,7 @@ mod tests {
         dict.insert("accept_label", Value::from("Print It"));
 
         let ctxt = Context::new_dbus(Endian::Little, 0);
-        let encoded = zbus::zvariant::to_bytes(ctxt, &dict).unwrap();
+        let encoded = zvariant::to_bytes(ctxt, &dict).unwrap();
         let options: PreparePrintOptions = encoded.deserialize().unwrap().0;
 
         assert_eq!(options.modal, Some(true));
@@ -256,14 +257,14 @@ mod tests {
     fn test_print_options_deserialize() {
         use {
             std::collections::HashMap,
-            zbus::zvariant::{Endian, Value, serialized::Context},
+            zbus::zvariant::{self, Endian, Value, serialized::Context},
         };
 
         let mut dict = HashMap::new();
         dict.insert("token", Value::from(12345u32));
 
         let ctxt = Context::new_dbus(Endian::Little, 0);
-        let encoded = zbus::zvariant::to_bytes(ctxt, &dict).unwrap();
+        let encoded = zvariant::to_bytes(ctxt, &dict).unwrap();
         let options: PrintOptions = encoded.deserialize().unwrap().0;
 
         assert_eq!(options.token, Some(12345));
@@ -273,7 +274,7 @@ mod tests {
     fn test_prepare_print_results_serialize() {
         use {
             std::collections::HashMap,
-            zbus::zvariant::{Endian, Value, serialized::Context},
+            zbus::zvariant::{self, Endian, Value, serialized::Context},
         };
 
         let results = PreparePrintResults {
@@ -283,7 +284,7 @@ mod tests {
         };
 
         let ctxt = Context::new_dbus(Endian::Little, 0);
-        let encoded = zbus::zvariant::to_bytes(ctxt, &results).unwrap();
+        let encoded = zvariant::to_bytes(ctxt, &results).unwrap();
         let decoded: HashMap<String, Value> = encoded.deserialize().unwrap().0;
 
         assert_eq!(

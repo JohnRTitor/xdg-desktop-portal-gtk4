@@ -21,6 +21,7 @@
 use {
     crate::gui::UiProxy,
     thiserror::Error,
+    tokio::sync::oneshot::Sender,
     zbus::{Connection, fdo::RequestNameFlags},
 };
 
@@ -91,7 +92,7 @@ impl Portal {
     pub async fn create(
         proxy: &UiProxy,
         replace: bool,
-        name_lost_tx: tokio::sync::oneshot::Sender<()>,
+        name_lost_tx: Sender<()>,
     ) -> Result<Self, PortalError> {
         let session = Connection::session()
             .await

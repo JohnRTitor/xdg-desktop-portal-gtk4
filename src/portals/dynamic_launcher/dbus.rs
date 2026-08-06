@@ -5,7 +5,8 @@ use {
         gui::UiProxy,
     },
     zbus::{
-        ObjectServer, interface,
+        ObjectServer, fdo, interface,
+        message::Header,
         zvariant::{DeserializeDict, OwnedObjectPath, OwnedValue, SerializeDict, Type, Value},
     },
 };
@@ -114,7 +115,7 @@ impl DynamicLauncher {
     #[tracing::instrument(skip_all, fields(app_id = %app_id, handle = %handle.as_str()))]
     async fn prepare_install(
         &self,
-        #[zbus(header)] header: zbus::message::Header<'_>,
+        #[zbus(header)] header: Header<'_>,
         handle: OwnedObjectPath,
         app_id: String,
         parent_window: String,
@@ -122,10 +123,10 @@ impl DynamicLauncher {
         icon_v: Value<'_>,
         options: PrepareInstallOptions,
         #[zbus(object_server)] server: &ObjectServer,
-    ) -> Result<Response<PrepareInstallResults>, zbus::fdo::Error> {
+    ) -> Result<Response<PrepareInstallResults>, fdo::Error> {
         let sender = header
             .sender()
-            .ok_or_else(|| zbus::fdo::Error::Failed("Missing sender".to_string()))?
+            .ok_or_else(|| fdo::Error::Failed("Missing sender".to_string()))?
             .to_string();
         let icon_owned = match OwnedValue::try_from(icon_v) {
             Ok(v) => v,
@@ -206,13 +207,13 @@ fn parse_icon(icon_v: &OwnedValue) -> (Option<String>, Option<Vec<u8>>) {
 
     match type_str {
         "bytes" => {
-            let bytes = <zbus::zvariant::Value>::try_from(&fields[1])
+            let bytes = <Value>::try_from(&fields[1])
                 .ok()
                 .and_then(|v| <Vec<u8>>::try_from(v).ok());
             (None, bytes)
         }
         "themed" => {
-            let names = <zbus::zvariant::Value>::try_from(&fields[1])
+            let names = <Value>::try_from(&fields[1])
                 .ok()
                 .and_then(|v| <Vec<String>>::try_from(v).ok());
             if let Some(name) = names.and_then(|n| n.first().cloned()) {
@@ -226,7 +227,12 @@ fn parse_icon(icon_v: &OwnedValue) -> (Option<String>, Option<Vec<u8>>) {
 
 #[cfg(test)]
 mod tests {
-    use {super::*, zbus::zvariant::Value};
+    use {
+        super::*,
+        gtk4::glib::MainContext,
+        tokio::sync::mpsc::unbounded_channel,
+        zbus::{Connection, zvariant::Value},
+    };
 
     #[test]
     fn test_parse_icon_string() {
@@ -285,10 +291,10 @@ mod tests {
     async fn test_request_install_token_allowed() {
         // We just create an empty MainContext for the UiProxy so we don't start GTK.
         let proxy = UiProxy {
-            context: gtk4::glib::MainContext::default(),
-            sender: tokio::sync::mpsc::unbounded_channel().0,
+            context: MainContext::default(),
+            sender: unbounded_channel().0,
         };
-        let conn = match zbus::Connection::session().await {
+        let conn = match Connection::session().await {
             Ok(c) => c,
             Err(_) => return,
         };
@@ -323,7 +329,7 @@ mod tests {
             context: gtk4::glib::MainContext::default(),
             sender: tokio::sync::mpsc::unbounded_channel().0,
         };
-        let conn = match zbus::Connection::session().await {
+        let conn = match Connection::session().await {
             Ok(c) => c,
             Err(_) => return,
         };
@@ -346,10 +352,10 @@ mod tests {
     #[tokio::test]
     async fn test_dynamic_launcher_properties() {
         let proxy = UiProxy {
-            context: gtk4::glib::MainContext::default(),
-            sender: tokio::sync::mpsc::unbounded_channel().0,
+            context: MainContext::default(),
+            sender: unbounded_channel().0,
         };
-        let conn = match zbus::Connection::session().await {
+        let conn = match Connection::session().await {
             Ok(c) => c,
             Err(_) => return,
         };
@@ -365,7 +371,7 @@ mod tests {
     fn test_prepare_install_options_deserialize() {
         use {
             std::collections::HashMap,
-            zbus::zvariant::{Endian, Value, serialized::Context},
+            zbus::zvariant::{self, Endian, Value, serialized::Context},
         };
 
         let mut dict = HashMap::new();
@@ -374,7 +380,7 @@ mod tests {
         dict.insert("launcher_type", Value::from(2u32));
 
         let ctxt = Context::new_dbus(Endian::Little, 0);
-        let encoded = zbus::zvariant::to_bytes(ctxt, &dict).unwrap();
+        let encoded = zvariant::to_bytes(ctxt, &dict).unwrap();
         let options: PrepareInstallOptions = encoded.deserialize().unwrap().0;
 
         assert_eq!(options.modal, Some(true));
@@ -387,7 +393,7 @@ mod tests {
     fn test_prepare_install_results_serialize() {
         use {
             std::collections::HashMap,
-            zbus::zvariant::{Endian, Value, serialized::Context},
+            zbus::zvariant::{self, Endian, Value, serialized::Context},
         };
 
         let results = PrepareInstallResults {
@@ -396,7 +402,7 @@ mod tests {
         };
 
         let ctxt = Context::new_dbus(Endian::Little, 0);
-        let encoded = zbus::zvariant::to_bytes(ctxt, &results).unwrap();
+        let encoded = zvariant::to_bytes(ctxt, &results).unwrap();
         let decoded: HashMap<String, Value> = encoded.deserialize().unwrap().0;
 
         assert_eq!(

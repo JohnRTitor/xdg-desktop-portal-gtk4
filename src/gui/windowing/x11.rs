@@ -1,11 +1,14 @@
 use {
     gdk4_x11::{X11Display, X11Surface},
-    gtk4::prelude::{Cast, IsA, NativeExt, SurfaceExt, ToplevelExt, WidgetExt},
+    gtk4::{
+        Widget,
+        prelude::{Cast, IsA, NativeExt, SurfaceExt, ToplevelExt, WidgetExt},
+    },
 };
 
 /// Sets the transient-for hint on the X11 surface of the given widget.
 /// The widget must be realized on an X11Display for this to work.
-pub fn set_x11_parent(widget: &impl IsA<gtk4::Widget>, parent_xid: u64) {
+pub fn set_x11_parent(widget: &impl IsA<Widget>, parent_xid: u64) {
     let Some(surface) = widget.native().and_then(|n| n.surface()) else {
         return;
     };

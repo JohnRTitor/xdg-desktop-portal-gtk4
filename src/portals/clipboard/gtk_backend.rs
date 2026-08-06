@@ -1,6 +1,10 @@
 use {
     gtk4::{gdk, gio, glib, prelude::*},
     std::{cell::RefCell, os::fd::OwnedFd},
+    tokio::sync::{
+        mpsc::{Receiver, channel},
+        oneshot::Sender as OneshotSender,
+    },
 };
 
 const CHANNEL_BUFFER_SIZE: usize = 5;
@@ -59,12 +63,9 @@ impl GtkClipboardBackend {
 
 pub fn claim_selection(
     mimes: Vec<String>,
-) -> Result<
-    tokio::sync::mpsc::Receiver<(String, tokio::sync::oneshot::Sender<OwnedFd>)>,
-    ClipboardError,
-> {
+) -> Result<Receiver<(String, OneshotSender<OwnedFd>)>, ClipboardError> {
     get_backend(|backend| {
-        let (request_tx, request_rx) = tokio::sync::mpsc::channel(10);
+        let (request_tx, request_rx) = channel(10);
         let provider =
             crate::portals::clipboard::provider::PortalContentProvider::new(mimes, request_tx);
 
