@@ -69,83 +69,85 @@ impl PrintUi {
         let send_clone = send.clone();
 
         dialog.connect_response(move |d, r| {
-            let res = match r {
-                ResponseType::Ok => {
-                    let mut settings_map = HashMap::new();
-                    let mut page_setup_map = HashMap::new();
+            let res = (|| -> Result<PrintResult, UiError> {
+                if r != ResponseType::Ok {
+                    return Err(UiError::Rejected);
+                }
 
-                    let settings = d.settings();
-                    settings.foreach(|k, v| {
-                        if let Ok(owned) =
-                            zbus::zvariant::OwnedValue::try_from(zbus::zvariant::Value::from(v))
-                        {
-                            settings_map.insert(k.to_string(), owned);
-                        }
-                    });
+                let mut settings_map = HashMap::new();
+                let mut page_setup_map = HashMap::new();
 
-                    let page_setup = d.page_setup();
-                    let key_file = gtk4::glib::KeyFile::new();
-                    page_setup.to_key_file(&key_file, Some("Page Setup"));
-                    if let Ok(keys) = key_file.keys("Page Setup") {
-                        for key in keys {
-                            if let Ok(val) = key_file.value("Page Setup", &key)
-                                && let Ok(owned) = zbus::zvariant::OwnedValue::try_from(
-                                    zbus::zvariant::Value::from(val.as_str()),
-                                )
-                            {
-                                page_setup_map.insert(key.to_string(), owned);
-                            }
-                        }
+                let settings = d.settings();
+                settings.foreach(|k, v| {
+                    if let Ok(owned) =
+                        zbus::zvariant::OwnedValue::try_from(zbus::zvariant::Value::from(v))
+                    {
+                        settings_map.insert(k.to_string(), owned);
                     }
+                });
 
-                    let printer = d.selected_printer();
-                    if let Some(printer) = printer {
-                        let settings_obj = d.settings();
-                        let page_setup_obj = d.page_setup();
-
-                        // Generate a random token to identify this job in the subsequent `Print` call.
-                        let token: u32 = fastrand::u32(..);
-                        let token_clone = token;
-
-                        // The XDG Desktop Portal Print specification expects the application to call `Print`
-                        // after `PreparePrint` successfully returns a token. We allow a 300-second (5 minute)
-                        // timeout for the application to generate its print document (e.g. PDF) and call `Print`.
-                        // If it takes longer or crashes, we evict the cached job to prevent a memory leak.
-                        let source_id = gtk4::glib::timeout_add_seconds_local_once(
-                            PRINT_TOKEN_TIMEOUT_SECS,
-                            move || {
-                                PRINT_JOBS.with(|jobs| {
-                                    jobs.borrow_mut().remove(&token_clone);
-                                });
-                            },
-                        );
-
-                        PRINT_JOBS.with(|jobs| {
-                            jobs.borrow_mut().insert(
-                                token,
-                                CachedPrintJob {
-                                    app_id: self.app_id.clone(),
-                                    title: self.title.clone(),
-                                    printer,
-                                    settings: settings_obj,
-                                    page_setup: page_setup_obj,
-                                    source_id,
-                                },
-                            );
-                        });
-
-                        Ok(PrintResult {
-                            token,
-                            settings: settings_map,
-                            page_setup: page_setup_map,
-                        })
-                    } else {
-                        // Dialog was confirmed but no printer was selected
-                        Err(UiError::Rejected)
+                let page_setup = d.page_setup();
+                let key_file = gtk4::glib::KeyFile::new();
+                page_setup.to_key_file(&key_file, Some("Page Setup"));
+                if let Ok(keys) = key_file.keys("Page Setup") {
+                    for key in keys {
+                        let Ok(val) = key_file.value("Page Setup", &key) else {
+                            continue;
+                        };
+                        let Ok(owned) = zbus::zvariant::OwnedValue::try_from(
+                            zbus::zvariant::Value::from(val.as_str()),
+                        ) else {
+                            continue;
+                        };
+                        page_setup_map.insert(key.to_string(), owned);
                     }
                 }
-                _ => Err(UiError::Rejected),
-            };
+
+                let Some(printer) = d.selected_printer() else {
+                    // Dialog was confirmed but no printer was selected
+                    return Err(UiError::Rejected);
+                };
+
+                let settings_obj = d.settings();
+                let page_setup_obj = d.page_setup();
+
+                // Generate a random token to identify this job in the subsequent `Print` call.
+                let token: u32 = fastrand::u32(..);
+                let token_clone = token;
+
+                // The XDG Desktop Portal Print specification expects the application to call `Print`
+                // after `PreparePrint` successfully returns a token. We allow a 300-second (5 minute)
+                // timeout for the application to generate its print document (e.g. PDF) and call `Print`.
+                // If it takes longer or crashes, we evict the cached job to prevent a memory leak.
+                let source_id = gtk4::glib::timeout_add_seconds_local_once(
+                    PRINT_TOKEN_TIMEOUT_SECS,
+                    move || {
+                        PRINT_JOBS.with(|jobs| {
+                            jobs.borrow_mut().remove(&token_clone);
+                        });
+                    },
+                );
+
+                PRINT_JOBS.with(|jobs| {
+                    jobs.borrow_mut().insert(
+                        token,
+                        CachedPrintJob {
+                            app_id: self.app_id.clone(),
+                            title: self.title.clone(),
+                            printer,
+                            settings: settings_obj,
+                            page_setup: page_setup_obj,
+                            source_id,
+                        },
+                    );
+                });
+
+                Ok(PrintResult {
+                    token,
+                    settings: settings_map,
+                    page_setup: page_setup_map,
+                })
+            })();
             let _ = send_clone.dispatch(res);
             d.close();
         });
@@ -172,33 +174,34 @@ impl ExecutePrintUi {
     fn run_impl(self, send: crate::gui::UiDispatcher<Result<(), UiError>>) {
         let job = PRINT_JOBS.with(|jobs| jobs.borrow_mut().remove(&self.token));
 
-        if let Some(cached) = job {
-            // Cancel the eviction timeout since we are now executing the print job
-            cached.source_id.remove();
-
-            let print_job = gtk4::PrintJob::new(
-                &cached.title,
-                &cached.printer,
-                &cached.settings,
-                &cached.page_setup,
-            );
-            if let Err(e) = print_job.set_source_fd(self.fd) {
-                tracing::error!("Failed to set source fd for print job: {}", e);
-                let _ = send.dispatch(Err(UiError::Rejected));
-                return;
-            }
-
-            print_job.send(move |_, err| {
-                if let Err(e) = err {
-                    tracing::error!("Failed to send print job: {}", e);
-                } else {
-                    tracing::info!("Print job successfully sent to CUPS");
-                }
-            });
-            let _ = send.dispatch(Ok(()));
-        } else {
+        let Some(cached) = job else {
             tracing::warn!("Received print request for unknown token: {}", self.token);
             let _ = send.dispatch(Err(UiError::Rejected));
+            return;
+        };
+
+        // Cancel the eviction timeout since we are now executing the print job
+        cached.source_id.remove();
+
+        let print_job = gtk4::PrintJob::new(
+            &cached.title,
+            &cached.printer,
+            &cached.settings,
+            &cached.page_setup,
+        );
+        if let Err(e) = print_job.set_source_fd(self.fd) {
+            tracing::error!("Failed to set source fd for print job: {}", e);
+            let _ = send.dispatch(Err(UiError::Rejected));
+            return;
         }
+
+        print_job.send(move |_, err| {
+            if let Err(e) = err {
+                tracing::error!("Failed to send print job: {}", e);
+            } else {
+                tracing::info!("Print job successfully sent to CUPS");
+            }
+        });
+        let _ = send.dispatch(Ok(()));
     }
 }

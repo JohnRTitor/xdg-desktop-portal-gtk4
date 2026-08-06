@@ -70,13 +70,14 @@ pub fn setup_window<W: IsA<gtk4::Window> + IsA<gtk4::Widget>>(
                             X11Display::open(None).and_then(|d| d.downcast::<X11Display>().ok());
                     }
 
-                    if let Some(x11_display) = display_opt.as_ref() {
-                        window.set_display(x11_display);
-                        window.realize();
-                        set_x11_parent(window.upcast_ref::<gtk4::Widget>(), xid);
-                    } else {
+                    let Some(x11_display) = display_opt.as_ref() else {
                         tracing::warn!("Failed to open X11 display for XWayland fallback.");
-                    }
+                        return;
+                    };
+
+                    window.set_display(x11_display);
+                    window.realize();
+                    set_x11_parent(window.upcast_ref::<gtk4::Widget>(), xid);
                 });
             } else {
                 tracing::warn!("X11 parent handle provided but portal backend is unsupported.");

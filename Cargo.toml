@@ -42,12 +42,36 @@ available-locales = [
 default-locale = "en"
 load-path = "locales"
 
+[dependencies]
+current_locale = "0.1.1"
+fastrand = { version = "2.3", optional = true }
+futures-util = "0.3.32"
+gdk-pixbuf = { version = "0.22.0", optional = true }
+gdk4-wayland = "0.11.4"
+gdk4-x11 = { version = "0.11.4" }
+gtk4 = "0.11.4"
+language-tags = "0.3.2"
+notify = "8.2.0"
+parking_lot = "0.12.5"
+rust-i18n = "4.2.0"
+rustix = { version = "1.1", features = ["pipe", "process"] }
+serde = { version = "1.0.228", features = ["derive"] }
+thiserror = "2.0.18"
+tokio = { version = "1", features = ["macros", "rt", "sync"] }
+tracing = "0.1.44"
+tracing-journald = { version = "0.3.2", optional = true }
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+zbus = { version = "5.17.0", default-features = false, features = ["tokio"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["time"] }
+
 [features]
 default = [
-  "systemd",
   "access",
   "account",
   "app_chooser",
+  "clipboard",
   "dynamic_launcher",
   "email",
   "file_chooser",
@@ -56,11 +80,10 @@ default = [
   "notification",
   "print",
   "settings",
+  "systemd",
   "usb",
-  "clipboard",
 ]
 
-systemd = ["dep:tracing-journald"]
 access = []
 account = []
 app_chooser = []
@@ -73,35 +96,12 @@ lockdown = []
 notification = ["dep:gdk-pixbuf"]
 print = ["dep:fastrand"]
 settings = []
+systemd = ["dep:tracing-journald"]
 usb = []
-
-[dependencies]
-current_locale = "0.1.1"
-futures-util = "0.3.32"
-gdk-pixbuf = { version = "0.22.0", optional = true }
-gdk4-wayland = "0.11.4"
-gdk4-x11 = { version = "0.11.4" }
-gtk4 = "0.11.4"
-language-tags = "0.3.2"
-rustix = { version = "1.1", features = ["process", "pipe"] }
-fastrand = { version = "2.3", optional = true }
-rust-i18n = "4.2.0"
-serde = { version = "1.0.228", features = ["derive"] }
-thiserror = "2.0.18"
-tracing = "0.1.44"
-tracing-journald = { version = "0.3.2", optional = true }
-tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
-zbus = { version = "5.17.0", default-features = false, features = ["tokio"] }
-tokio = { version = "1", features = ["sync", "rt", "macros"] }
-parking_lot = "0.12.5"
-notify = "8.2.0"
-
-[dev-dependencies]
-tokio = { version = "1", features = ["macros", "rt", "time"] }
 
 [profile.release]
 opt-level = 3
-lto = "fat"
-codegen-units = 1
-panic = "abort"
 strip = true
+lto = "fat"
+panic = "abort"
+codegen-units = 1

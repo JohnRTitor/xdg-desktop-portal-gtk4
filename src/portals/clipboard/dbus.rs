@@ -86,27 +86,29 @@ impl ClipboardPortal {
         // Process GTK events and emit D-Bus signals entirely on the Tokio background thread
         // to avoid bogging down the GTK main loop. The GTK thread sends us updates via `rx`.
         tokio::spawn(async move {
-            if let Ok(mut formats_rx) = rx.await {
-                while let Ok(mimes) = formats_rx.recv().await {
-                    let emitter = match SignalEmitter::new(&conn_clone, crate::core::DBUS_PATH) {
-                        Ok(e) => e,
-                        Err(err) => {
-                            tracing::error!("Failed to create SignalEmitter: {}", err);
-                            return;
-                        }
-                    };
+            let Ok(mut formats_rx) = rx.await else {
+                return;
+            };
 
-                    let mut options = HashMap::new();
-                    let mimes_val = Value::from(mimes.clone());
-                    options.insert("mime_types", &mimes_val);
-                    let is_owner = Value::from(false);
-                    options.insert("session_is_owner", &is_owner);
-
-                    let sessions = sessions_clone.lock().clone();
-                    for session in sessions {
-                        let _ = Self::selection_owner_changed(&emitter, &session, options.clone())
-                            .await;
+            while let Ok(mimes) = formats_rx.recv().await {
+                let emitter = match SignalEmitter::new(&conn_clone, crate::core::DBUS_PATH) {
+                    Ok(e) => e,
+                    Err(err) => {
+                        tracing::error!("Failed to create SignalEmitter: {}", err);
+                        return;
                     }
+                };
+
+                let mut options = HashMap::new();
+                let mimes_val = Value::from(mimes.clone());
+                options.insert("mime_types", &mimes_val);
+                let is_owner = Value::from(false);
+                options.insert("session_is_owner", &is_owner);
+
+                let sessions = sessions_clone.lock().clone();
+                for session in sessions {
+                    let _ =
+                        Self::selection_owner_changed(&emitter, &session, options.clone()).await;
                 }
             }
         });

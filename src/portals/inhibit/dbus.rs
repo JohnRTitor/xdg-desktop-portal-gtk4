@@ -316,34 +316,34 @@ impl Inhibit {
             let active_monitors_clone = active_monitors_clone2;
 
             tokio::spawn(async move {
-                {
-                    if let Some(proxy) = ss_proxy_opt
-                        && let Ok(mut stream) = proxy.receive_active_changed().await
-                    {
-                        while let Some(signal) = stream.next().await {
-                            if let Ok(args) = signal.args() {
-                                let active = args.active;
-                                if let Ok(iface_ref) = server_clone
-                                    .interface::<_, Inhibit>(crate::core::DBUS_PATH)
-                                    .await
-                                {
-                                    let mut state: HashMap<&str, Value<'_>> = HashMap::new();
-                                    state.insert("screensaver-active", Value::Bool(active));
+                let Some(proxy) = ss_proxy_opt else {
+                    return;
+                };
+                let Ok(mut stream) = proxy.receive_active_changed().await else {
+                    return;
+                };
 
-                                    let sessions: Vec<OwnedObjectPath> =
-                                        active_monitors_clone.lock().values().cloned().collect();
+                while let Some(signal) = stream.next().await {
+                    let Ok(args) = signal.args() else {
+                        continue;
+                    };
+                    let active = args.active;
+                    let Ok(iface_ref) = server_clone
+                        .interface::<_, Inhibit>(crate::core::DBUS_PATH)
+                        .await
+                    else {
+                        continue;
+                    };
 
-                                    for session_h in sessions {
-                                        let _ = Self::state_changed(
-                                            iface_ref.signal_emitter(),
-                                            &session_h,
-                                            &state,
-                                        )
-                                        .await;
-                                    }
-                                }
-                            }
-                        }
+                    let mut state: HashMap<&str, Value<'_>> = HashMap::new();
+                    state.insert("screensaver-active", Value::Bool(active));
+
+                    let sessions: Vec<OwnedObjectPath> =
+                        active_monitors_clone.lock().values().cloned().collect();
+
+                    for session_h in sessions {
+                        let _ = Self::state_changed(iface_ref.signal_emitter(), &session_h, &state)
+                            .await;
                     }
                 }
             });

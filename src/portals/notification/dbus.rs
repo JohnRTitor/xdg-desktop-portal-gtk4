@@ -232,9 +232,10 @@ impl Notification {
                     .unwrap_or(None);
 
                     if let Some(data) = bytes
-                        && tokio::fs::write(&path, data).await.is_ok() {
-                            sound_file = Some(std::sync::Arc::new(TempSoundFile { path }));
-                        }
+                        && tokio::fs::write(&path, data).await.is_ok()
+                    {
+                        sound_file = Some(std::sync::Arc::new(TempSoundFile { path }));
+                    }
                 } else {
                     tracing::error!("Failed to dup sound fd");
                 }
@@ -515,95 +516,97 @@ async fn listen_for_action_invoked(
 
         let target_data = reverse_map.lock().get(&id).cloned();
 
-        if let Some((app_id, portal_id, action_targets, _)) = target_data.as_deref() {
-            let mut params: Vec<Value<'_>> = vec![];
+        let Some((app_id, portal_id, action_targets, _)) = target_data.as_deref() else {
+            continue;
+        };
 
-            // XDG Notification spec requires parameter: av
-            // 1. The target for the action, if one was specified.
-            // 2. The platform-data as vardict containing an activation-token (s)
-            if let Some(tv) = action_targets.get(action_key) {
-                params.push(Value::from(tv.clone()));
-            }
+        let mut params: Vec<Value<'_>> = vec![];
 
-            let platform_data: HashMap<&str, Value<'_>> = HashMap::new();
-            let platform_data_val = zbus::zvariant::Value::from(platform_data.clone());
-            params.push(platform_data_val);
-
-            let mut app_path = String::from("/");
-            app_path.push_str(&app_id.replace('.', "/").replace('-', "_"));
-
-            let app_id_clone = app_id.clone();
-            let action_key_clone = action_key.to_string();
-            let server_clone = server.clone();
-            let portal_id_clone = portal_id.clone();
-            let session_bus_clone = session_bus.clone();
-            let app_path_clone = app_path.clone();
-            let params_clone = params.clone();
-            let platform_data_clone = platform_data.clone();
-
-            tokio::spawn(async move {
-                if let Some(action_name) = action_key_clone.strip_prefix("app.") {
-                    // This proxy is used to talk back to the specific client application that triggered the notification
-                    // (e.g., when a user clicks a notification action). Because the destination address
-                    // (the app_id or unique connection name) changes dynamically on every single request,
-                    // we must instantiate it on the fly.
-                    let Ok(builder) = ApplicationProxy::builder(&session_bus_clone)
-                        .destination(app_id_clone.as_str())
-                    else {
-                        tracing::error!("Invalid D-Bus destination: {}", app_id_clone);
-                        return;
-                    };
-                    let Ok(builder) = builder.path(app_path_clone.as_str()) else {
-                        tracing::error!("Invalid D-Bus path: {}", app_path_clone);
-                        return;
-                    };
-                    let proxy_res = builder
-                        .cache_properties(zbus::proxy::CacheProperties::No)
-                        .build()
-                        .await;
-
-                    if let Ok(proxy) = proxy_res {
-                        let _ = proxy
-                            .activate_action(action_name, &params_clone, &platform_data_clone)
-                            .await;
-                    }
-                } else {
-                    let Ok(builder) = ApplicationProxy::builder(&session_bus_clone)
-                        .destination(app_id_clone.as_str())
-                    else {
-                        tracing::error!("Invalid D-Bus destination: {}", app_id_clone);
-                        return;
-                    };
-                    let Ok(builder) = builder.path(app_path_clone.as_str()) else {
-                        tracing::error!("Invalid D-Bus path: {}", app_path_clone);
-                        return;
-                    };
-                    let proxy_res = builder
-                        .cache_properties(zbus::proxy::CacheProperties::No)
-                        .build()
-                        .await;
-
-                    if let Ok(proxy) = proxy_res {
-                        let _ = proxy.activate(&platform_data_clone).await;
-                    }
-
-                    let iface_ref_res = server_clone
-                        .interface::<_, Notification>(crate::core::DBUS_PATH)
-                        .await;
-
-                    if let Ok(iface_ref) = iface_ref_res {
-                        let _ = Notification::action_invoked(
-                            iface_ref.signal_emitter(),
-                            &app_id_clone,
-                            &portal_id_clone,
-                            &action_key_clone,
-                            &params_clone,
-                        )
-                        .await;
-                    }
-                }
-            });
+        // XDG Notification spec requires parameter: av
+        // 1. The target for the action, if one was specified.
+        // 2. The platform-data as vardict containing an activation-token (s)
+        if let Some(tv) = action_targets.get(action_key) {
+            params.push(Value::from(tv.clone()));
         }
+
+        let platform_data: HashMap<&str, Value<'_>> = HashMap::new();
+        let platform_data_val = zbus::zvariant::Value::from(platform_data.clone());
+        params.push(platform_data_val);
+
+        let mut app_path = String::from("/");
+        app_path.push_str(&app_id.replace('.', "/").replace('-', "_"));
+
+        let app_id_clone = app_id.clone();
+        let action_key_clone = action_key.to_string();
+        let server_clone = server.clone();
+        let portal_id_clone = portal_id.clone();
+        let session_bus_clone = session_bus.clone();
+        let app_path_clone = app_path.clone();
+        let params_clone = params.clone();
+        let platform_data_clone = platform_data.clone();
+
+        tokio::spawn(async move {
+            if let Some(action_name) = action_key_clone.strip_prefix("app.") {
+                // This proxy is used to talk back to the specific client application that triggered the notification
+                // (e.g., when a user clicks a notification action). Because the destination address
+                // (the app_id or unique connection name) changes dynamically on every single request,
+                // we must instantiate it on the fly.
+                let Ok(builder) = ApplicationProxy::builder(&session_bus_clone)
+                    .destination(app_id_clone.as_str())
+                else {
+                    tracing::error!("Invalid D-Bus destination: {}", app_id_clone);
+                    return;
+                };
+                let Ok(builder) = builder.path(app_path_clone.as_str()) else {
+                    tracing::error!("Invalid D-Bus path: {}", app_path_clone);
+                    return;
+                };
+                let proxy_res = builder
+                    .cache_properties(zbus::proxy::CacheProperties::No)
+                    .build()
+                    .await;
+
+                if let Ok(proxy) = proxy_res {
+                    let _ = proxy
+                        .activate_action(action_name, &params_clone, &platform_data_clone)
+                        .await;
+                }
+            } else {
+                let Ok(builder) = ApplicationProxy::builder(&session_bus_clone)
+                    .destination(app_id_clone.as_str())
+                else {
+                    tracing::error!("Invalid D-Bus destination: {}", app_id_clone);
+                    return;
+                };
+                let Ok(builder) = builder.path(app_path_clone.as_str()) else {
+                    tracing::error!("Invalid D-Bus path: {}", app_path_clone);
+                    return;
+                };
+                let proxy_res = builder
+                    .cache_properties(zbus::proxy::CacheProperties::No)
+                    .build()
+                    .await;
+
+                if let Ok(proxy) = proxy_res {
+                    let _ = proxy.activate(&platform_data_clone).await;
+                }
+
+                let iface_ref_res = server_clone
+                    .interface::<_, Notification>(crate::core::DBUS_PATH)
+                    .await;
+
+                if let Ok(iface_ref) = iface_ref_res {
+                    let _ = Notification::action_invoked(
+                        iface_ref.signal_emitter(),
+                        &app_id_clone,
+                        &portal_id_clone,
+                        &action_key_clone,
+                        &params_clone,
+                    )
+                    .await;
+                }
+            }
+        });
     }
     Ok(())
 }
@@ -619,15 +622,16 @@ async fn listen_for_notification_closed(
         let args = signal.args()?;
         let id = args.id;
 
-        let removed_key = reverse_map.lock().remove(&id).map(|target_data| (target_data.0.clone(), target_data.1.clone()));
+        let Some(target_data) = reverse_map.lock().remove(&id) else {
+            continue;
+        };
 
-        if let Some(key) = removed_key {
-            let mut lock = active_notifications.lock();
-            // To avoid a race condition where the FDO server replaces the notification
-            // but still emits NotificationClosed for the old one, we only remove if it's the exact same FDO ID.
-            if lock.get(&key) == Some(&id) {
-                lock.remove(&key);
-            }
+        let key = (target_data.0.clone(), target_data.1.clone());
+        let mut lock = active_notifications.lock();
+        // To avoid a race condition where the FDO server replaces the notification
+        // but still emits NotificationClosed for the old one, we only remove if it's the exact same FDO ID.
+        if lock.get(&key) == Some(&id) {
+            lock.remove(&key);
         }
     }
     Ok(())
