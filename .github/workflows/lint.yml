@@ -10,6 +10,9 @@ on:
       - '**.rs'
       - '**Cargo.toml'
 
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
   SCCACHE_GHA_ENABLED: "true"
@@ -19,29 +22,28 @@ jobs:
   rustfmt:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: mozilla-actions/sccache-action@v0.0.9
-      - uses: dtolnay/rust-toolchain@nightly
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4.2.2
+      - uses: ./.github/actions/setup-rust
         with:
+          toolchain: nightly
           components: rustfmt
       - run: cargo +nightly fmt --all --check
 
   clippy:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: mozilla-actions/sccache-action@v0.0.9
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4.2.2
+      - uses: ./.github/actions/setup-rust
         with:
+          toolchain: stable
           components: clippy
-      - run: sudo apt-get update && sudo apt-get install -y libgtk-4-dev
       - run: cargo clippy --workspace --locked --tests
 
   rustdoc:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: mozilla-actions/sccache-action@v0.0.9
-      - uses: dtolnay/rust-toolchain@stable
-      - run: sudo apt-get update && sudo apt-get install -y libgtk-4-dev
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4.2.2
+      - uses: ./.github/actions/setup-rust
+        with:
+          toolchain: stable
       - run: cargo doc --no-deps --document-private-items

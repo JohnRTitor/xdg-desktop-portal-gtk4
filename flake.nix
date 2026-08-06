@@ -40,15 +40,17 @@
         {
           formatter = pkgs.nixfmt;
 
-          packages.xdg-desktop-portal-gtk4 = pkgs.callPackage ./contrib/build.nix { version = version; };
-          packages.xdg-desktop-portal-gtk4-test = config.packages.xdg-desktop-portal-gtk4.override {
-            withDbusTests = true;
+          packages = {
+            default = pkgs.callPackage ./contrib/build.nix { inherit version; };
+
+            xdg-desktop-portal-gtk4 = config.packages.default;
+            xdg-desktop-portal-gtk4-tests = config.packages.default.override {
+              withDbusTests = true;
+            };
           };
 
-          packages.default = config.packages.xdg-desktop-portal-gtk4;
-
           checks = {
-            xdg-desktop-portal-gtk4-test = config.packages.xdg-desktop-portal-gtk4-test;
+            xdg-desktop-portal-gtk4-tests = config.packages.xdg-desktop-portal-gtk4-tests;
           };
 
           devShells.default = pkgs.mkShell {
