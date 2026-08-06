@@ -15,9 +15,23 @@ macro_rules! skip_if_dbus_tests_disabled {
     };
 }
 
-use xdg_desktop_portal_gtk4::portals::{
-    inhibit::dbus::Inhibit, lockdown::dbus::LockdownPortal, settings::dbus::SettingsPortal,
+use xdg_desktop_portal_gtk4::{
+    gui::UiProxy,
+    portals::{
+        inhibit::dbus::Inhibit, lockdown::dbus::LockdownPortal, settings::dbus::SettingsPortal,
+    },
 };
+
+/// Creates a dummy `UiProxy` for tests. The receiver side is immediately
+/// dropped, so any closures sent via the proxy are silently discarded.
+/// This is fine for settings tests that only exercise Read/ReadAll.
+fn dummy_proxy() -> UiProxy {
+    let (sender, _receiver) = tokio::sync::mpsc::unbounded_channel();
+    UiProxy {
+        context: gtk4::glib::MainContext::default(),
+        sender,
+    }
+}
 
 // Proxies for the tests
 
@@ -94,7 +108,7 @@ async fn test_settings_read_unknown_namespace() -> Result<(), Box<dyn std::error
     server
         .at(
             "/org/freedesktop/portal/desktop",
-            SettingsPortal::new(server.clone()),
+            SettingsPortal::new(&dummy_proxy(), server.clone()),
         )
         .await?;
 
@@ -118,7 +132,7 @@ async fn test_settings_read_all_empty_namespaces() -> Result<(), Box<dyn std::er
     server
         .at(
             "/org/freedesktop/portal/desktop",
-            SettingsPortal::new(server.clone()),
+            SettingsPortal::new(&dummy_proxy(), server.clone()),
         )
         .await?;
 
@@ -176,7 +190,7 @@ async fn test_settings_read_all_wildcard_namespaces() -> Result<(), Box<dyn std:
     server
         .at(
             "/org/freedesktop/portal/desktop",
-            SettingsPortal::new(server.clone()),
+            SettingsPortal::new(&dummy_proxy(), server.clone()),
         )
         .await?;
 
@@ -203,7 +217,7 @@ async fn test_settings_portal_properties() -> Result<(), Box<dyn std::error::Err
     server
         .at(
             "/org/freedesktop/portal/desktop",
-            SettingsPortal::new(server.clone()),
+            SettingsPortal::new(&dummy_proxy(), server.clone()),
         )
         .await?;
 

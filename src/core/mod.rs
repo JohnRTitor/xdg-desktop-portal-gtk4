@@ -135,7 +135,7 @@ impl Portal {
         #[cfg(feature = "inhibit")]
         add!(Inhibit::new(session_manager.clone(), system_conn).await);
         #[cfg(feature = "settings")]
-        add!(SettingsPortal::new(session.object_server().clone()));
+        add!(SettingsPortal::new(proxy, session.object_server().clone()));
         #[cfg(feature = "lockdown")]
         add!(LockdownPortal::new());
         #[cfg(feature = "app_chooser")]

@@ -1,6 +1,7 @@
 use {
     gtk4::gio::{Settings, SettingsSchemaSource, prelude::SettingsExt},
-    std::collections::HashMap,
+    parking_lot::RwLock,
+    std::{collections::HashMap, sync::Arc},
     zbus::{
         interface,
         object_server::SignalEmitter,
@@ -8,173 +9,110 @@ use {
     },
 };
 
+use crate::{
+    gui::UiProxy,
+    portals::settings::aggregator::{SettingsAggregator, SettingsState},
+};
+
 const NS_FREEDESKTOP_APPEARANCE: &str = "org.freedesktop.appearance";
 const NS_GNOME_DESKTOP_INTERFACE: &str = "org.gnome.desktop.interface";
-const KEY_COLOR_SCHEME: &str = "color-scheme";
 
 /// D-Bus interface wrapper for the Settings portal.
 ///
 /// This portal requires no active UI; it simply reads keys from the underlying
 /// GTK/GLib settings store. It actively listens to `GSettings` changes and
 /// broadcasts them over D-Bus as `SettingChanged` signals.
-pub struct SettingsPortal {}
+pub struct SettingsPortal {
+    pub aggregator: Arc<RwLock<SettingsState>>,
+}
 
 impl SettingsPortal {
-    pub fn new(server: zbus::ObjectServer) -> Self {
-        let settings = Self::get_gnome_interface_static();
+    pub fn new(proxy: &UiProxy, server: zbus::ObjectServer) -> Self {
+        let mut agg = SettingsAggregator::new();
+        let state = agg.state.clone();
+        let sender = proxy.sender.clone();
 
-        // If the `org.gnome.desktop.interface` schema is available, we attach a `changed`
-        // signal listener to it. This allows us to proxy GTK settings changes to sandboxed
-        // apps in real-time, emitting the portal `SettingChanged` signal.
-        if let Some(s) = settings {
-            s.connect_changed(None, move |_, key| {
-                let key_str = key;
-                let server_clone = server.clone();
-                let key_string = key_str.to_string();
-
-                if let Some(val) = Self::read_setting_static(NS_GNOME_DESKTOP_INTERFACE, key_str) {
-                    let sc1 = server_clone.clone();
-                    let k1 = key_string.clone();
-                    gtk4::glib::MainContext::default().spawn_local(async move {
-                        if let Ok(iface_ref) = sc1
-                            .interface::<_, SettingsPortal>(crate::core::DBUS_PATH)
-                            .await
-                        {
-                            let _ = Self::setting_changed(
-                                iface_ref.signal_emitter(),
-                                NS_GNOME_DESKTOP_INTERFACE,
-                                &k1,
-                                &val,
-                            )
-                            .await;
-                        }
-                    });
-                }
-
-                // The freedesktop appearance namespace defines cross-desktop standards for
-                // dark mode, high contrast, and reduced motion.
-                // We map GTK-specific setting keys to these standardized names.
-                if key_str == KEY_COLOR_SCHEME
-                    || key_str == "high-contrast"
-                    || key_str == "gtk-enable-animations"
-                {
-                    let mapped_key = if key_str == "high-contrast" {
-                        "contrast"
-                    } else if key_str == "gtk-enable-animations" {
-                        "reduced-motion"
-                    } else {
-                        key_str
-                    };
-                    if let Some(val) =
-                        Self::read_setting_static(NS_FREEDESKTOP_APPEARANCE, mapped_key)
-                    {
-                        let sc2 = server_clone.clone();
-                        let k2 = mapped_key.to_string();
-                        gtk4::glib::MainContext::default().spawn_local(async move {
-                            if let Ok(iface_ref) = sc2
-                                .interface::<_, SettingsPortal>(crate::core::DBUS_PATH)
-                                .await
-                            {
-                                let _ = Self::setting_changed(
-                                    iface_ref.signal_emitter(),
-                                    NS_FREEDESKTOP_APPEARANCE,
-                                    &k2,
-                                    &val,
-                                )
-                                .await;
-                            }
-                        });
-                    }
-                }
-            });
-        }
-
-        Self {}
-    }
-
-    fn get_gnome_interface_static() -> Option<Settings> {
-        thread_local! {
-            static GNOME_SETTINGS: std::cell::RefCell<Option<Settings>> = const { std::cell::RefCell::new(None) };
-            static CHECKED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-        }
-
-        GNOME_SETTINGS.with(|s| {
-            if !CHECKED.with(|c| c.get()) {
-                if let Some(source) = SettingsSchemaSource::default()
-                    && source.lookup(NS_GNOME_DESKTOP_INTERFACE, true).is_some()
-                {
-                    *s.borrow_mut() = Some(Settings::new(NS_GNOME_DESKTOP_INTERFACE));
-                }
-                CHECKED.with(|c| c.set(true));
-            }
-            s.borrow().clone()
-        })
-    }
-
-    fn read_setting(&self, namespace: &str, key: &str) -> Option<OwnedValue> {
-        Self::read_setting_static(namespace, key)
-    }
-
-    fn read_setting_with_settings(
-        settings: &Settings,
-        namespace: &str,
-        key: &str,
-    ) -> Option<OwnedValue> {
-        if namespace == NS_FREEDESKTOP_APPEARANCE {
-            if key == KEY_COLOR_SCHEME {
-                let val: String = settings.string(KEY_COLOR_SCHEME).into();
-                let scheme = map_color_scheme(val.as_str());
-                return OwnedValue::try_from(Value::U32(scheme)).ok();
-            } else if key == "contrast" {
-                if let Some(schema) = settings.settings_schema()
-                    && schema.has_key("high-contrast")
-                {
-                    let high_contrast = settings.boolean("high-contrast");
-                    let contrast = if high_contrast { 1u32 } else { 0u32 };
-                    return OwnedValue::try_from(Value::U32(contrast)).ok();
-                }
-            } else if key == "reduced-motion"
-                && let Some(schema) = settings.settings_schema()
-                && schema.has_key("gtk-enable-animations")
-            {
-                let enable_animations = settings.boolean("gtk-enable-animations");
-                let reduced = if enable_animations { 0u32 } else { 1u32 };
-                return OwnedValue::try_from(Value::U32(reduced)).ok();
-            }
-        } else if namespace == NS_GNOME_DESKTOP_INTERFACE
-            && let Some(schema) = settings.settings_schema()
-            && schema.has_key(key)
-        {
-            let val = settings.value(key);
-            let type_string = val.type_().as_str();
-            return match type_string {
-                "s" => val
-                    .get::<String>()
-                    .and_then(|s| OwnedValue::try_from(Value::Str(s.into())).ok()),
-                "b" => val
-                    .get::<bool>()
-                    .and_then(|b| OwnedValue::try_from(Value::Bool(b)).ok()),
-                "u" => val
-                    .get::<u32>()
-                    .and_then(|u| OwnedValue::try_from(Value::U32(u)).ok()),
-                "i" => val
-                    .get::<i32>()
-                    .and_then(|i| OwnedValue::try_from(Value::I32(i)).ok()),
-                "d" => val
-                    .get::<f64>()
-                    .and_then(|d| OwnedValue::try_from(Value::F64(d)).ok()),
-                _ => None,
+        tokio::spawn(async move {
+            use {
+                gtk4::glib,
+                notify::{RecursiveMode, Watcher},
+                tokio::sync::mpsc,
             };
-        }
-        None
-    }
 
-    fn read_setting_static(namespace: &str, key: &str) -> Option<OwnedValue> {
-        if let Some(settings) = Self::get_gnome_interface_static() {
-            Self::read_setting_with_settings(&settings, namespace, key)
-        } else {
-            None
-        }
+            let (tx, mut rx) = mpsc::channel::<()>(100);
+
+            // Watch GSettings on the GTK main thread.
+            // `Settings` is a GObject (`!Send`), so we create it and connect the
+            // change signal via UiProxy, which dispatches to the main thread.
+            // The object is intentionally leaked to keep the signal handler alive
+            // for the daemon's entire lifetime.
+            {
+                let tx_gsettings = tx.clone();
+                let _ = sender.send(Box::new(move || {
+                    let Some(source) = SettingsSchemaSource::default() else {
+                        return;
+                    };
+                    if source.lookup(NS_GNOME_DESKTOP_INTERFACE, true).is_none() {
+                        return;
+                    }
+
+                    let settings = Settings::new(NS_GNOME_DESKTOP_INTERFACE);
+                    settings.connect_changed(None, move |_, _| {
+                        let _ = tx_gsettings.try_send(());
+                    });
+                    // Prevent the Rust destructor (`g_object_unref`) from running.
+                    // The daemon is a long-running process and this Settings object
+                    // must outlive the signal callback; leaking it is deliberate.
+                    std::mem::forget(settings);
+                }));
+            }
+
+            // Watch INI files — `notify` is fully thread-safe, runs fine in tokio.
+            let tx_files = tx.clone();
+            let _watcher =
+                notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
+                    if res.is_ok() {
+                        let _ = tx_files.try_send(());
+                    }
+                })
+                .ok()
+                .and_then(|mut w| {
+                    let config_dir = glib::user_config_dir();
+                    let _ = w.watch(&config_dir.join("gtk-3.0"), RecursiveMode::NonRecursive);
+                    let _ = w.watch(&config_dir.join("gtk-4.0"), RecursiveMode::NonRecursive);
+                    let _ = w.watch(&config_dir.join("kdeglobals"), RecursiveMode::NonRecursive);
+                    Some(w)
+                });
+
+            // Initial load
+            agg.reload_all();
+
+            // Event loop: react to change notifications and emit D-Bus signals.
+            while let Some(()) = rx.recv().await {
+                // Debounce: coalesce rapid-fire events into a single reload.
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                while rx.try_recv().is_ok() {}
+
+                let changes = agg.reload_all();
+                if changes.is_empty() {
+                    continue;
+                }
+
+                let Ok(iface_ref) = server
+                    .interface::<_, SettingsPortal>(crate::core::DBUS_PATH)
+                    .await
+                else {
+                    continue;
+                };
+
+                for (ns, key, val) in changes {
+                    let _ =
+                        Self::setting_changed(iface_ref.signal_emitter(), &ns, &key, &val).await;
+                }
+            }
+        });
+
+        Self { aggregator: state }
     }
 }
 
@@ -186,14 +124,11 @@ pub(crate) fn map_color_scheme(val: &str) -> u32 {
     }
 }
 
-/// The D-Bus interface implementation for `org.freedesktop.impl.portal.Settings`.
-///
-/// This portal allows sandboxed applications to read system settings, such as
-/// dark mode preferences, accessibility toggles, and font configurations.
 #[interface(name = "org.freedesktop.impl.portal.Settings")]
 impl SettingsPortal {
     async fn read(&self, namespace: String, key: String) -> Result<OwnedValue, zbus::fdo::Error> {
-        if let Some(val) = self.read_setting(&namespace, &key) {
+        let state = self.aggregator.read();
+        if let Some(val) = state.get(&namespace, &key) {
             Ok(val)
         } else {
             Err(zbus::fdo::Error::Failed("Setting not found".to_string()))
@@ -204,16 +139,18 @@ impl SettingsPortal {
         &self,
         namespaces: Vec<String>,
     ) -> Result<HashMap<String, HashMap<String, OwnedValue>>, zbus::fdo::Error> {
+        let state = self.aggregator.read();
         let mut result = HashMap::new();
 
         let supported_namespaces = vec![
             NS_FREEDESKTOP_APPEARANCE.to_string(),
             NS_GNOME_DESKTOP_INTERFACE.to_string(),
+            crate::portals::settings::aggregator::NS_KDE_KDEGLOBALS.to_string(),
         ];
 
         let mut active_namespaces = Vec::new();
         if namespaces.is_empty() || namespaces.contains(&"".to_string()) {
-            active_namespaces = supported_namespaces;
+            active_namespaces = supported_namespaces.clone();
         } else {
             for requested_ns in namespaces {
                 if requested_ns.ends_with('*') {
@@ -234,30 +171,8 @@ impl SettingsPortal {
         }
 
         for ns in active_namespaces {
-            let mut ns_map = HashMap::new();
-            if ns == NS_FREEDESKTOP_APPEARANCE {
-                if let Some(val) = self.read_setting(&ns, KEY_COLOR_SCHEME) {
-                    ns_map.insert(KEY_COLOR_SCHEME.to_string(), val);
-                }
-                if let Some(val) = self.read_setting(&ns, "contrast") {
-                    ns_map.insert("contrast".to_string(), val);
-                }
-                if let Some(val) = self.read_setting(&ns, "reduced-motion") {
-                    ns_map.insert("reduced-motion".to_string(), val);
-                }
-            } else if ns == NS_GNOME_DESKTOP_INTERFACE
-                && let Some(settings) = Self::get_gnome_interface_static()
-                && let Some(schema) = settings.settings_schema()
-            {
-                for key in schema.list_keys() {
-                    let key_str = key.as_str();
-                    if let Some(val) = Self::read_setting_with_settings(&settings, &ns, key_str) {
-                        ns_map.insert(key_str.to_string(), val);
-                    }
-                }
-            }
-            if !ns_map.is_empty() {
-                result.insert(ns, ns_map);
+            if let Some(ns_map) = state.namespaces.get(&ns) {
+                result.insert(ns.clone(), ns_map.clone());
             }
         }
 

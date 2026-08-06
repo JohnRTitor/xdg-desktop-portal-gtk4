@@ -4,14 +4,14 @@
 //!
 //! The Settings portal allows sandboxed applications to securely read system-wide settings
 //! and user preferences without granting them raw, unfettered access to the host's configuration
-//! backend (e.g., dconf or GSettings).
+//! backend (e.g., dconf, kdeglobals, or gtk-settings.ini).
 //!
 //! This portal is a cornerstone of the modern Linux desktop experience, as it allows flatpaks
 //! and snaps to react to user preferences like Dark Mode (`color-scheme`), accessibility settings
 //! (`high-contrast`), and UI animations (`reduced-motion`). It sits between the application
 //! toolkit (like GTK or Qt inside the sandbox) and the host desktop environment.
 //!
-//! This implementation completely fulfills the `org.freedesktop.portal.Settings` specification
+//! This implementation fulfills the `org.freedesktop.portal.Settings` specification
 //! up to Version 2.
 //!
 //! ## D-Bus Interface
@@ -26,80 +26,60 @@
 //! listen to the `SettingChanged` signal to update their internal state dynamically when the user
 //! changes a setting on the host.
 //!
-//! **Implementation Mapping:**
-//! Implemented in `dbus.rs` by the `SettingsPortal` struct. The methods map directly to Rust async
-//! functions.
+//! ## Architecture: SettingsAggregator
+//!
+//! Unlike simple implementations that only wrap GSettings, this portal uses a unified
+//! `SettingsAggregator` to provide best-effort values across multiple wlroots-based and
+//! generic Wayland compositors (Hyprland, Sway, River, etc.).
+//!
+//! It aggregates values from:
+//! 1. **GSettings:** Specifically `org.gnome.desktop.interface`.
+//! 2. **GTK Settings:** `~/.config/gtk-3.0/settings.ini` and `~/.config/gtk-4.0/settings.ini`.
+//! 3. **KDE Settings:** `~/.config/kdeglobals` (for fallback values like color schemes).
+//!
+//! **State Cache:**
+//! The aggregator maintains an internal `SettingsState` protected by an `Arc<RwLock<SettingsState>>`.
+//! This cache allows immediate, non-blocking reads from asynchronous D-Bus handlers without needing
+//! to query configuration files or the D-Bus system bus on every request.
 //!
 //! ## Request Lifecycle
 //!
 //! **Read Request:**
 //! 1. **Application** calls `Read(namespace, key)`.
-//! 2. **Portal Object (`SettingsPortal`)** receives the request.
-//! 3. **Processing:** The portal delegates to `read_setting_static`. It checks if the requested
-//!    namespace/key maps to a known GTK/GNOME setting (`org.gnome.desktop.interface`). If it's a
-//!    standardized Freedesktop appearance setting (`org.freedesktop.appearance`), it translates the
-//!    request to the corresponding GTK setting (e.g., `color-scheme` -> GNOME `color-scheme`).
-//! 4. **Backend Interaction:** It queries the underlying `gtk4::gio::Settings` object for the value.
-//! 5. **Response:** It wraps the value in a `zbus::zvariant::OwnedValue` and returns it.
+//! 2. **Portal Object (`SettingsPortal`)** acquires a read lock on the aggregator's state.
+//! 3. **Processing:** It queries the cache for the requested namespace and key. If the client requests
+//!    the standard `org.freedesktop.appearance` namespace, it returns the pre-translated values
+//!    derived from the aggregated configuration backends.
+//! 4. **Response:** It returns the `zbus::zvariant::OwnedValue`.
 //!
 //! **Signal Emission (Push):**
-//! 1. During initialization (`SettingsPortal::new`), the portal connects a `changed` signal listener
-//!    to the host's `org.gnome.desktop.interface` GSettings schema.
-//! 2. When a host setting changes, the listener closure executes.
-//! 3. It reads the new value, maps the key if necessary (handling both GNOME and Freedesktop namespaces),
-//!    and spawns a local GLib task.
-//! 4. The local task emits the `SettingChanged` D-Bus signal to all connected sandboxed apps.
-//!
-//! **Ownership:** `SettingsPortal` holds no complex state, but it leverages `thread_local!` storage
-//! (`GNOME_SETTINGS`) to cache the `gtk4::gio::Settings` handle, preventing repeated initialization
-//! overhead.
+//! 1. The `SettingsAggregator` uses the `notify` crate to recursively watch `~/.config/` for changes
+//!    to relevant configuration files.
+//! 2. When a file change is detected, a debounced reload task triggers `aggregator.reload_all()`.
+//! 3. The reload computes a diff between the old and new states.
+//! 4. For every changed key, it broadcasts the `SettingChanged` D-Bus signal to all connected
+//!    sandboxed apps.
 //!
 //! ## Session Management
 //!
 //! The Settings portal does not use sessions. Setting reads are instant, and signal subscriptions
 //! are handled natively by the D-Bus message bus without explicit portal-managed session objects.
 //!
-//! ## GTK Integration
+//! ## GTK Integration & Threading
 //!
-//! This portal has no UI. However, it tightly integrates with GTK/GIO to access the host's configuration:
-//! - It requires the GLib `MainContext` to handle `GSettings` signal emissions.
-//! - When a `GSettings` change occurs, it spawns a task onto `gtk4::glib::MainContext::default()`
-//!   to safely bridge the GLib signal callback into the `zbus` async world to emit the D-Bus signal.
-//!
-//! ## Backend Interaction
-//!
-//! The backend is `gtk4::gio::Settings`.
-//! - **Responsibilities:** Abstract away `dconf` or whatever configuration backend the host uses.
-//! - **Failure Handling:** If a key or namespace is not found, `Read` returns a standardized D-Bus error.
-//!
-//! ## Specification Notes
-//!
-//! - **Namespace Translation:** The XDG specification defines `org.freedesktop.appearance` as a
-//!   cross-desktop standard for themes. Because this portal is GTK-specific, it explicitly translates
-//!   these standardized keys (`color-scheme`, `contrast`, `reduced-motion`) into their corresponding
-//!   `org.gnome.desktop.interface` GSettings keys. This translation is mandatory for cross-desktop compatibility.
-//! - **Version 2:** The `ReadAll` method was introduced in version 2 of the specification, which is
-//!   why the `version()` property explicitly returns `2`.
+//! - The `notify` watcher and debouncer are spawned onto the `gtk4::glib::MainContext::default()`
+//!   using `spawn_local`. This keeps file-watching logic correctly anchored within the GTK main loop.
+//! - By using `Arc<RwLock<SettingsState>>`, we avoid the need for `!Send` thread-local hacks (like `thread_local!`)
+//!   that were previously used. The D-Bus worker thread (Tokio) can safely acquire a read lock on the
+//!   state concurrently with the GTK main thread updating it.
 //!
 //! ## Extension Guide
 //!
 //! For future contributors extending the Settings portal:
-//! - **New Namespaces:** If a new standardized namespace is added to the specification, update
-//!   `read_setting_with_settings` and `read_all` to handle the new keys, mapping them to the appropriate
-//!   host GSettings or config files.
-//! - **Signal Mapping:** Make sure that if you add support for a new host setting, you also update the
-//!   `connect_changed` closure in `SettingsPortal::new` to emit `SettingChanged` for that new key.
-//!
-//! ## Cross-Portal Consistency
-//!
-//! - **GIO Reliance:** Like the `Email` portal, it relies heavily on `gio` primitives (`gio::Settings`)
-//!   rather than reinventing configuration parsing.
-//!
-//! ## Maintenance Notes
-//!
-//! - **Why is `thread_local!` used?** `gtk4::gio::Settings` is not `Send`, meaning it cannot be safely
-//!   passed across Tokio worker threads. By storing it in `thread_local!`, we ensure it remains on the
-//!   thread that initialized it, while still allowing asynchronous D-Bus methods to query it without
-//!   complex thread-synchronization overhead.
+//! - **New Backends:** Add a new reading function (like `read_kdeglobals`) in `aggregator.rs` and call
+//!   it inside `reload_all`.
+//! - **New Namespaces:** Map the new standardized namespace inside `reload_all` to populate the `SettingsState`.
+//!   The `Read` and `ReadAll` methods will automatically pick up the new cached values.
 
+pub mod aggregator;
 pub mod dbus;

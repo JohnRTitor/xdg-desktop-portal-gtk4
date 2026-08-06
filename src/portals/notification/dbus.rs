@@ -231,11 +231,10 @@ impl Notification {
                     .await
                     .unwrap_or(None);
 
-                    if let Some(data) = bytes {
-                        if tokio::fs::write(&path, data).await.is_ok() {
+                    if let Some(data) = bytes
+                        && tokio::fs::write(&path, data).await.is_ok() {
                             sound_file = Some(std::sync::Arc::new(TempSoundFile { path }));
                         }
-                    }
                 } else {
                     tracing::error!("Failed to dup sound fd");
                 }
@@ -620,12 +619,7 @@ async fn listen_for_notification_closed(
         let args = signal.args()?;
         let id = args.id;
 
-        let removed_key = if let Some(target_data) = reverse_map.lock().remove(&id) {
-            // _sound_file drops here (or when target_data is dropped)
-            Some((target_data.0.clone(), target_data.1.clone()))
-        } else {
-            None
-        };
+        let removed_key = reverse_map.lock().remove(&id).map(|target_data| (target_data.0.clone(), target_data.1.clone()));
 
         if let Some(key) = removed_key {
             let mut lock = active_notifications.lock();
