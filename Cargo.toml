@@ -91,6 +91,7 @@ tracing-journald = "0.3.2"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 zbus = { version = "5.17.0", default-features = false, features = ["tokio"] }
 tokio = { version = "1", features = ["sync", "rt", "macros"] }
+parking_lot = "0.12.5"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt", "time"] }

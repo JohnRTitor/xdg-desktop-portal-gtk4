@@ -4,7 +4,8 @@ use {
         core::{request::run_request, response::Response},
         gui::{UiError, UiProxy},
     },
-    std::{collections::HashMap, sync::Mutex},
+    std::collections::HashMap,
+    parking_lot::Mutex,
     tokio::sync::mpsc::Sender,
     zbus::{
         interface,
@@ -48,7 +49,7 @@ pub struct AppChooser {
     ///
     /// # Threading & Locking
     ///
-    /// A standard `std::sync::Mutex` is sufficient here (rather than RwLock or Tokio Mutex)
+    /// A `parking_lot::Mutex` is sufficient here (rather than RwLock or Tokio Mutex)
     /// because insertion and removal only happen during setup and teardown, and
     /// we do not hold the lock across `.await` points.
     active_dialogs: std::sync::Arc<Mutex<HashMap<OwnedObjectPath, Sender<Vec<String>>>>>,
@@ -80,7 +81,7 @@ impl AppChooser {
 
         impl Drop for ActiveDialogGuard {
             fn drop(&mut self) {
-                let mut lock = self.active_dialogs.lock().expect("Mutex was poisoned");
+                let mut lock = self.active_dialogs.lock();
                 lock.remove(&self.handle);
             }
         }
@@ -88,7 +89,7 @@ impl AppChooser {
         let (update_sender, update_receiver) = tokio::sync::mpsc::channel(CHANNEL_BUFFER_SIZE);
 
         {
-            let mut lock = self.active_dialogs.lock().expect("Mutex was poisoned");
+            let mut lock = self.active_dialogs.lock();
             lock.insert(handle.clone(), update_sender);
         }
 
@@ -160,7 +161,6 @@ impl AppChooser {
         if let Some(sender) = self
             .active_dialogs
             .lock()
-            .expect("Mutex was poisoned")
             .get(&handle)
         {
             let _ = sender.try_send(choices);
@@ -195,7 +195,7 @@ mod tests {
         let path = OwnedObjectPath::try_from("/test/handle").unwrap();
 
         {
-            let mut lock = chooser.active_dialogs.lock().expect("Mutex was poisoned");
+            let mut lock = chooser.active_dialogs.lock();
             lock.insert(path.clone(), sender);
         }
         let choices = vec!["choice1".to_string(), "choice2".to_string()];

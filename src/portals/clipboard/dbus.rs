@@ -14,11 +14,12 @@ use {
         gui::{PortalDispatcher, UiProxy},
         portals::clipboard::gtk_backend,
     },
+    parking_lot::Mutex,
     std::{
         collections::HashMap,
         os::fd::OwnedFd,
         sync::{
-            Arc, Mutex,
+            Arc,
             atomic::{AtomicU32, Ordering},
         },
     },
@@ -96,8 +97,7 @@ impl ClipboardPortal {
                     let is_owner = Value::from(false);
                     options.insert("session_is_owner", &is_owner);
 
-                    let sessions: Vec<_> =
-                        sessions_clone.lock().expect("Mutex was poisoned").clone();
+                    let sessions = sessions_clone.lock().clone();
                     for session in sessions {
                         let _ = Self::selection_owner_changed(&emitter, &session, options.clone())
                             .await;
@@ -125,7 +125,7 @@ impl ClipboardPortal {
         tracing::debug!("RequestClipboard called for session: {:?}", session_handle);
         let session_handle_owned = session_handle.into_owned();
         {
-            let mut sessions = self.active_sessions.lock().expect("Mutex was poisoned");
+            let mut sessions = self.active_sessions.lock();
             if !sessions.contains(&session_handle_owned) {
                 sessions.push(session_handle_owned.clone());
             }
@@ -193,7 +193,7 @@ impl ClipboardPortal {
             .map_err(|_| fdo::Error::Failed("UI thread dropped channel".into()))?
             .map_err(|e| fdo::Error::Failed(format!("Failed to claim selection: {}", e)))?;
 
-        let pending_transfers = self.pending_transfers.clone();
+        let pending_transfers_clone = self.pending_transfers.clone();
         let conn_clone = self.connection.clone();
         let session_handle_owned = session_handle.into_owned();
 
@@ -210,18 +210,16 @@ impl ClipboardPortal {
                 static SERIAL: AtomicU32 = AtomicU32::new(1);
                 let serial = SERIAL.fetch_add(1, Ordering::SeqCst);
 
-                pending_transfers
+                pending_transfers_clone
                     .lock()
-                    .expect("Mutex was poisoned")
                     .insert(serial, TransferRequest { fd_sender });
 
                 if let Err(e) =
                     Self::selection_transfer(&emitter, &session_handle_owned, &mime, serial).await
                 {
                     tracing::error!("Failed to emit SelectionTransfer: {}", e);
-                    pending_transfers
+                    pending_transfers_clone
                         .lock()
-                        .expect("Mutex was poisoned")
                         .remove(&serial);
                 }
             }
@@ -243,7 +241,6 @@ impl ClipboardPortal {
         let transfer = self
             .pending_transfers
             .lock()
-            .expect("Mutex was poisoned")
             .remove(&serial)
             .ok_or_else(|| fdo::Error::InvalidArgs(format!("Invalid serial {}", serial)))?;
 
@@ -274,7 +271,6 @@ impl ClipboardPortal {
         );
         self.pending_transfers
             .lock()
-            .expect("Mutex was poisoned")
             .remove(&serial);
         Ok(())
     }

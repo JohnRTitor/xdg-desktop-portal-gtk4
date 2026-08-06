@@ -2,7 +2,8 @@
 
 use {
     futures_util::stream::StreamExt,
-    std::{collections::HashMap, sync::Mutex},
+    std::collections::HashMap,
+    parking_lot::Mutex,
     zbus::{
         Connection, ObjectServer, interface,
         object_server::SignalEmitter,
@@ -385,15 +386,13 @@ impl Notification {
             let replaces_id = {
                 let lock = self
                     .active_notifications
-                    .lock()
-                    .expect("Mutex was poisoned");
+                    .lock();
                 *lock.get(&key).unwrap_or(&0)
             };
 
             if replaces_id != 0 {
                 self.reverse_map
                     .lock()
-                    .expect("Mutex was poisoned")
                     .remove(&replaces_id);
             }
 
@@ -412,9 +411,8 @@ impl Notification {
             {
                 self.active_notifications
                     .lock()
-                    .expect("Mutex was poisoned")
                     .insert(key, new_id);
-                self.reverse_map.lock().expect("Mutex was poisoned").insert(
+                self.reverse_map.lock().insert(
                     new_id,
                     std::sync::Arc::new((app_id.clone(), id.clone(), action_targets, sound_file)),
                 );
@@ -459,7 +457,6 @@ impl Notification {
         let fdo_id = self
             .active_notifications
             .lock()
-            .expect("Mutex was poisoned")
             .remove(&key);
         if let Some(fdo_id) = fdo_id
             && let Some(proxy) = &self.proxy
@@ -521,7 +518,6 @@ async fn listen_for_action_invoked(
 
         let target_data = reverse_map
             .lock()
-            .expect("Mutex was poisoned")
             .get(&id)
             .cloned();
 
@@ -603,7 +599,7 @@ async fn listen_for_action_invoked(
 
 async fn listen_for_notification_closed(
     reverse_map: ReverseMapType,
-    active_notifications: std::sync::Arc<Mutex<HashMap<(String, String), u32>>>,
+    active_notifications: std::sync::Arc<parking_lot::Mutex<HashMap<(String, String), u32>>>,
     proxy: std::sync::Arc<NotificationsProxy<'static>>,
 ) -> zbus::Result<()> {
     let mut stream = proxy.receive_notification_closed().await?;
@@ -613,7 +609,7 @@ async fn listen_for_notification_closed(
         let id = args.id;
 
         let removed_key = if let Some(target_data) =
-            reverse_map.lock().expect("Mutex was poisoned").remove(&id)
+            reverse_map.lock().remove(&id)
         {
             // _sound_file drops here (or when target_data is dropped)
             Some((target_data.0.clone(), target_data.1.clone()))
@@ -622,7 +618,7 @@ async fn listen_for_notification_closed(
         };
 
         if let Some(key) = removed_key {
-            let mut lock = active_notifications.lock().expect("Mutex was poisoned");
+            let mut lock = active_notifications.lock();
             // To avoid a race condition where the FDO server replaces the notification
             // but still emits NotificationClosed for the old one, we only remove if it's the exact same FDO ID.
             if lock.get(&key) == Some(&id) {

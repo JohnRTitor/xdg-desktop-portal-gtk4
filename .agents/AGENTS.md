@@ -31,8 +31,8 @@ This is a Linux desktop portal daemon implementing the `org.freedesktop.impl.por
 ## Code Style
 
 - Use `let-else` statements and `if let ... && let ...` chains to flatten nested control flow and reduce indentation.
-- Use `std::sync::Mutex` (not `tokio::sync::Mutex` or `parking_lot`) for shared state since lock durations are microscopic.
-- **Fail-Fast:** Always unwrap mutexes with `.expect("Mutex was poisoned")`. Systemd will cleanly restart the daemon on panic.
+- Use `parking_lot::Mutex` (not `tokio::sync::Mutex` or `std::sync::Mutex`) for shared state since lock durations are microscopic.
+- **Fail-Fast:** Systemd will cleanly restart the daemon on panic. `parking_lot::Mutex` does not implement lock poisoning, so there is no need to unwrap results or handle `PoisonError`.
 - **Never hold a `MutexGuard` across an `.await` point.** Scope the guard inside a separate block if necessary.
 - Group related magic values and repeated string literals into constants.
 - Prefer iterator chains (`.map().filter().collect()`) over manual for-loops allocating into a `Vec`.

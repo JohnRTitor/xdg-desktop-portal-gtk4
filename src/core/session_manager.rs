@@ -13,8 +13,9 @@ use {
     futures_util::stream::StreamExt,
     std::{
         collections::HashMap,
-        sync::{Arc, Mutex},
+        sync::Arc,
     },
+    parking_lot::Mutex,
     tokio::sync::Notify,
     zbus::{Connection, fdo::DBusProxy},
 };
@@ -83,8 +84,7 @@ impl SessionManager {
     ) -> Result<(), SessionError> {
         let mut state = self
             .state
-            .lock()
-            .expect("Session manager state mutex was poisoned");
+            .lock();
 
         let count = state.app_sessions.entry(app_id.to_string()).or_default();
         if *count >= self.max_sessions_per_app {
@@ -107,8 +107,7 @@ impl SessionManager {
     pub fn unregister(&self, app_id: &str, sender: &str, object_path: &str) {
         let mut state = self
             .state
-            .lock()
-            .expect("Session manager state mutex was poisoned");
+            .lock();
 
         if let Some(count) = state.app_sessions.get_mut(app_id) {
             *count = count.saturating_sub(1);
@@ -146,8 +145,7 @@ impl SessionManager {
                 let objects_to_close = {
                     let mut state = self
                         .state
-                        .lock()
-                        .expect("Session manager state mutex was poisoned");
+                        .lock();
                     let closed = state.sender_objects.remove(name).unwrap_or_default();
 
                     for (_, app_id, _) in &closed {
@@ -221,8 +219,7 @@ mod tests {
 
         let state = manager
             .state
-            .lock()
-            .expect("Session manager state mutex was poisoned");
+            .lock();
         assert!(state.app_sessions.is_empty());
         assert!(state.sender_objects.is_empty());
     }

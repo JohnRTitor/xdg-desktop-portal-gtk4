@@ -1,7 +1,8 @@
 use {
     crate::core::session::Session,
     futures_util::stream::StreamExt,
-    std::{collections::HashMap, sync::Mutex},
+    std::collections::HashMap,
+    parking_lot::Mutex,
     zbus::{
         Connection, ObjectServer, interface,
         object_server::SignalEmitter,
@@ -277,7 +278,6 @@ impl Inhibit {
 
         self.active_monitors
             .lock()
-            .expect("Mutex was poisoned")
             .insert(handle.clone(), session_handle.clone());
 
         let handle_clone = handle.clone();
@@ -296,7 +296,6 @@ impl Inhibit {
 
             monitors_clone
                 .lock()
-                .expect("Mutex was poisoned")
                 .remove(&handle_clone);
             session_manager_clone.unregister(
                 &app_id_clone,
@@ -334,7 +333,6 @@ impl Inhibit {
 
                                     let sessions: Vec<OwnedObjectPath> = active_monitors_clone
                                         .lock()
-                                        .expect("Mutex was poisoned")
                                         .values()
                                         .cloned()
                                         .collect();
