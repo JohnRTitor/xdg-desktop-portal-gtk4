@@ -1,13 +1,11 @@
-use {
-    std::{env, fs::File, os::linux::fs::MetadataExt},
-    tracing_subscriber::{EnvFilter, Registry, layer::SubscriberExt, util::SubscriberInitExt},
-};
+use tracing_subscriber::{EnvFilter, Registry, layer::SubscriberExt, util::SubscriberInitExt};
 
 pub fn init() {
     let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
 
     let registry = Registry::default().with(env_filter);
 
+    #[cfg(feature = "systemd")]
     if stderr_is_journal()
         && let Ok(layer) = tracing_journald::layer()
     {
@@ -18,7 +16,9 @@ pub fn init() {
     registry.with(tracing_subscriber::fmt::layer()).init();
 }
 
+#[cfg(feature = "systemd")]
 fn stderr_is_journal() -> bool {
+    use std::{env, fs::File, os::linux::fs::MetadataExt};
     let Ok(journal_stream) = env::var("JOURNAL_STREAM") else {
         return false;
     };

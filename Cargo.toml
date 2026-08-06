@@ -44,6 +44,7 @@ load-path = "locales"
 
 [features]
 default = [
+  "systemd",
   "access",
   "account",
   "app_chooser",
@@ -59,6 +60,7 @@ default = [
   "clipboard",
 ]
 
+systemd = ["dep:tracing-journald"]
 access = []
 account = []
 app_chooser = []
@@ -87,7 +89,7 @@ rust-i18n = "4.2.0"
 serde = { version = "1.0.228", features = ["derive"] }
 thiserror = "2.0.18"
 tracing = "0.1.44"
-tracing-journald = "0.3.2"
+tracing-journald = { version = "0.3.2", optional = true }
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 zbus = { version = "5.17.0", default-features = false, features = ["tokio"] }
 tokio = { version = "1", features = ["sync", "rt", "macros"] }
