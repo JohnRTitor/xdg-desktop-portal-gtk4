@@ -100,8 +100,8 @@ impl UsbPortal {
 
             parsed_devices.push(UsbDevice {
                 id,
-                title: model.unwrap_or_else(|| rust_i18n::t!("unknown_device").to_string()),
-                subtitle: vendor.unwrap_or_else(|| rust_i18n::t!("unknown_vendor").to_string()),
+                title: model.unwrap_or_else(|| rust_i18n::t!("unknown_device").into()),
+                subtitle: vendor.unwrap_or_else(|| rust_i18n::t!("unknown_vendor").into()),
                 serial,
                 access_options,
             });
@@ -110,7 +110,7 @@ impl UsbPortal {
         let activation_token = options
             .get("activation_token")
             .and_then(|v| <&str>::try_from(v).ok())
-            .map(|s| s.to_string());
+            .map(String::from);
         let ui = UsbUi {
             app_id,
             parent_window,
@@ -137,6 +137,7 @@ impl UsbPortal {
 /// and the user selects which ones the app can access.
 #[interface(name = "org.freedesktop.impl.portal.Usb")]
 impl UsbPortal {
+    #[allow(clippy::too_many_arguments)]
     #[zbus(name = "AcquireDevices")]
     async fn acquire_devices(
         &self,
@@ -150,8 +151,8 @@ impl UsbPortal {
     ) -> Result<Response<UsbResults>, fdo::Error> {
         let sender = header
             .sender()
-            .ok_or_else(|| fdo::Error::Failed("Missing sender".to_string()))?
-            .to_string();
+            .map(|s| String::from(s.as_str()))
+            .ok_or_else(|| fdo::Error::Failed("Missing sender".into()))?;
         Ok(run_request(
             server,
             self.session_manager.clone(),
@@ -202,12 +203,12 @@ mod tests {
 
         let mut props = HashMap::new();
         props.insert(
-            "name".to_string(),
+            "name".into(),
             zbus::zvariant::OwnedValue::try_from(Value::from("Test USB")).unwrap(),
         );
 
         let results = UsbResults {
-            devices: vec![("device1".to_string(), props)],
+            devices: vec![("device1".into(), props)],
         };
 
         let ctxt = Context::new_dbus(Endian::Little, 0);

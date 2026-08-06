@@ -93,9 +93,9 @@ impl Print {
                 page_setup: result.page_setup,
                 token: result.token,
                 supported_output_file_formats: Some(vec![
-                    "pdf".to_string(),
-                    "ps".to_string(),
-                    "svg".to_string(),
+                    "pdf".into(),
+                    "ps".into(),
+                    "svg".into(),
                 ]),
                 has_current_page: Some(true),
                 has_selected_pages: Some(true),
@@ -161,8 +161,8 @@ impl Print {
     ) -> Result<Response<PreparePrintResults>, fdo::Error> {
         let sender = header
             .sender()
-            .ok_or_else(|| fdo::Error::Failed("Missing sender".to_string()))?
-            .to_string();
+            .map(|s| String::from(s.as_str()))
+            .ok_or_else(|| fdo::Error::Failed("Missing sender".into()))?;
         Ok(run_request(
             server,
             self.session_manager.clone(),
@@ -196,8 +196,8 @@ impl Print {
     ) -> Result<Response<PrintResults>, fdo::Error> {
         let sender = header
             .sender()
-            .ok_or_else(|| fdo::Error::Failed("Missing sender".to_string()))?
-            .to_string();
+            .map(|s| String::from(s.as_str()))
+            .ok_or_else(|| fdo::Error::Failed("Missing sender".into()))?;
         Ok(run_request(
             server,
             self.session_manager.clone(),

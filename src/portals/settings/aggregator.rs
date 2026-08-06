@@ -27,9 +27,9 @@ impl SettingsState {
 
     pub fn insert(&mut self, ns: &str, key: &str, val: OwnedValue) {
         self.namespaces
-            .entry(ns.to_string())
+            .entry(ns.to_owned())
             .or_default()
-            .insert(key.to_string(), val);
+            .insert(key.to_owned(), val);
     }
 }
 

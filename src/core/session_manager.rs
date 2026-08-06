@@ -85,21 +85,21 @@ impl SessionManager {
         if let Some(count_ref) = count {
             if *count_ref >= self.max_sessions_per_app {
                 return Err(SessionError::LimitExceeded {
-                    app_id: app_id.to_string(),
+                    app_id: app_id.into(),
                 });
             }
             *count_ref += 1;
         } else {
-            state.app_sessions.insert(app_id.to_string(), 1);
+            state.app_sessions.insert(app_id.into(), 1);
         }
 
         let sender_list = state.sender_objects.get_mut(sender);
         if let Some(list) = sender_list {
-            list.push((object_path.to_string(), app_id.to_string(), cancel));
+            list.push((object_path.into(), app_id.into(), cancel));
         } else {
             state.sender_objects.insert(
-                sender.to_string(),
-                vec![(object_path.to_string(), app_id.to_string(), cancel)],
+                sender.into(),
+                vec![(object_path.into(), app_id.into(), cancel)],
             );
         }
 

@@ -116,7 +116,7 @@ impl DynamicLauncherUi {
             name_entry,
             move |_| {
                 let res = Ok(DynamicLauncherResult {
-                    name: name_entry.text().to_string(),
+                    name: name_entry.text().into(),
                 });
                 let _ = send_ok.dispatch(res);
                 window.close();

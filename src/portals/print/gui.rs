@@ -80,7 +80,7 @@ impl PrintUi {
                 let settings = d.settings();
                 settings.foreach(|k, v| {
                     if let Ok(owned) = zbus::zvariant::OwnedValue::try_from(Value::from(v)) {
-                        settings_map.insert(k.to_string(), owned);
+                        settings_map.insert(String::from(k), owned);
                     }
                 });
 
@@ -97,7 +97,7 @@ impl PrintUi {
                         else {
                             continue;
                         };
-                        page_setup_map.insert(key.to_string(), owned);
+                        page_setup_map.insert(String::from(key.as_str()), owned);
                     }
                 }
 

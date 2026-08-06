@@ -9,7 +9,7 @@ impl WindowIdentifier {
     pub fn parse(handle: &str) -> Option<Self> {
         if let Some(wayland_handle) = handle.strip_prefix("wayland:") {
             if !wayland_handle.is_empty() {
-                return Some(Self::Wayland(wayland_handle.to_string()));
+                return Some(Self::Wayland(wayland_handle.into()));
             }
         } else if let Some(x11_handle_str) = handle.strip_prefix("x11:") {
             // Parse XID as a hex string (e.g. "x11:3f0000a" or "x11:0x800004")
@@ -32,7 +32,7 @@ mod tests {
     fn test_parse_wayland() {
         assert_eq!(
             WindowIdentifier::parse("wayland:test"),
-            Some(WindowIdentifier::Wayland("test".to_string()))
+            Some(WindowIdentifier::Wayland("test".into()))
         );
         assert_eq!(WindowIdentifier::parse("wayland:"), None);
     }

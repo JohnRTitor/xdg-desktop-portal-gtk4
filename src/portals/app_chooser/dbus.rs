@@ -108,7 +108,7 @@ impl AppChooser {
             app_id,
             parent_window,
             activation_token: options.activation_token.clone(),
-            title: rust_i18n::t!("choose_an_application").to_string(),
+            title: rust_i18n::t!("choose_an_application").into(),
             choices,
             filename: options.filename,
             content_type: options.content_type,
@@ -149,8 +149,8 @@ impl AppChooser {
     ) -> Result<Response<ChooseApplicationResults>, fdo::Error> {
         let sender = header
             .sender()
-            .ok_or_else(|| fdo::Error::Failed("Missing sender".to_string()))?
-            .to_string();
+            .map(|s| String::from(s.as_str()))
+            .ok_or_else(|| fdo::Error::Failed("Missing sender".into()))?;
         Ok(run_request(
             server,
             self.session_manager.clone(),
@@ -204,9 +204,8 @@ mod tests {
             context: MainContext::default(),
             sender: unbounded_channel().0,
         };
-        let conn = match Connection::session().await {
-            Ok(c) => c,
-            Err(_) => return,
+        let Ok(conn) = Connection::session().await else {
+            return;
         };
         let chooser = AppChooser::new(
             &proxy,
@@ -220,7 +219,7 @@ mod tests {
             let mut lock = chooser.active_dialogs.lock();
             lock.insert(path.clone(), sender);
         }
-        let choices = vec!["choice1".to_string(), "choice2".to_string()];
+        let choices = vec!["choice1".into(), "choice2".into()];
 
         let res = chooser.update_choices(path, choices.clone()).await;
         assert!(res.is_ok());
@@ -235,9 +234,8 @@ mod tests {
             context: MainContext::default(),
             sender: unbounded_channel().0,
         };
-        let conn = match Connection::session().await {
-            Ok(c) => c,
-            Err(_) => return,
+        let Ok(conn) = Connection::session().await else {
+            return;
         };
         let chooser = AppChooser::new(
             &proxy,
@@ -277,8 +275,8 @@ mod tests {
         };
 
         let results = ChooseApplicationResults {
-            choice: Some("app.desktop".to_string()),
-            activation_token: Some("token123".to_string()),
+            choice: Some("app.desktop".into()),
+            activation_token: Some("token123".into()),
         };
 
         let ctxt = Context::new_dbus(Endian::Little, 0);

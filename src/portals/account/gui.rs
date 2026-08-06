@@ -50,7 +50,7 @@ impl AccountUi {
                 reason
             )
         } else {
-            t!("application_wants_to_access_information").to_string()
+            t!("application_wants_to_access_information").into()
         };
 
         let dialog = crate::gui::dialog::CustomDialog::new(&title, true);
@@ -123,7 +123,7 @@ impl AccountUi {
                 // as required by the portal specification.
                 let image_uri = if !icon_file.is_empty() {
                     if let Ok(uri) = glib::filename_to_uri(&icon_file, None) {
-                        uri.to_string()
+                        uri.into()
                     } else {
                         String::new()
                     }
@@ -135,8 +135,8 @@ impl AccountUi {
                 // so we return the contents of the Entry widgets rather than
                 // the original self.user_name / self.real_name.
                 let res = Ok(AccountResult {
-                    user_name: user_name_entry.text().to_string(),
-                    real_name: real_name_entry.text().to_string(),
+                    user_name: user_name_entry.text().into(),
+                    real_name: real_name_entry.text().into(),
                     image: image_uri,
                 });
                 let _ = send_ok.dispatch(res);

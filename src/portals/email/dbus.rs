@@ -150,8 +150,8 @@ impl Email {
     ) -> Result<Response<EmailResults>, fdo::Error> {
         let sender = header
             .sender()
-            .ok_or_else(|| fdo::Error::Failed("Missing sender".to_string()))?
-            .to_string();
+            .map(|s| String::from(s.as_str()))
+            .ok_or_else(|| fdo::Error::Failed("Missing sender".into()))?;
         Ok(run_request(
             server,
             self.session_manager.clone(),
@@ -171,9 +171,9 @@ mod tests {
     #[test]
     fn test_compose_url_basic() {
         let options = ComposeEmailOptions {
-            addresses: Some(vec!["user@example.com".to_string()]),
-            subject: Some("Hello".to_string()),
-            body: Some("World".to_string()),
+            addresses: Some(vec!["user@example.com".into()]),
+            subject: Some("Hello".into()),
+            body: Some("World".into()),
             ..Default::default()
         };
         assert_eq!(
@@ -185,10 +185,10 @@ mod tests {
     #[test]
     fn test_compose_url_multiple_addresses() {
         let options = ComposeEmailOptions {
-            address: Some("single@example.com".to_string()),
+            address: Some("single@example.com".into()),
             addresses: Some(vec![
-                "foo@example.com".to_string(),
-                "bar@example.com".to_string(),
+                "foo@example.com".into(),
+                "bar@example.com".into(),
             ]),
             ..Default::default()
         };
@@ -201,8 +201,8 @@ mod tests {
     #[test]
     fn test_compose_url_cc_bcc() {
         let options = ComposeEmailOptions {
-            cc: Some(vec!["cc1@example.com".to_string()]),
-            bcc: Some(vec!["bcc1@example.com".to_string()]),
+            cc: Some(vec!["cc1@example.com".into()]),
+            bcc: Some(vec!["bcc1@example.com".into()]),
             ..Default::default()
         };
         assert_eq!(
@@ -214,8 +214,8 @@ mod tests {
     #[test]
     fn test_compose_url_special_chars() {
         let options = ComposeEmailOptions {
-            subject: Some("Hello & Welcome=".to_string()),
-            body: Some("Space here".to_string()),
+            subject: Some("Hello & Welcome=".into()),
+            body: Some("Space here".into()),
             ..Default::default()
         };
         assert_eq!(
@@ -239,8 +239,8 @@ mod tests {
     fn test_compose_url_attachments() {
         let options = ComposeEmailOptions {
             attachments: Some(vec![
-                "file:///tmp/doc.txt".to_string(),
-                "file:///tmp/image.png".to_string(),
+                "file:///tmp/doc.txt".into(),
+                "file:///tmp/image.png".into(),
             ]),
             ..Default::default()
         };

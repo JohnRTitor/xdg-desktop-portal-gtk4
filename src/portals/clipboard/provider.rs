@@ -47,7 +47,7 @@ mod imp {
             _io_priority: glib::Priority,
         ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), glib::Error>> + 'static>>
         {
-            let mime_type = mime_type.to_string();
+            let mime_type = String::from(mime_type);
             let out_stream = stream.clone();
 
             // We clone the sender so we can use it in the future
@@ -65,7 +65,7 @@ mod imp {
                 let (fd_tx, fd_rx) = channel();
 
                 // Send the request for a file descriptor
-                if tx.send((mime_type.to_string(), fd_tx)).await.is_err() {
+                if tx.send((mime_type, fd_tx)).await.is_err() {
                     return Err(glib::Error::new(
                         gio::IOErrorEnum::Failed,
                         "Failed to send request for file descriptor",

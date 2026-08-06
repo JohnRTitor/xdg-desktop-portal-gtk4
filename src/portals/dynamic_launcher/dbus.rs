@@ -126,8 +126,8 @@ impl DynamicLauncher {
     ) -> Result<Response<PrepareInstallResults>, fdo::Error> {
         let sender = header
             .sender()
-            .ok_or_else(|| fdo::Error::Failed("Missing sender".to_string()))?
-            .to_string();
+            .map(|s| String::from(s.as_str()))
+            .ok_or_else(|| fdo::Error::Failed("Missing sender".into()))?;
         let icon_owned = match OwnedValue::try_from(icon_v) {
             Ok(v) => v,
             Err(e) => {
@@ -189,7 +189,7 @@ impl DynamicLauncher {
 /// a byte array (serialized image data), or a themed icon struct.
 fn parse_icon(icon_v: &OwnedValue) -> (Option<String>, Option<Vec<u8>>) {
     if let Ok(s) = <&str>::try_from(&**icon_v) {
-        return (Some(s.to_string()), None);
+        return (Some(s.into()), None);
     }
 
     let Ok(structure) = zbus::zvariant::Structure::try_from(&**icon_v) else {
@@ -238,7 +238,7 @@ mod tests {
     fn test_parse_icon_string() {
         let v = OwnedValue::try_from(Value::Str("my-icon".into())).unwrap();
         let (name, data) = parse_icon(&v);
-        assert_eq!(name, Some("my-icon".to_string()));
+        assert_eq!(name, Some("my-icon".into()));
         assert_eq!(data, None);
     }
 
@@ -254,7 +254,7 @@ mod tests {
     fn test_parse_icon_themed() {
         let v = OwnedValue::try_from(Value::from(("themed", vec!["icon1", "icon2"]))).unwrap();
         let (name, data) = parse_icon(&v);
-        assert_eq!(name, Some("icon1".to_string()));
+        assert_eq!(name, Some("icon1".into()));
         assert_eq!(data, None);
     }
 
@@ -294,9 +294,8 @@ mod tests {
             context: MainContext::default(),
             sender: unbounded_channel().0,
         };
-        let conn = match Connection::session().await {
-            Ok(c) => c,
-            Err(_) => return,
+        let Ok(conn) = Connection::session().await else {
+            return;
         };
         let launcher = DynamicLauncher::new(
             &proxy,
@@ -306,7 +305,7 @@ mod tests {
         assert_eq!(
             launcher
                 .request_install_token(
-                    "org.gnome.Software".to_string(),
+                    "org.gnome.Software".into(),
                     RequestInstallTokenOptions::default()
                 )
                 .await,
@@ -315,7 +314,7 @@ mod tests {
         assert_eq!(
             launcher
                 .request_install_token(
-                    "org.kde.discover".to_string(),
+                    "org.kde.discover".into(),
                     RequestInstallTokenOptions::default()
                 )
                 .await,
@@ -329,9 +328,8 @@ mod tests {
             context: gtk4::glib::MainContext::default(),
             sender: tokio::sync::mpsc::unbounded_channel().0,
         };
-        let conn = match Connection::session().await {
-            Ok(c) => c,
-            Err(_) => return,
+        let Ok(conn) = Connection::session().await else {
+            return;
         };
         let launcher = DynamicLauncher::new(
             &proxy,
@@ -341,7 +339,7 @@ mod tests {
         assert_eq!(
             launcher
                 .request_install_token(
-                    "com.example.App".to_string(),
+                    "com.example.App".into(),
                     RequestInstallTokenOptions::default()
                 )
                 .await,
@@ -355,9 +353,8 @@ mod tests {
             context: MainContext::default(),
             sender: unbounded_channel().0,
         };
-        let conn = match Connection::session().await {
-            Ok(c) => c,
-            Err(_) => return,
+        let Ok(conn) = Connection::session().await else {
+            return;
         };
         let launcher = DynamicLauncher::new(
             &proxy,
@@ -397,7 +394,7 @@ mod tests {
         };
 
         let results = PrepareInstallResults {
-            name: "My Web App".to_string(),
+            name: "My Web App".into(),
             icon_v: OwnedValue::try_from(Value::from("my-icon")).unwrap(),
         };
 

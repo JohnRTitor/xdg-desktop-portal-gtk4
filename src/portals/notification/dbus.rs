@@ -252,7 +252,7 @@ impl Notification {
         if let Some(v) = notification.icon.as_ref() {
             let v_ref = std::ops::Deref::deref(v);
             if let Ok(s) = <&str>::try_from(v_ref) {
-                icon_name = s.to_string();
+                icon_name = s.into();
             } else if let Ok(structure) = <Structure>::try_from(v_ref) {
                 let fields = structure.fields();
                 if fields.len() == 2
@@ -269,7 +269,7 @@ impl Notification {
                             if let Ok(names) = <Vec<String>>::try_from(payload.clone())
                                 && let Some(first) = names.first()
                             {
-                                icon_name = first.to_string();
+                                icon_name = first.clone();
                             }
                         }
                         "file-descriptor" => {
@@ -359,10 +359,10 @@ impl Notification {
         let mut parsed_actions: Vec<String> = Vec::new();
 
         if let Some(default_action) = notification.default_action.as_ref() {
-            parsed_actions.push("default".to_string());
+            parsed_actions.push("default".into());
             parsed_actions.push(default_action.clone());
             if let Some(target) = notification.default_action_target.as_ref() {
-                action_targets.insert("default".to_string(), target.clone());
+                action_targets.insert("default".into(), target.clone());
             }
         }
 
@@ -373,7 +373,7 @@ impl Notification {
                     .and_then(|v| <&str>::try_from(std::ops::Deref::deref(v)).ok())
                     .unwrap_or(action.as_str());
                 parsed_actions.push(action.clone());
-                parsed_actions.push(label.to_string());
+                parsed_actions.push(label.into());
                 if let Some(target) = options.get("action-target") {
                     action_targets.insert(action.clone(), target.clone());
                 }
@@ -481,16 +481,16 @@ impl Notification {
     fn supported_options(&self) -> HashMap<String, OwnedValue> {
         let mut options = HashMap::new();
         if let Ok(true_val) = OwnedValue::try_from(Value::Bool(true)) {
-            options.insert("body".to_string(), true_val.clone());
-            options.insert("icon".to_string(), true_val.clone());
-            options.insert("buttons".to_string(), true_val.clone());
-            options.insert("priority".to_string(), true_val.clone());
-            options.insert("default-action".to_string(), true_val.clone());
-            options.insert("default-action-target".to_string(), true_val.clone());
-            options.insert("markup-body".to_string(), true_val.clone());
-            options.insert("category".to_string(), true_val.clone());
-            options.insert("display-hint".to_string(), true_val.clone());
-            options.insert("sound".to_string(), true_val);
+            options.insert("body".into(), true_val.clone());
+            options.insert("icon".into(), true_val.clone());
+            options.insert("buttons".into(), true_val.clone());
+            options.insert("priority".into(), true_val.clone());
+            options.insert("default-action".into(), true_val.clone());
+            options.insert("default-action-target".into(), true_val.clone());
+            options.insert("markup-body".into(), true_val.clone());
+            options.insert("category".into(), true_val.clone());
+            options.insert("display-hint".into(), true_val.clone());
+            options.insert("sound".into(), true_val);
         }
         options
     }
@@ -537,7 +537,7 @@ async fn listen_for_action_invoked(
         app_path.push_str(&app_id.replace('.', "/").replace('-', "_"));
 
         let app_id_clone = app_id.clone();
-        let action_key_clone = action_key.to_string();
+        let action_key_clone = String::from(action_key);
         let server_clone = server.clone();
         let portal_id_clone = portal_id.clone();
         let session_bus_clone = session_bus.clone();

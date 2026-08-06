@@ -66,10 +66,10 @@ impl AccessUi {
 
         let deny_label = self
             .deny_label
-            .unwrap_or_else(|| t!("deny_access_action").to_string());
+            .unwrap_or_else(|| t!("deny_access_action").into());
         let grant_label = self
             .grant_label
-            .unwrap_or_else(|| t!("grant_access_action").to_string());
+            .unwrap_or_else(|| t!("grant_access_action").into());
 
         let deny_btn = Button::with_label(&deny_label);
         let grant_btn = Button::with_label(&grant_label);
@@ -182,9 +182,9 @@ impl AccessUi {
                         fc.push(FinalChoice {
                             id: id.clone(),
                             variant_id: if button.is_active() {
-                                "true".to_string()
+                                "true".into()
                             } else {
-                                "false".to_string()
+                                "false".into()
                             },
                         });
                     }

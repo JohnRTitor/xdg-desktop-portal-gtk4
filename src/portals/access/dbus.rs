@@ -139,8 +139,8 @@ impl Access {
     ) -> Result<Response<AccessResults>, fdo::Error> {
         let sender = header
             .sender()
-            .ok_or_else(|| fdo::Error::Failed("Missing sender".to_string()))?
-            .to_string();
+            .map(|s| String::from(s.as_str()))
+            .ok_or_else(|| fdo::Error::Failed("Missing sender".into()))?;
         // Run the request concurrently with a cancellation listener.
         // If the frontend calls `Close()` on the request object path, `run_request`
         // will return `Response::cancelled()` and drop the future.
@@ -221,7 +221,10 @@ mod tests {
     #[test]
     fn test_access_results_serialize() {
         let results = AccessResults {
-            choices: Some(vec![("choice_id".to_string(), "variant_id".to_string())]),
+            choices: Some(vec![(
+                "choice_id".into(),
+                "variant_id".into(),
+            )]),
         };
 
         let ctxt = Context::new_dbus(Endian::Little, 0);

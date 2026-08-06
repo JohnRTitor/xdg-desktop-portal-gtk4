@@ -54,7 +54,7 @@ mod tests {
     #[tokio::test]
     async fn test_session_close() {
         let notify = Arc::new(Notify::new());
-        let session = Session::new("test_session_id".to_string(), Some(notify.clone()));
+        let session = Session::new("test_session_id".into(), Some(notify.clone()));
 
         assert_eq!(session.id, "test_session_id");
 
@@ -65,7 +65,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_session_close_no_channel() {
-        let session = Session::new("test_session_id".to_string(), None);
+        let session = Session::new("test_session_id".into(), None);
         session.close().await; // Should not panic
     }
 }

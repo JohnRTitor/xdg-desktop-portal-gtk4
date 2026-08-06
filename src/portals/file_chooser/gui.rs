@@ -140,8 +140,8 @@ impl FileChooserUi {
                         .iter()
                         .flat_map(|c| {
                             dialog.choice(&c.id).map(|v| FinalChoice {
-                                id: c.id.to_string(),
-                                variant_id: v.to_string(),
+                                id: c.id.clone(),
+                                variant_id: v.into(),
                             })
                         })
                         .collect();
@@ -248,7 +248,7 @@ impl FileChooserUi {
                 .iter()
                 .map(|c| c.id.as_str())
                 .collect();
-            read_only_id = "_read_only".to_string();
+            read_only_id = "_read_only".into();
             // Ensure our injected choice ID doesn't collide with one provided by the frontend.
             while choice_ids.contains(read_only_id.as_str()) {
                 read_only_id.push('_');

@@ -298,7 +298,7 @@ impl FileChooser {
                     }
                 }
             }
-            uris.push(gio::File::for_path(&path).uri().to_string());
+            uris.push(String::from(gio::File::for_path(&path).uri().as_str()));
         }
         Ok(SaveFilesResults {
             uris: Some(uris),
@@ -345,8 +345,8 @@ impl FileChooser {
     ) -> Result<Response<OpenFileResults>, fdo::Error> {
         let sender = header
             .sender()
-            .ok_or_else(|| fdo::Error::Failed("Missing sender".to_string()))?
-            .to_string();
+            .map(|s| String::from(s.as_str()))
+            .ok_or_else(|| fdo::Error::Failed("Missing sender".into()))?;
         Ok(run_request(
             server,
             self.session_manager.clone(),
@@ -371,8 +371,8 @@ impl FileChooser {
     ) -> Result<Response<SaveFileResults>, fdo::Error> {
         let sender = header
             .sender()
-            .ok_or_else(|| fdo::Error::Failed("Missing sender".to_string()))?
-            .to_string();
+            .map(|s| String::from(s.as_str()))
+            .ok_or_else(|| fdo::Error::Failed("Missing sender".into()))?;
         Ok(run_request(
             server,
             self.session_manager.clone(),
@@ -397,8 +397,8 @@ impl FileChooser {
     ) -> Result<Response<SaveFilesResults>, fdo::Error> {
         let sender = header
             .sender()
-            .ok_or_else(|| fdo::Error::Failed("Missing sender".to_string()))?
-            .to_string();
+            .map(|s| String::from(s.as_str()))
+            .ok_or_else(|| fdo::Error::Failed("Missing sender".into()))?;
         Ok(run_request(
             server,
             self.session_manager.clone(),
@@ -486,7 +486,7 @@ mod tests {
 
     #[test]
     fn test_map_filter_glob() {
-        let f = map_filter(("Images".to_string(), vec![(0, "*.png".to_string())]));
+        let f = map_filter(("Images".into(), vec![(0, "*.png".into())]));
         assert_eq!(f.name, "Images");
         assert_eq!(f.elements.len(), 1);
         assert!(matches!(f.elements[0], FilterKind::Glob(ref v) if v == "*.png"));
@@ -494,7 +494,7 @@ mod tests {
 
     #[test]
     fn test_map_filter_mime() {
-        let f = map_filter(("Audio".to_string(), vec![(1, "audio/*".to_string())]));
+        let f = map_filter(("Audio".into(), vec![(1, "audio/*".into())]));
         assert_eq!(f.name, "Audio");
         assert_eq!(f.elements.len(), 1);
         assert!(matches!(f.elements[0], FilterKind::Mime(ref v) if v == "audio/*"));
@@ -503,8 +503,8 @@ mod tests {
     #[test]
     fn test_map_filter_unknown_kind_skipped() {
         let f = map_filter((
-            "Mixed".to_string(),
-            vec![(0, "*.png".to_string()), (99, "unknown".to_string())],
+            "Mixed".into(),
+            vec![(0, "*.png".into()), (99, "unknown".into())],
         ));
         assert_eq!(f.elements.len(), 1);
         assert!(matches!(f.elements[0], FilterKind::Glob(ref v) if v == "*.png"));
@@ -513,8 +513,8 @@ mod tests {
     #[test]
     fn test_unmap_filter_roundtrip() {
         let original: FileFilter = (
-            "Images".to_string(),
-            vec![(0, "*.png".to_string()), (1, "image/png".to_string())],
+            "Images".into(),
+            vec![(0, "*.png".into()), (1, "image/png".into())],
         );
         let mapped = map_filter(original.clone());
         let unmapped = unmap_filter(mapped);
@@ -524,10 +524,10 @@ mod tests {
     #[test]
     fn test_map_choices() {
         let choice = (
-            "encoding".to_string(),
-            "Encoding".to_string(),
-            vec![("utf8".to_string(), "UTF-8".to_string())],
-            "utf8".to_string(),
+            "encoding".into(),
+            "Encoding".into(),
+            vec![("utf8".into(), "UTF-8".into())],
+            "utf8".into(),
         );
         let mapped = map_choices(vec![choice]);
         assert_eq!(mapped.len(), 1);
@@ -541,18 +541,21 @@ mod tests {
 
     #[test]
     fn test_map_cstr() {
-        let path = FilePath("hello".to_string());
+        let path = FilePath("hello".into());
         assert_eq!(map_cstr(path), "hello");
     }
 
     #[test]
     fn test_map_final_choices() {
         let c = FinalChoice {
-            id: "encoding".to_string(),
-            variant_id: "utf8".to_string(),
+            id: "encoding".into(),
+            variant_id: "utf8".into(),
         };
         let mapped = map_final_choices(vec![c]);
-        assert_eq!(mapped, vec![("encoding".to_string(), "utf8".to_string())]);
+        assert_eq!(
+            mapped,
+            vec![("encoding".into(), "utf8".into())]
+        );
     }
 
     #[test]
@@ -571,9 +574,8 @@ mod tests {
             context: MainContext::default(),
             sender: unbounded_channel().0,
         };
-        let conn = match Connection::session().await {
-            Ok(c) => c,
-            Err(_) => return,
+        let Ok(conn) = Connection::session().await else {
+            return;
         };
         let chooser = FileChooser::new(
             &proxy,
@@ -595,9 +597,8 @@ mod tests {
             context: MainContext::default(),
             sender: unbounded_channel().0,
         };
-        let conn = match Connection::session().await {
-            Ok(c) => c,
-            Err(_) => return,
+        let Ok(conn) = Connection::session().await else {
+            return;
         };
         let chooser = FileChooser::new(
             &proxy,
@@ -619,9 +620,8 @@ mod tests {
             context: MainContext::default(),
             sender: unbounded_channel().0,
         };
-        let conn = match Connection::session().await {
-            Ok(c) => c,
-            Err(_) => return,
+        let Ok(conn) = Connection::session().await else {
+            return;
         };
         let chooser = FileChooser::new(
             &proxy,
@@ -643,9 +643,8 @@ mod tests {
             context: MainContext::default(),
             sender: unbounded_channel().0,
         };
-        let conn = match Connection::session().await {
-            Ok(c) => c,
-            Err(_) => return,
+        let Ok(conn) = Connection::session().await else {
+            return;
         };
         let chooser = FileChooser::new(
             &proxy,
@@ -728,8 +727,8 @@ mod tests {
         };
 
         let results = OpenFileResults {
-            uris: Some(vec!["file:///tmp/test.txt".to_string()]),
-            choices: Some(vec![("encoding".to_string(), "utf8".to_string())]),
+            uris: Some(vec!["file:///tmp/test.txt".into()]),
+            choices: Some(vec![("encoding".into(), "utf8".into())]),
             current_filter: None,
             writable: Some(true),
         };
@@ -740,7 +739,7 @@ mod tests {
 
         let uris_val = decoded.get("uris").unwrap();
         let uris: Vec<String> = uris_val.try_clone().unwrap().try_into().unwrap();
-        assert_eq!(uris, vec!["file:///tmp/test.txt".to_string()]);
+        assert_eq!(uris, vec!["file:///tmp/test.txt".to_owned()]);
         assert_eq!(
             decoded.get("writable").unwrap().try_clone().unwrap(),
             Value::from(true)
@@ -755,7 +754,7 @@ mod tests {
         };
 
         let results = SaveFileResults {
-            uris: Some(vec!["file:///tmp/test.txt".to_string()]),
+            uris: Some(vec!["file:///tmp/test.txt".into()]),
             choices: None,
             current_filter: None,
         };
@@ -766,7 +765,7 @@ mod tests {
 
         let uris_val = decoded.get("uris").unwrap();
         let uris: Vec<String> = uris_val.try_clone().unwrap().try_into().unwrap();
-        assert_eq!(uris, vec!["file:///tmp/test.txt".to_string()]);
+        assert_eq!(uris, vec!["file:///tmp/test.txt".to_owned()]);
     }
 
     #[test]
@@ -778,8 +777,8 @@ mod tests {
 
         let results = SaveFilesResults {
             uris: Some(vec![
-                "file:///tmp/test1.txt".to_string(),
-                "file:///tmp/test2.txt".to_string(),
+                "file:///tmp/test1.txt".into(),
+                "file:///tmp/test2.txt".into(),
             ]),
             choices: None,
         };
@@ -793,8 +792,8 @@ mod tests {
         assert_eq!(
             uris,
             vec![
-                "file:///tmp/test1.txt".to_string(),
-                "file:///tmp/test2.txt".to_string()
+                "file:///tmp/test1.txt".to_owned(),
+                "file:///tmp/test2.txt".to_owned()
             ]
         );
     }

@@ -1,0 +1,4 @@
+# Banned mutex types
+disallowed-types = [
+  { path = "std::sync::Mutex", reason = "Use parking_lot::Mutex instead." }
+]

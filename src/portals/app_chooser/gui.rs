@@ -62,7 +62,7 @@ impl AppChooserUi {
         let label_text = if let Some(ref filename) = self.filename {
             format!("{} {}", t!("select_application_to_open"), filename)
         } else {
-            t!("select_application_to_open_file").to_string()
+            t!("select_application_to_open_file").into()
         };
         let label = Label::new(Some(&label_text));
         dialog.content_area.append(&label);
@@ -135,9 +135,9 @@ impl AppChooserUi {
                     let launch_context = gio::AppLaunchContext::new();
                     let token = launch_context
                         .startup_notify_id(None::<&gio::AppInfo>, &[])
-                        .map(|s| s.to_string());
+                        .map(|s| s.into());
                     Ok(AppChooserResult {
-                        choice: row.widget_name().to_string(),
+                        choice: row.widget_name().into(),
                         activation_token: token,
                     })
                 } else {
@@ -180,7 +180,7 @@ fn populate_list_box(
         // we only show those.
         for app in all_apps {
             if let Some(id) = app.id()
-                && choices.contains(&id.to_string())
+                && choices.iter().any(|c| c == id.as_str())
             {
                 apps_to_show.push(app);
             }

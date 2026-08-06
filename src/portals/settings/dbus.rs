@@ -131,7 +131,7 @@ impl SettingsPortal {
         if let Some(val) = state.get(&namespace, &key) {
             Ok(val)
         } else {
-            Err(fdo::Error::Failed("Setting not found".to_string()))
+            Err(fdo::Error::Failed("Setting not found".into()))
         }
     }
 
@@ -143,13 +143,13 @@ impl SettingsPortal {
         let mut result = HashMap::new();
 
         let supported_namespaces = vec![
-            NS_FREEDESKTOP_APPEARANCE.to_string(),
-            NS_GNOME_DESKTOP_INTERFACE.to_string(),
-            crate::portals::settings::aggregator::NS_KDE_KDEGLOBALS.to_string(),
+            NS_FREEDESKTOP_APPEARANCE.to_owned(),
+            NS_GNOME_DESKTOP_INTERFACE.to_owned(),
+            crate::portals::settings::aggregator::NS_KDE_KDEGLOBALS.to_owned(),
         ];
 
         let mut active_namespaces = Vec::new();
-        if namespaces.is_empty() || namespaces.contains(&"".to_string()) {
+        if namespaces.is_empty() || namespaces.contains(&String::from("")) {
             active_namespaces = supported_namespaces.clone();
         } else {
             for requested_ns in namespaces {

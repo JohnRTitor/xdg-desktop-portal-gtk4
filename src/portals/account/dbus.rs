@@ -123,8 +123,8 @@ impl Account {
     ) -> Result<Response<UserInformation>, fdo::Error> {
         let sender = header
             .sender()
-            .ok_or_else(|| fdo::Error::Failed("Missing sender".to_string()))?
-            .to_string();
+            .map(|s| String::from(s.as_str()))
+            .ok_or_else(|| fdo::Error::Failed("Missing sender".into()))?;
         Ok(run_request(
             server,
             self.session_manager.clone(),
@@ -195,9 +195,9 @@ mod tests {
     #[test]
     fn test_user_information_serialize() {
         let info = UserInformation {
-            id: "user1".to_string(),
-            name: "User One".to_string(),
-            image: "file:///icon.png".to_string(),
+            id: "user1".into(),
+            name: "User One".into(),
+            image: "file:///icon.png".into(),
         };
 
         let ctxt = Context::new_dbus(Endian::Little, 0);

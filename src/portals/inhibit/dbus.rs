@@ -132,7 +132,7 @@ impl Inhibit {
 
         let sender = header
             .sender()
-            .map(|s| s.as_str().to_string())
+            .map(|s| String::from(s.as_str()))
             .ok_or_else(|| fdo::Error::Failed("Missing sender".into()))?;
 
         let cancel_notify = Arc::new(Notify::new()); // We don't use this one in Inhibit itself but we must pass it
@@ -254,7 +254,7 @@ impl Inhibit {
         let cancel_notify = Arc::new(Notify::new());
 
         let sender = match header.sender() {
-            Some(s) => s.as_str().to_string(),
+            Some(s) => String::from(s.as_str()),
             None => return Ok(2),
         };
 
@@ -268,7 +268,7 @@ impl Inhibit {
             return Ok(2);
         }
 
-        let session = Session::new(session_handle.as_str().to_string(), Some(notify.clone()));
+        let session = Session::new(session_handle.as_str().into(), Some(notify.clone()));
         if let Err(e) = server.at(session_handle.clone(), session).await {
             tracing::error!("Failed to export monitor session: {}", e);
             self.session_manager

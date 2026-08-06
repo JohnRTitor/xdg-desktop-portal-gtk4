@@ -140,7 +140,7 @@ impl ClipboardPortal {
     ) -> fdo::Result<()> {
         let sender = header
             .sender()
-            .map(|s| s.as_str().to_string())
+            .map(|s| String::from(s.as_str()))
             .ok_or_else(|| fdo::Error::Failed("Missing sender".into()))?;
 
         tracing::debug!("RequestClipboard called for session: {:?}", session_handle);
@@ -229,7 +229,7 @@ impl ClipboardPortal {
         if let Some(Value::Array(arr)) = options.get("mime_types") {
             for i in 0..arr.len() {
                 if let Ok(Some(Value::Str(s))) = arr.get::<Value<'_>>(i) {
-                    mimes.push(s.as_str().to_string());
+                    mimes.push(s.as_str().into());
                 }
             }
         }
@@ -254,9 +254,8 @@ impl ClipboardPortal {
             // It dies when `request_rx` is dropped, which happens when the host copies
             // something else and our ContentProvider is destroyed.
             while let Some((mime, fd_sender)) = request_rx.recv().await {
-                let emitter = match SignalEmitter::new(&conn_clone, crate::core::DBUS_PATH) {
-                    Ok(e) => e,
-                    Err(_) => return,
+                let Ok(emitter) = SignalEmitter::new(&conn_clone, crate::core::DBUS_PATH) else {
+                    return;
                 };
 
                 static SERIAL: AtomicU32 = AtomicU32::new(1);
