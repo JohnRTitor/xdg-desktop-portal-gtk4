@@ -88,7 +88,11 @@ impl Portal {
     /// This method registers all specific portal implementations on the session bus.
     /// It must be called from within a Tokio async context, and typically runs on a
     /// dedicated background thread to prevent blocking the GTK main loop.
-    pub async fn create(proxy: &UiProxy, replace: bool) -> Result<Self, PortalError> {
+    pub async fn create(
+        proxy: &UiProxy,
+        replace: bool,
+        name_lost_tx: tokio::sync::oneshot::Sender<()>,
+    ) -> Result<Self, PortalError> {
         let session = Connection::session()
             .await
             .map_err(PortalError::Connection)?;
@@ -155,7 +159,7 @@ impl Portal {
             use futures_util::stream::StreamExt;
             if name_lost_iterator.next().await.is_some() {
                 tracing::warn!("Lost name {}", NAME);
-                std::process::exit(0);
+                let _ = name_lost_tx.send(());
             }
         });
 

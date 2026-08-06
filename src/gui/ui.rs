@@ -61,6 +61,10 @@ impl Ui {
         self.main_loop.run();
     }
 
+    pub fn main_loop(&self) -> &MainLoop {
+        &self.main_loop
+    }
+
     pub fn proxy(&self) -> &UiProxy {
         &self.proxy
     }

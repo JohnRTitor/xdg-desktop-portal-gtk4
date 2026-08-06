@@ -538,60 +538,71 @@ async fn listen_for_action_invoked(
             let mut app_path = String::from("/");
             app_path.push_str(&app_id.replace('.', "/").replace('-', "_"));
 
-            if let Some(action_name) = action_key.strip_prefix("app.") {
-                // This proxy is used to talk back to the specific client application that triggered the notification
-                // (e.g., when a user clicks a notification action). Because the destination address
-                // (the app_id or unique connection name) changes dynamically on every single request,
-                // we must instantiate it on the fly.
-                let Ok(builder) =
-                    ApplicationProxy::builder(&session_bus).destination(app_id.as_str())
-                else {
-                    tracing::error!("Invalid D-Bus destination: {}", app_id);
-                    continue;
-                };
-                let Ok(builder) = builder.path(app_path.as_str()) else {
-                    tracing::error!("Invalid D-Bus path: {}", app_path);
-                    continue;
-                };
-                let proxy_res = builder.cache_properties(zbus::proxy::CacheProperties::No).build().await;
+            let app_id_clone = app_id.clone();
+            let action_key_clone = action_key.to_string();
+            let server_clone = server.clone();
+            let portal_id_clone = portal_id.clone();
+            let session_bus_clone = session_bus.clone();
+            let app_path_clone = app_path.clone();
+            let params_clone = params.clone();
+            let platform_data_clone = platform_data.clone();
 
-                if let Ok(proxy) = proxy_res {
-                    let _ = proxy
-                        .activate_action(action_name, &params, &platform_data)
+            tokio::spawn(async move {
+                if let Some(action_name) = action_key_clone.strip_prefix("app.") {
+                    // This proxy is used to talk back to the specific client application that triggered the notification
+                    // (e.g., when a user clicks a notification action). Because the destination address
+                    // (the app_id or unique connection name) changes dynamically on every single request,
+                    // we must instantiate it on the fly.
+                    let Ok(builder) =
+                        ApplicationProxy::builder(&session_bus_clone).destination(app_id_clone.as_str())
+                    else {
+                        tracing::error!("Invalid D-Bus destination: {}", app_id_clone);
+                        return;
+                    };
+                    let Ok(builder) = builder.path(app_path_clone.as_str()) else {
+                        tracing::error!("Invalid D-Bus path: {}", app_path_clone);
+                        return;
+                    };
+                    let proxy_res = builder.cache_properties(zbus::proxy::CacheProperties::No).build().await;
+
+                    if let Ok(proxy) = proxy_res {
+                        let _ = proxy
+                            .activate_action(action_name, &params_clone, &platform_data_clone)
+                            .await;
+                    }
+                } else {
+                    let Ok(builder) =
+                        ApplicationProxy::builder(&session_bus_clone).destination(app_id_clone.as_str())
+                    else {
+                        tracing::error!("Invalid D-Bus destination: {}", app_id_clone);
+                        return;
+                    };
+                    let Ok(builder) = builder.path(app_path_clone.as_str()) else {
+                        tracing::error!("Invalid D-Bus path: {}", app_path_clone);
+                        return;
+                    };
+                    let proxy_res = builder.cache_properties(zbus::proxy::CacheProperties::No).build().await;
+
+                    if let Ok(proxy) = proxy_res {
+                        let _ = proxy.activate(&platform_data_clone).await;
+                    }
+
+                    let iface_ref_res = server_clone
+                        .interface::<_, Notification>(crate::core::DBUS_PATH)
                         .await;
-                }
-            } else {
-                let Ok(builder) =
-                    ApplicationProxy::builder(&session_bus).destination(app_id.as_str())
-                else {
-                    tracing::error!("Invalid D-Bus destination: {}", app_id);
-                    continue;
-                };
-                let Ok(builder) = builder.path(app_path.as_str()) else {
-                    tracing::error!("Invalid D-Bus path: {}", app_path);
-                    continue;
-                };
-                let proxy_res = builder.cache_properties(zbus::proxy::CacheProperties::No).build().await;
 
-                if let Ok(proxy) = proxy_res {
-                    let _ = proxy.activate(&platform_data).await;
+                    if let Ok(iface_ref) = iface_ref_res {
+                        let _ = Notification::action_invoked(
+                            iface_ref.signal_emitter(),
+                            &app_id_clone,
+                            &portal_id_clone,
+                            &action_key_clone,
+                            &params_clone,
+                        )
+                        .await;
+                    }
                 }
-
-                let iface_ref_res = server
-                    .interface::<_, Notification>(crate::core::DBUS_PATH)
-                    .await;
-
-                if let Ok(iface_ref) = iface_ref_res {
-                    let _ = Notification::action_invoked(
-                        iface_ref.signal_emitter(),
-                        &app_id,
-                        &portal_id,
-                        action_key,
-                        &params,
-                    )
-                    .await;
-                }
-            }
+            });
         }
     }
     Ok(())

@@ -75,6 +75,14 @@ where
     C: FnOnce() -> E,
 {
     let (send, recv) = tokio::sync::oneshot::channel();
+
+    // Cancellation Safety Pattern:
+    // We create a oneshot channel here but DO NOT store the `_close_on_close_tx` anywhere.
+    // It remains held entirely within the stack frame/generator of this `run_ui_task` Future.
+    // If the caller drops the Future (i.e. task cancellation), `_close_on_close_tx` will be
+    // automatically dropped. This cleanly closes the channel, notifying `close_on_close`
+    // (which was passed to GTK) that the operation has been aborted, allowing GTK to close
+    // the window or clean up.
     let (_close_on_close_tx, close_on_close) = tokio::sync::oneshot::channel();
 
     let context = proxy.context.clone();

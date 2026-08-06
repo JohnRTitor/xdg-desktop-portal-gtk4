@@ -86,16 +86,27 @@ impl SessionManager {
             .state
             .lock();
 
-        let count = state.app_sessions.entry(app_id.to_string()).or_default();
-        if *count >= self.max_sessions_per_app {
-            return Err(SessionError::LimitExceeded {
-                app_id: app_id.to_string(),
-            });
+        let count = state.app_sessions.get_mut(app_id);
+        if let Some(count_ref) = count {
+            if *count_ref >= self.max_sessions_per_app {
+                return Err(SessionError::LimitExceeded {
+                    app_id: app_id.to_string(),
+                });
+            }
+            *count_ref += 1;
+        } else {
+            state.app_sessions.insert(app_id.to_string(), 1);
         }
-        *count += 1;
 
-        let sender_list = state.sender_objects.entry(sender.to_string()).or_default();
-        sender_list.push((object_path.to_string(), app_id.to_string(), cancel));
+        let sender_list = state.sender_objects.get_mut(sender);
+        if let Some(list) = sender_list {
+            list.push((object_path.to_string(), app_id.to_string(), cancel));
+        } else {
+            state.sender_objects.insert(
+                sender.to_string(),
+                vec![(object_path.to_string(), app_id.to_string(), cancel)],
+            );
+        }
 
         Ok(())
     }

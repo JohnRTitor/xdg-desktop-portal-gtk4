@@ -10,8 +10,9 @@ async fn portal_worker(
     replace: bool,
     tx: std::sync::mpsc::Sender<Result<(), xdg_desktop_portal_gtk4::core::PortalError>>,
     shutdown_rx: tokio::sync::oneshot::Receiver<()>,
+    name_lost_tx: tokio::sync::oneshot::Sender<()>,
 ) {
-    let portal = match Portal::create(&proxy, replace).await {
+    let portal = match Portal::create(&proxy, replace, name_lost_tx).await {
         Ok(p) => p,
         Err(e) => {
             let _ = tx.send(Err(e));
@@ -54,9 +55,10 @@ fn main() {
     let proxy = ui.proxy().clone();
 
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+    let (name_lost_tx, name_lost_rx) = tokio::sync::oneshot::channel::<()>();
 
     std::thread::spawn(move || {
-        portal_worker(proxy, replace, tx, shutdown_rx);
+        portal_worker(proxy, replace, tx, shutdown_rx, name_lost_tx);
     });
 
     match rx.recv() {
@@ -77,6 +79,12 @@ fn main() {
     // Now that D-Bus is set up, initialize GTK. Any closures queued by early
     // D-Bus requests (via `run_ui_task`) will see GTK as initialized when they finally execute.
     ui.init_gtk();
+
+    let main_loop_clone = ui.main_loop().clone();
+    ui.proxy().context.spawn_local(async move {
+        let _ = name_lost_rx.await;
+        main_loop_clone.quit();
+    });
 
     // Start the GTK main loop. This will consume the current thread.
     // The queued closures from `Ui::new()` will start executing once the loop begins iterating.
