@@ -38,12 +38,18 @@
           ...
         }:
         {
+          formatter = pkgs.nixfmt;
+
           packages.xdg-desktop-portal-gtk4 = pkgs.callPackage ./contrib/build.nix { version = version; };
           packages.xdg-desktop-portal-gtk4-test = config.packages.xdg-desktop-portal-gtk4.override {
             withDbusTests = true;
           };
 
           packages.default = config.packages.xdg-desktop-portal-gtk4;
+
+          checks = {
+            xdg-desktop-portal-gtk4-test = config.packages.xdg-desktop-portal-gtk4-test;
+          };
 
           devShells.default = pkgs.mkShell {
             inputsFrom = [ config.packages.default ];
