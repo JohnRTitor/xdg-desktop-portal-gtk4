@@ -12,7 +12,8 @@ This is a Linux desktop portal daemon implementing the `org.freedesktop.impl.por
 ## Async & Threading
 
 - Run the GTK4 event loop strictly on the main thread (`gtk4` objects are `!Send` and `!Sync`).
-- Run the Tokio runtime on a dedicated background OS thread (`#[tokio::main]`) to handle D-Bus methods without blocking the UI.
+- Run the Tokio runtime on a dedicated background OS thread (`#[tokio::main(flavor = "current_thread")]`) to handle D-Bus methods without blocking the UI. This single-threaded runtime is sufficient since DBus operations are largely I/O bound.
+- Offload heavy or blocking operations using `tokio::task::spawn_blocking` to prevent freezing the single-threaded async runtime.
 - Dispatch UI operations from Tokio to GTK using `crate::gui::run_ui_task(proxy, ...)` and await the channel response.
 - Cache long-lived GTK objects across multiple requests using `thread_local!` within the GTK thread.
 

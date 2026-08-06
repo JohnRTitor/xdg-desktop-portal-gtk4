@@ -8,21 +8,21 @@ Enables sandboxed applications (like Flatpaks and Snaps) to securely interact wi
 
 ## Supported Portals
 
-| Portal Interface | Description |
-|------------------|-------------|
-| `Access` | Prompting for device/resource access |
-| `Account` | Providing user account information |
-| `AppChooser` | Selecting an application to open a file or URI |
-| `Clipboard` | Bridging clipboard access between sandboxes and host |
-| `DynamicLauncher`| Managing dynamic desktop launchers |
-| `Email` | Composing emails |
-| `FileChooser` | Opening and saving files (with native GTK4 UI) |
-| `Inhibit` | Inhibiting session state (like sleep or logout) |
-| `Lockdown` | Querying locked-down features |
-| `Notification` | Displaying desktop notifications |
-| `Print` | Printing documents |
-| `Settings` | Reading desktop settings (such as color-scheme for dark mode) |
-| `USB` | Managing USB device access |
+| Portal Interface  | Description                                                   |
+| ----------------- | ------------------------------------------------------------- |
+| `Access`          | Prompting for device/resource access                          |
+| `Account`         | Providing user account information                            |
+| `AppChooser`      | Selecting an application to open a file or URI                |
+| `Clipboard`       | Bridging clipboard access between sandboxes and host          |
+| `DynamicLauncher` | Managing dynamic desktop launchers                            |
+| `Email`           | Composing emails                                              |
+| `FileChooser`     | Opening and saving files (with native GTK4 UI)                |
+| `Inhibit`         | Inhibiting session state (like sleep or logout)               |
+| `Lockdown`        | Querying locked-down features                                 |
+| `Notification`    | Displaying desktop notifications                              |
+| `Print`           | Printing documents                                            |
+| `Settings`        | Reading desktop settings (such as color-scheme for dark mode) |
+| `USB`             | Managing USB device access                                    |
 
 ## Dependencies
 
@@ -86,6 +86,7 @@ org.freedesktop.impl.portal.FileChooser=gtk4
 ```
 
 Apply the changes:
+
 ```bash
 systemctl --user restart xdg-desktop-portal
 ```
@@ -95,12 +96,14 @@ systemctl --user restart xdg-desktop-portal
 The daemon logs directly to the systemd journal using `tracing-journald`.
 
 Enable debug logging via environment variables:
+
 ```bash
 # Start manually for debugging
 RUST_LOG=debug xdg-desktop-portal-gtk4
 ```
 
 View background service logs:
+
 ```bash
 journalctl --user -u xdg-desktop-portal-gtk4 -f
 ```
@@ -110,15 +113,17 @@ journalctl --user -u xdg-desktop-portal-gtk4 -f
 Portals can be selectively disabled at compile-time to reduce binary size. By default, **all portals** are enabled.
 
 Disable default features in Cargo to build only what you need:
+
 ```bash
 cargo build --release --no-default-features --features "file_chooser,settings"
 ```
-*(See `Cargo.toml` for the full list of portal features).*
+
+_(See `Cargo.toml` for the full list of portal features)._
 
 ## Development & Architecture
 
 - **GTK Main Thread:** Runs the GTK4 event loop. GTK4 objects are `!Send` and `!Sync`, so all UI operations happen here.
-- **Tokio Runtime Thread:** A dedicated background thread handling `zbus` D-Bus connections. This ensures blocked clients never freeze the UI.
+- **Tokio Runtime Thread:** A dedicated background thread running a single-threaded Tokio runtime (`current_thread`). This handles `zbus` D-Bus connections, ensuring blocked clients never freeze the UI. CPU-heavy or blocking tasks are offloaded to dedicated background threads via `tokio::task::spawn_blocking`.
 - **Internationalization (i18n):** Uses `rust-i18n`. Locales are stored in `locales/`.
 
 ## Acknowledgements & License

@@ -7,7 +7,7 @@ use {
     },
 };
 
-#[tokio::main(worker_threads = 2)]
+#[tokio::main(flavor = "current_thread")]
 async fn portal_worker(
     proxy: UiProxy,
     replace: bool,
