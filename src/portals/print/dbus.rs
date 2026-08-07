@@ -92,11 +92,7 @@ impl Print {
                 settings: result.settings,
                 page_setup: result.page_setup,
                 token: result.token,
-                supported_output_file_formats: Some(vec![
-                    "pdf".into(),
-                    "ps".into(),
-                    "svg".into(),
-                ]),
+                supported_output_file_formats: Some(vec!["pdf".into(), "ps".into(), "svg".into()]),
                 has_current_page: Some(true),
                 has_selected_pages: Some(true),
             }),

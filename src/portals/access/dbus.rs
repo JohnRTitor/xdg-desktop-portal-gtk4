@@ -221,10 +221,7 @@ mod tests {
     #[test]
     fn test_access_results_serialize() {
         let results = AccessResults {
-            choices: Some(vec![(
-                "choice_id".into(),
-                "variant_id".into(),
-            )]),
+            choices: Some(vec![("choice_id".into(), "variant_id".into())]),
         };
 
         let ctxt = Context::new_dbus(Endian::Little, 0);

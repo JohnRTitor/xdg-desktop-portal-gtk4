@@ -186,10 +186,7 @@ mod tests {
     fn test_compose_url_multiple_addresses() {
         let options = ComposeEmailOptions {
             address: Some("single@example.com".into()),
-            addresses: Some(vec![
-                "foo@example.com".into(),
-                "bar@example.com".into(),
-            ]),
+            addresses: Some(vec!["foo@example.com".into(), "bar@example.com".into()]),
             ..Default::default()
         };
         assert_eq!(

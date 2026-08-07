@@ -373,3 +373,48 @@ impl ClipboardPortal {
         2
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use {
+        super::*, crate::core::session_manager::SessionManager, gtk4::glib::MainContext,
+        tokio::sync::mpsc::unbounded_channel, zbus::zvariant::OwnedObjectPath,
+    };
+
+    fn dummy_proxy() -> UiProxy {
+        let (sender, _receiver) = unbounded_channel();
+        UiProxy {
+            context: MainContext::default(),
+            sender,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_clipboard_version() -> Result<(), Box<dyn std::error::Error>> {
+        if std::env::var("RUN_DBUS_TESTS").is_err() {
+            return Ok(());
+        }
+        let conn = Connection::session().await?;
+        let sm = SessionManager::new(conn.clone(), 10);
+        let portal = ClipboardPortal::new(conn, dummy_proxy(), sm);
+        assert_eq!(portal.version(), 2);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_selection_write_invalid_serial() -> Result<(), Box<dyn std::error::Error>> {
+        if std::env::var("RUN_DBUS_TESTS").is_err() {
+            return Ok(());
+        }
+        let conn = Connection::session().await?;
+        let sm = SessionManager::new(conn.clone(), 10);
+        let portal = ClipboardPortal::new(conn, dummy_proxy(), sm);
+
+        let path = ObjectPath::try_from("/org/freedesktop/portal/desktop/session/1/1").unwrap();
+        let res = portal.selection_write(path.clone(), 9999).await;
+
+        assert!(res.is_err());
+        assert!(matches!(res.unwrap_err(), fdo::Error::InvalidArgs(_)));
+        Ok(())
+    }
+}

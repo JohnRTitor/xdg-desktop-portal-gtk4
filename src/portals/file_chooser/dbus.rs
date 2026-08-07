@@ -552,10 +552,7 @@ mod tests {
             variant_id: "utf8".into(),
         };
         let mapped = map_final_choices(vec![c]);
-        assert_eq!(
-            mapped,
-            vec![("encoding".into(), "utf8".into())]
-        );
+        assert_eq!(mapped, vec![("encoding".into(), "utf8".into())]);
     }
 
     #[test]

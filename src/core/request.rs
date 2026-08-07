@@ -93,7 +93,57 @@ mod tests {
 
     #[tokio::test]
     async fn test_run_request_completion() {
-        // Can't easily test run_request cancellation with ObjectServer without a connection,
-        // but we can at least test Request::close logic as above.
+        let conn = zbus::Connection::session().await.unwrap();
+        let server = conn.object_server();
+        let sm = crate::core::session_manager::SessionManager::new(conn.clone(), 10);
+        let handle =
+            OwnedObjectPath::try_from("/org/freedesktop/portal/desktop/request/1").unwrap();
+
+        let response: Response<u32> =
+            run_request(&server, sm, "test_app", "test_sender", handle, async {
+                Response::success(42)
+            })
+            .await;
+
+        assert_eq!(response.0, 0);
+        assert_eq!(response.1, 42);
+    }
+
+    #[tokio::test]
+    async fn test_run_request_cancellation() {
+        let conn = zbus::Connection::session().await.unwrap();
+        let server = conn.object_server();
+        let sm = crate::core::session_manager::SessionManager::new(conn.clone(), 10);
+        let handle =
+            OwnedObjectPath::try_from("/org/freedesktop/portal/desktop/request/2").unwrap();
+
+        let handle_clone = handle.clone();
+        let conn_clone = conn.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            #[zbus::proxy(interface = "org.freedesktop.impl.portal.Request")]
+            trait TestRequest {
+                fn close(&self) -> zbus::Result<()>;
+            }
+            let proxy = TestRequestProxy::builder(&conn_clone)
+                .destination(conn_clone.unique_name().unwrap().clone())
+                .unwrap()
+                .path(handle_clone)
+                .unwrap()
+                .build()
+                .await
+                .unwrap();
+            let _ = proxy.close().await;
+        });
+
+        let response: Response<u32> =
+            run_request(&server, sm, "test_app", "test_sender", handle, async {
+                tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+                Response::success(42)
+            })
+            .await;
+
+        assert_eq!(response.0, 1); // 1 is cancelled
+        assert_eq!(response.1, 0); // Default u32
     }
 }

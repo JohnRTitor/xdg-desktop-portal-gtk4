@@ -75,7 +75,7 @@
 //! This portal has no UI of its own; it entirely delegates rendering to the host's notification daemon
 //! (e.g., GNOME Shell or Mako).
 //! However, it uses GTK/GIO to safely parse raw image data (`gdk_pixbuf::Pixbuf`) in background
-//! threads (`gtk4::gio::spawn_blocking`).
+//! threads (`tokio::task::spawn_blocking`).
 //!
 //! ## Backend Interaction
 //!
