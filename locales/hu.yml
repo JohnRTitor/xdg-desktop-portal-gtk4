@@ -1,12 +1,19 @@
+allow_action: _Engedélyezés
 cancel_action: Mégse
 choose_an_application: Válasszon egy alkalmazást.
 create_action: Lét_rehozás
 create_web_application: Webalkalmazás létrehozása
 deny_access_action: Hozzáférés megtagadása
+deny_action: Elutasítás
 grant_access_action: Hozzáférés megadása
+name: Név
 open_action: _Megnyitás
 open_files_read_only: Fájlok megnyitása csak olvasásra
 save_action: _Mentés
-select_application_to_open_file: Válasszon egy alkalmazást a(z) „%s” fájl megnyitásához.
+select_application_to_open_file: Válasszon egy alkalmazást a(z) „%{filename}” fájl
+  megnyitásához.
 share_action: Meg_osztás
 share_information: Részletek megosztása
+unknown_device: Ismeretlen eszköz
+unknown_vendor: Ismeretlen gyártó
+wants_to_access_usb_devices: A(z) %{app_id} hozzáférést szeretne a következő USB-eszközökhöz

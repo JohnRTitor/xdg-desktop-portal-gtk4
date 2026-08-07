@@ -4,10 +4,15 @@ choose_an_application: Proszę wybrać program.
 create_action: _Utwórz
 create_web_application: Utworzenie programu WWW
 deny_access_action: Odmów dostępu
+deny_action: Odmów
 grant_access_action: Udziel dostępu
+name: Imię i nazwisko
 open_action: _Otwórz
 open_files_read_only: Otwarcie plików tylko do odczytu
 save_action: _Zapisz
-select_application_to_open_file: Proszę wybrać program do otwarcia pliku „%s”.
+select_application_to_open_file: Proszę wybrać program do otwarcia pliku „%{filename}”.
 share_action: _Udostępnij
 share_information: Udostępnianie informacji
+unknown_device: Nieznane urządzenie
+unknown_vendor: Nieznany producent
+wants_to_access_usb_devices: Aplikacja %{app_id} chce dostępu do tych urządzeń USB

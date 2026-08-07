@@ -2,10 +2,15 @@ allow_action: Autorizar
 cancel_action: Anullar
 choose_an_application: Causir una aplicacion.
 deny_access_action: Refusar l'accès
+deny_action: Refusar
 grant_access_action: Acordar l'accès
+name: Nom
 open_action: _Dobrir
 open_files_read_only: Dobrir los fichièrs en lectura sola
 save_action: _Enregistrar
-select_application_to_open_file: Causissètz una aplicacion per dobrir lo fichièr « %s ».
+select_application_to_open_file: Causissètz una aplicacion per dobrir lo fichièr « %{filename} ».
 share_action: _Partejar
 share_information: Partejar los detalhs
+unknown_device: Periferic desconegut
+unknown_vendor: Fabricant desconegut
+wants_to_access_usb_devices: '%{app_id} vòl accedir als periferics USB seguent'

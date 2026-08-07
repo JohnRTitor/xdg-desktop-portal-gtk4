@@ -1,12 +1,18 @@
+allow_action: Izink_an
 cancel_action: Batal
 choose_an_application: Pilih aplikasi.
 create_action: _Buat
 create_web_application: Buat Aplikasi Web
 deny_access_action: Tolak Akses
+deny_action: Tolak
 grant_access_action: Beri Akses
+name: Nama
 open_action: B_uka
 open_files_read_only: Buka berkas hanya-baca
 save_action: _Simpan
 select_application_to_open_file: Pilih aplikasi untuk membuka berkas \
 share_action: _Bagikan
 share_information: Bagikan Detail
+unknown_device: Perangkat tak dikenal
+unknown_vendor: Vendor tak dikenal
+wants_to_access_usb_devices: '%{app_id} ingin mengakses perangkat USB berikut'

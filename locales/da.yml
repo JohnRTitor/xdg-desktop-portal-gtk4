@@ -1,11 +1,17 @@
 allow_action: Tillad
 cancel_action: Annuller
 choose_an_application: Vælg et program.
+create_action: Opret mappe
 deny_access_action: Nægt adgang
+deny_action: Nægt
 grant_access_action: Giv adgang
+name: Navn
 open_action: _Åbn
 open_files_read_only: Åbn filer som skrivebeskyttede
 save_action: _Gem
-select_application_to_open_file: Vælg et program til at åbne filen “%s”.
+select_application_to_open_file: Vælg et program til at åbne filen “%{filename}”.
 share_action: _Del
 share_information: Delingsdetaljer
+unknown_device: Ukendt enhed
+unknown_vendor: Ukendt leverandør
+wants_to_access_usb_devices: '%{app_id} ønsker at tilgå følgende USB-enheder'

@@ -1,11 +1,17 @@
 allow_action: Permitir
 cancel_action: Cancelar
 choose_an_application: Escolla unha aplicación.
+create_action: Crear un cartafol
 deny_access_action: Denegar acceso
+deny_action: Denegar
 grant_access_action: Conceder acceso
+name: Nome
 open_action: _Abrir
 open_files_read_only: Abrir ficheiros en modo só lectura
 save_action: _Gardar
-select_application_to_open_file: Escolla unha aplicación para abrir «%s».
+select_application_to_open_file: Escolla unha aplicación para abrir «%{filename}».
 share_action: _Compartir
 share_information: Compartir detalles
+unknown_device: Dispositivo descoñecido
+unknown_vendor: Vendedor descoñecido
+wants_to_access_usb_devices: '%{app_id} quere acceder aos seguintes dispositivos USB'

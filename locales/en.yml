@@ -13,9 +13,9 @@ open_action: Open
 open_files_read_only: Open files read-only
 save_action: Save
 select_application_to_open: Select an application to open
-select_application_to_open_file: Select an application to open the file
+select_application_to_open_file: Select an application to open the file "%{filename}"
 share_action: _Share
 share_information: Share Information
 unknown_device: Unknown device
 unknown_vendor: Unknown vendor
-wants_to_access_usb_devices: wants to access the following USB devices
+wants_to_access_usb_devices: "%{app_id} wants to access the following USB devices"

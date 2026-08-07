@@ -1,6 +1,14 @@
+allow_action: _Дозволи
 cancel_action: От_кажи
 choose_an_application: Изаберите програм
 deny_access_action: Забрани приступ
+deny_action: Одбиј
 grant_access_action: Дозволи приступ
+name: Име
 open_action: От_вори
+open_files_read_only: Отвори датотеке само за читање
+select_application_to_open_file: Изаберите програм за отварање датотеке „%{filename}“.
 share_action: _Дели
+unknown_device: Непознати уређај
+unknown_vendor: Непознати добављач
+wants_to_access_usb_devices: '%{app_id} жели да приступи следећим УСБ уређајима'

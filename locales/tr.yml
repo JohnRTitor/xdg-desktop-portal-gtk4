@@ -4,10 +4,15 @@ choose_an_application: Uygulama seç.
 create_action: _Oluştur
 create_web_application: Web Uygulaması Oluştur
 deny_access_action: Erişimi Reddet
+deny_action: Reddet
 grant_access_action: Erişime İzin Ver
+name: Ad
 open_action: _Aç
 open_files_read_only: Dosyaları salt okunur aç
 save_action: _Kaydet
-select_application_to_open_file: “%s” dosyasını açmak için uygulama seç.
+select_application_to_open_file: “%{filename}” dosyasını açmak için uygulama seç.
 share_action: _Paylaş
 share_information: Ayrıntıları Paylaş
+unknown_device: Bilinmeyen aygıt
+unknown_vendor: Bilinmeyen üretici
+wants_to_access_usb_devices: '%{app_id} aşağıdaki USB aygıtlarına erişmek istiyor'

@@ -4,10 +4,15 @@ choose_an_application: Trieu una aplicació.
 create_action: C_rea
 create_web_application: Crea una aplicació web
 deny_access_action: Denega l'accés
+deny_action: Denega
 grant_access_action: Permet l'accés
+name: Nom
 open_action: _Obre
 open_files_read_only: Obre fitxers de només lectura
 save_action: De_sa
-select_application_to_open_file: Trieu una aplicació per a obrir el fitxer «%s».
+select_application_to_open_file: Trieu una aplicació per a obrir el fitxer «%{filename}».
 share_action: _Comparteix
 share_information: Comparteix detalls
+unknown_device: Dispositiu desconegut
+unknown_vendor: Proveïdor desconegut
+wants_to_access_usb_devices: '%{app_id} vol accedir als següents dispositius USB'

@@ -4,10 +4,15 @@ choose_an_application: Välj ett program.
 create_action: S_kapa
 create_web_application: Skapa webbapplikation
 deny_access_action: Neka åtkomst
+deny_action: Neka
 grant_access_action: Bevilja åtkomst
+name: Namn
 open_action: _Öppna
 open_files_read_only: Öppna filer som skrivskyddade
 save_action: _Spara
-select_application_to_open_file: Välj ett program för att öppna filen ”%s”.
+select_application_to_open_file: Välj ett program för att öppna filen ”%{filename}”.
 share_action: _Dela
 share_information: Dela detaljer
+unknown_device: Okänd enhet
+unknown_vendor: Okänd tillverkare
+wants_to_access_usb_devices: '%{app_id} vill komma åt följande USB-enheter'

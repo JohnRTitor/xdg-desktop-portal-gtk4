@@ -60,11 +60,11 @@ impl AppChooserUi {
         dialog.action_area.append(&ok_button);
 
         let label_text = if let Some(ref filename) = self.filename {
-            format!("{} {}", t!("select_application_to_open"), filename)
+            t!("select_application_to_open_file", filename = filename)
         } else {
-            t!("select_application_to_open_file").into()
+            t!("select_application_to_open").into()
         };
-        let label = Label::new(Some(&label_text));
+        let label = Label::new(Some(&*label_text));
         dialog.content_area.append(&label);
 
         let scrolled_window = ScrolledWindow::builder()

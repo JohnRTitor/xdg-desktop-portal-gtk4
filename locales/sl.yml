@@ -1,12 +1,18 @@
+allow_action: _Dovoli
 cancel_action: Prekliči
 choose_an_application: Izberite program.
 create_action: Ustva_ri
 create_web_application: Ustvari spletni program
 deny_access_action: Zavrni dostop
+deny_action: Zavrni
 grant_access_action: Dovoli dostop
+name: Ime
 open_action: _Odpri
 open_files_read_only: Odpri datoteke samo za branje
 save_action: _Shrani
-select_application_to_open_file: Izberite program, da odprete datoteko »%s«.
+select_application_to_open_file: Izberite program, da odprete datoteko »%{filename}«.
 share_action: _Deli
 share_information: Deli podrobnosti
+unknown_device: Neznana naprava
+unknown_vendor: Neznani izdelovalec
+wants_to_access_usb_devices: '%{app_id} želi dostopati do naslednjih naprav USB'

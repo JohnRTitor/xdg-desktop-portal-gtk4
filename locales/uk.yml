@@ -1,11 +1,17 @@
 allow_action: Дозволити
 cancel_action: Скасувати
 choose_an_application: Виберіть програму.
+create_action: Створити
 deny_access_action: Заборонити доступ
+deny_action: Відмовити
 grant_access_action: Надати доступ
+name: Назва
 open_action: _Відкрити
 open_files_read_only: Відкрити файли лише для читання
 save_action: _Зберегти
-select_application_to_open_file: Виберіть програму для відкриття файла «%s».
+select_application_to_open_file: Виберіть програму для відкриття файла «%{filename}».
 share_action: _Оприлюднити
 share_information: Оприлюднити подробиці
+unknown_device: Невідомий пристрій
+unknown_vendor: Невідомий виробник
+wants_to_access_usb_devices: '%{app_id} потрібен доступу до таких пристроїв USB'

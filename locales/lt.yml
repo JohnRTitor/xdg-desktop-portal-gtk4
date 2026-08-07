@@ -1,11 +1,17 @@
 allow_action: Leisti
 cancel_action: Atsisakyti
 choose_an_application: Pasirinkite programą.
+create_action: Sukurti
 deny_access_action: Drausti prieigą
+deny_action: Neleisti
 grant_access_action: Suteikti prieigą
+name: Vardas
 open_action: _Atverti
 open_files_read_only: Atverti failus tik skaitymui
 save_action: Į_rašyti
 select_application_to_open_file: Pasirinkite programą, skirtą atverti \
 share_action: _Bendrinti
 share_information: Bendrinti išsamesnę informaciją
+unknown_device: Nežinomas įrenginys
+unknown_vendor: Nežinomas gamintojas
+wants_to_access_usb_devices: '%{app_id} nori pasiekti USB įrenginius'

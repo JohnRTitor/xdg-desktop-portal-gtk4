@@ -4,10 +4,16 @@ choose_an_application: Vyberte aplikaci.
 create_action: _Vytvořit
 create_web_application: Vytvořit webovou aplikaci
 deny_access_action: Zamítnout přístup
+deny_action: Zamítnout
 grant_access_action: Udělit přístup
+name: Název
 open_action: _Otevřít
 open_files_read_only: Otevřít soubory pouze pro čtení
 save_action: _Uložit
-select_application_to_open_file: Vyberte aplikaci pro otevření souboru „%s”.
+select_application_to_open_file: Vyberte aplikaci pro otevření souboru „%{filename}”.
 share_action: _Sdílet
 share_information: Sdílet detaily
+unknown_device: Neznámé zařízení
+unknown_vendor: Neznámý výrobce
+wants_to_access_usb_devices: Aplikace %{app_id} chce přistupovat k následujícím zařízením
+  USB

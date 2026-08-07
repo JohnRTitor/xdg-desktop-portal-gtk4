@@ -58,8 +58,8 @@ impl UsbUi {
         dialog.action_area.append(&cancel_button);
         dialog.action_area.append(&ok_button);
 
-        let label_text = format!("{} {}", self.app_id, t!("wants_to_access_usb_devices"));
-        let label = Label::builder().label(&label_text).wrap(true).build();
+        let label_text = t!("wants_to_access_usb_devices", app_id = self.app_id);
+        let label = Label::builder().label(&*label_text).wrap(true).build();
         dialog.content_area.append(&label);
 
         let scrolled_window = ScrolledWindow::builder()

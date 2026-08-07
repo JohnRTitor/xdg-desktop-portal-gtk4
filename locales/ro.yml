@@ -1,12 +1,18 @@
+allow_action: _Permite
 cancel_action: Anulează
 choose_an_application: Alegeți o aplicație.
 create_action: C_reează
 create_web_application: Creează o aplicație web
 deny_access_action: Refuză accesul
+deny_action: Respinge
 grant_access_action: Acordă accesul
+name: Nume
 open_action: _Deschide
 open_files_read_only: Deschide fișiere numai-pentru-citire
 save_action: _Salvează
-select_application_to_open_file: Alegeți o aplicație pentru a deschide fișierul „%s”.
+select_application_to_open_file: Alegeți o aplicație pentru a deschide fișierul „%{filename}”.
 share_action: _Partajare
 share_information: Partajare detalii
+unknown_device: Periferic necunoscut
+unknown_vendor: Furnizor necunoscut
+wants_to_access_usb_devices: '%{app_id} vrea să acceseze următoarele periferice USB'

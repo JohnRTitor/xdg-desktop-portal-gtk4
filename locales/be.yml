@@ -2,10 +2,15 @@ allow_action: Дазволіць
 cancel_action: Скасаваць
 choose_an_application: Выберыце праграму.
 deny_access_action: Забараніць доступ
+deny_action: Забараніць
 grant_access_action: Дазволіць доступ
+name: Імя
 open_action: _Адкрыць
 open_files_read_only: Адкрыць файлы ў рэжыме толькі для чытання
 save_action: _Захаваць
-select_application_to_open_file: Выберыце праграму, каб адкрыць файл «%s».
+select_application_to_open_file: Выберыце праграму, каб адкрыць файл «%{filename}».
 share_action: _Даць доступ
 share_information: Падрабязнасці
+unknown_device: Невядомая прылада
+unknown_vendor: Невядомы вытворца
+wants_to_access_usb_devices: Праграма «%{app_id}» хоча атрымаць да наступных USB-прылад

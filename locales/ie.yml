@@ -3,10 +3,12 @@ choose_an_application: Selecte un application.
 create_action: C_rear
 create_web_application: Crear un application web
 deny_access_action: Refusar li accesse
+deny_action: Refusar
 grant_access_action: Permisser li accesse
+name: Nómine
 open_action: _Aperter
 open_files_read_only: Aperter files solmen por letion
 save_action: _Gardar
-select_application_to_open_file: Selecte un application por aperter li file «%s».
+select_application_to_open_file: Selecte un application por aperter li file «%{filename}».
 share_action: _Partir
 share_information: Detallies de partite

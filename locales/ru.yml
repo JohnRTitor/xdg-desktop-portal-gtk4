@@ -1,12 +1,19 @@
+allow_action: _Разрешить
 cancel_action: Отменить
 choose_an_application: Выберите приложение.
 create_action: С_оздать
 create_web_application: Создать веб-приложение
 deny_access_action: Отказать в доступе
+deny_action: Отказать
 grant_access_action: Предоставить доступ
+name: Имя
 open_action: _Открыть
 open_files_read_only: Открыть файлы только для чтения
 save_action: _Сохранить
-select_application_to_open_file: Выберите приложение для открытия «%s».
+select_application_to_open_file: Выберите приложение для открытия «%{filename}».
 share_action: _Дать доступ
 share_information: Подробности
+unknown_device: Неизвестное устройство
+unknown_vendor: Неизвестный производитель
+wants_to_access_usb_devices: Приложение «%{app_id}» хочет получить доступ к следующим
+  устройствам USB

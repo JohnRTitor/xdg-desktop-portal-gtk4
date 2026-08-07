@@ -1,11 +1,17 @@
 allow_action: Toestaan
 cancel_action: Annuleren
 choose_an_application: Kies een toepassing.
+create_action: Aanmaken
 deny_access_action: Toegang weigeren
+deny_action: Weigeren
 grant_access_action: Toegang verlenen
+name: Naam
 open_action: _Openen
 open_files_read_only: Bestanden openen als alleen-lezen
 save_action: Op_slaan
-select_application_to_open_file: Kies een toepassing om ‘%s’ mee te openen.
+select_application_to_open_file: Kies een toepassing om ‘%{filename}’ mee te openen.
 share_action: _Delen
 share_information: Gegevens delen
+unknown_device: Onbekend apparaat
+unknown_vendor: Onbekende leverancier
+wants_to_access_usb_devices: '%{app_id} wil toegang tot de volgende USB-apparaten'

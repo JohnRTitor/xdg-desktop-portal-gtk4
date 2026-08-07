@@ -1,7 +1,17 @@
+allow_action: _Autoriser
 cancel_action: Annuler
 choose_an_application: Choisir une application
+create_action: Créer
 deny_access_action: Refuser l'accès
+deny_action: Interdire
 grant_access_action: Accorder l'accès
+name: Nom
 open_action: _Ouvrir
+open_files_read_only: Ouvrir les fichiers en lecture seule
+save_action: Enregistrer
+select_application_to_open_file: Choisir une application pour ouvrir le fichier « %{filename} ».
 share_action: _Partager
 share_information: Partager les détails
+unknown_device: Périphérique inconnu
+unknown_vendor: Vendeur inconnu
+wants_to_access_usb_devices: '%{app_id} souhaite accéder aux périphériques USB suivants'

@@ -7,6 +7,6 @@ grant_access_action: Позволяване на достъп
 open_action: _Отваряне
 open_files_read_only: Отваряне на файловете само за четене
 save_action: _Запазване
-select_application_to_open_file: Избор на програма за отваряне на „%s“.
+select_application_to_open_file: Избор на програма за отваряне на „%{filename}“.
 share_action: _Споделяне
 share_information: Споделяне на подробностите

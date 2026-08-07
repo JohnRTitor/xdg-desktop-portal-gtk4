@@ -4,10 +4,15 @@ choose_an_application: 选择一个应用程序。
 create_action: 创建(_R)
 create_web_application: 创建网页应用程序
 deny_access_action: 拒绝访问
+deny_action: 拒绝
 grant_access_action: 授权访问
+name: 名字
 open_action: 打开(_O)
 open_files_read_only: 以只读方式打开文件
 save_action: 保存(_S)
-select_application_to_open_file: 选择一个应用程序来打开文件“%s”。
+select_application_to_open_file: 选择一个应用程序来打开文件“%{filename}”。
 share_action: 分享(_S)
 share_information: 分享详情
+unknown_device: 未知设备
+unknown_vendor: 未知厂商
+wants_to_access_usb_devices: '%{app_id} 想要访问以下 USB 设备'

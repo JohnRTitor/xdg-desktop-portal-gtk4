@@ -1,12 +1,18 @@
+allow_action: _Permitir
 cancel_action: Cancelar
 choose_an_application: Escolha um aplicativo.
 create_action: C_riar
 create_web_application: Criar aplicativo web
 deny_access_action: Negar acesso
+deny_action: Negar
 grant_access_action: Conceder acesso
+name: Nome
 open_action: _Abrir
 open_files_read_only: Abrir ficheiros apenas de leitura
 save_action: _Gravar
-select_application_to_open_file: Escolha um aplicativo para abrir o arquivo “%s”.
+select_application_to_open_file: Escolha um aplicativo para abrir o arquivo “%{filename}”.
 share_action: _Compartilhar
 share_information: Compartilhar detalhes
+unknown_device: Dispositivo desconhecido
+unknown_vendor: Fornecedor desconhecido
+wants_to_access_usb_devices: '%{app_id} deseja acessar os seguintes dispositivos USB'

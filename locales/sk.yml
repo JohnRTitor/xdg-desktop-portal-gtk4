@@ -1,11 +1,18 @@
 allow_action: Povoliť
 cancel_action: Zrušiť
 choose_an_application: Zvoľte aplikáciu.
+create_action: Vytvoriť priečinok
 deny_access_action: Zamietnuť prístup
+deny_action: Zamietnuť
 grant_access_action: Udeliť prístup
+name: Meno
 open_action: _Otvoriť
 open_files_read_only: Otvoriť súbory iba na čítanie
 save_action: _Uložiť
-select_application_to_open_file: Zvoľte aplikáciu, ktorou otvoriť súbor „%s“.
+select_application_to_open_file: Zvoľte aplikáciu, ktorou otvoriť súbor „%{filename}“.
 share_action: _Sprístupniť
 share_information: Podrobnosti o sprístupnení
+unknown_device: Neznáme zariadenie
+unknown_vendor: Neznámy výrobca
+wants_to_access_usb_devices: Aplikácia %{app_id} chce pristúpiť k nasledujúcim USB
+  zariadeniam

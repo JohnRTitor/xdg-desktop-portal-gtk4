@@ -1,11 +1,17 @@
 allow_action: დაშვება
 cancel_action: გაუქმება
 choose_an_application: აირჩიეთ აპლიკაცია.
+create_action: შექმნა
 deny_access_action: წვდომის უარყოფა
+deny_action: უარყოფა
 grant_access_action: წვდომის მინიჭება
+name: სახელი
 open_action: _გახსნა
 open_files_read_only: ფაილის მხოლოდ-წაკითხვად რეჟიმში გახსნა
 save_action: _შენახვა
 select_application_to_open_file: აირჩიეთ \
 share_action: _გაზიარება
 share_information: დეტალების გაზიარება
+unknown_device: უცნობი მოწყობილობა
+unknown_vendor: უცნობი მომწოდებელი
+wants_to_access_usb_devices: '%{app_id} ითხოვს წვდომას შემდეგ USB მოწყობილობებზე'
