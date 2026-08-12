@@ -6,6 +6,11 @@ arch=('x86_64')
 url="https://github.com/JohnRTitor/xdg-desktop-portal-gtk4"
 license=('LGPL-2.1')
 depends=('gtk4' 'xdg-desktop-portal')
+optdepends=(
+  'tumbler: thumbnailer service used to generate thumbnails'
+  'gdk-pixbuf2: image thumbnailer (gdk-pixbuf-thumbnailer)'
+  'poppler: PDF thumbnail support in thumbnailer stacks'
+)
 makedepends=('cargo' 'make' 'git')
 source=("git+https://github.com/JohnRTitor/xdg-desktop-portal-gtk4.git")
 sha256sums=('SKIP')

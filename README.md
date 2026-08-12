@@ -27,7 +27,46 @@ Enables sandboxed applications (like Flatpaks and Snaps) to securely interact wi
 ## Dependencies
 
 **Build:** Rust >= 1.92, `pkg-config`, `make`, GTK 4, GLib 2.0  
-**Runtime:** `xdg-desktop-portal`
+**Runtime:** `xdg-desktop-portal`, GVfs/GIO thumbnail support, and installed thumbnailers (see below)
+
+## Thumbnail Requirements
+
+`xdg-desktop-portal-gtk4` does not generate thumbnails itself. It uses GTK4's file chooser, which asks GIO/GVfs for thumbnail metadata (`thumbnail::path`). GVfs/GLib then looks up thumbnails in the XDG thumbnail cache (`$XDG_CACHE_HOME/thumbnails` or `~/.cache/thumbnails`) and returns them to GTK.
+
+If thumbnails are missing, the most common cause is missing thumbnailer infrastructure (service + `.thumbnailer` registrations), not a FileChooser UI bug in this project.
+
+### Required platform components
+
+- **Thumbnail cache lookup:** provided by GLib/GIO/GVfs
+- **Thumbnail generation:** external thumbnailer implementation
+- **Thumbnailer registration:** `.thumbnailer` files under `/usr/share/thumbnailers`
+
+### Typical package requirements by distro
+
+- **Arch Linux**
+  - `gdk-pixbuf2` (provides `gdk-pixbuf-thumbnailer` for image formats)
+  - `tumbler` (thumbnailer service)
+  - PDF provider for thumbnailer stack (commonly via `poppler`/desktop PDF thumbnailer package)
+- **Fedora**
+  - `gdk-pixbuf2`
+  - `tumbler` (or desktop thumbnailer equivalent)
+  - PDF thumbnailer package (Poppler-based)
+- **NixOS**
+  - Enable a thumbnailer service (for example `services.tumbler.enable = true;`)
+  - Include image/PDF thumbnailer providers in system packages
+
+### Quick diagnostics
+
+```bash
+# Check registered thumbnailers
+ls /usr/share/thumbnailers
+
+# Check thumbnail cache
+find ~/.cache/thumbnails -type f | head
+
+# Run with debug output
+G_MESSAGES_DEBUG=all RUST_LOG=debug xdg-desktop-portal-gtk4 --replace
+```
 
 ## Installation
 

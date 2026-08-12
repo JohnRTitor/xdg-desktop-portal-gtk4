@@ -86,6 +86,37 @@ gdbus monitor --session --dest org.freedesktop.impl.portal.desktop.gtk4
 ```
 - **Why:** Provides a higher-level view of D-Bus method calls and signals emitted by the portal.
 
+### Thumbnail Diagnostics (FileChooser)
+
+Use this checklist when image/PDF thumbnails are missing:
+
+```bash
+# 1) Check thumbnailer registrations
+ls /usr/share/thumbnailers
+
+# 2) Check existing cache content
+find ~/.cache/thumbnails -type f | head -100
+
+# 3) Run backend with GTK/GIO debug
+G_MESSAGES_DEBUG=all RUST_LOG=debug ./target/debug/xdg-desktop-portal-gtk4 --replace
+
+# 4) Monitor backend logs
+journalctl --user -u xdg-desktop-portal-gtk4 -f
+```
+
+Required manual verification formats:
+
+- `image/png`
+- `image/jpeg`
+- `image/webp`
+- `application/pdf`
+
+Expected behavior:
+
+- If thumbnail cache entries exist and are valid, GTK file chooser should display thumbnails.
+- If cache entries do not exist and no thumbnailer service/provider is available, GTK falls back to generic file icons.
+- PDF thumbnails require a PDF-capable thumbnailer provider (Poppler/Evince/Tumbler plugin equivalent).
+
 ## Request Objects
 
 The portal backend often processes asynchronous actions via **Request Objects**. When a method is called (e.g., `FileChooser.OpenFile`), it receives a `handle` object path representing the request.

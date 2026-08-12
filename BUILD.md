@@ -13,6 +13,12 @@
 ### Runtime Dependencies
 
 - **xdg-desktop-portal**
+- **GVfs/GIO thumbnail metadata support**
+- **At least one thumbnailer implementation registered in `/usr/share/thumbnailers`**
+- **Image thumbnailer** (typically `gdk-pixbuf-thumbnailer`)
+- **PDF thumbnailer** (Poppler/Evince/Tumbler plugin equivalent)
+
+> `xdg-desktop-portal-gtk4` consumes thumbnail metadata from GTK/GIO/GVfs. It does not implement a custom thumbnail generator.
 
 ## Standard Build
 
@@ -45,5 +51,4 @@ To enter a development shell with all necessary dependencies configured:
 ```bash
 nix develop
 ```
-
 
