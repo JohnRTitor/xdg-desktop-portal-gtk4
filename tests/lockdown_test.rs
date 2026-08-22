@@ -1,6 +1,6 @@
-use zbus::{Connection, connection::Builder, proxy};
+use zbus::{connection::Builder, proxy};
 mod common;
-use {common::*, xdg_desktop_portal_gtk4::portals::lockdown::dbus::LockdownPortal};
+use xdg_desktop_portal_gtk4::portals::lockdown::dbus::LockdownPortal;
 
 #[proxy(
     interface = "org.freedesktop.impl.portal.Lockdown",
@@ -17,13 +17,12 @@ trait Lockdown {
 
 #[tokio::test]
 async fn test_lockdown_all_properties_false() -> Result<(), Box<dyn std::error::Error>> {
-    skip_if_dbus_tests_disabled!();
+    let client_conn = try_dbus_session!();
     let _conn = Builder::session()?
         .serve_at("/org/freedesktop/portal/desktop", LockdownPortal::new())?
         .build()
         .await?;
 
-    let client_conn = Connection::session().await?;
     let proxy = LockdownProxy::builder(&client_conn)
         .destination(_conn.unique_name().unwrap().clone())?
         .build()

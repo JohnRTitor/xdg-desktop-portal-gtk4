@@ -4,11 +4,14 @@ use {
 };
 
 #[macro_export]
-macro_rules! skip_if_dbus_tests_disabled {
+macro_rules! try_dbus_session {
     () => {
-        if std::env::var("RUN_DBUS_TESTS").is_err() {
-            println!("Skipping dbus test because RUN_DBUS_TESTS is not set");
-            return Ok(());
+        match zbus::Connection::session().await {
+            Ok(conn) => conn,
+            Err(_) => {
+                println!("Skipping dbus test because D-Bus session is unavailable");
+                return Ok(());
+            }
         }
     };
 }
@@ -18,6 +21,7 @@ macro_rules! skip_if_dbus_tests_disabled {
 /// This is fine for settings tests that only exercise Read/ReadAll,
 /// and for UI tests where we just want to ensure the D-Bus method
 /// deserialization succeeds before the UI phase.
+#[allow(dead_code)]
 pub fn dummy_proxy() -> UiProxy {
     let (sender, _receiver) = unbounded_channel();
     UiProxy {

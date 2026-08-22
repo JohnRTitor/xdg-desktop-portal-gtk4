@@ -4,7 +4,6 @@ use {
     std::collections::HashMap,
     xdg_desktop_portal_gtk4::portals::file_chooser::dbus::FileChooser,
     zbus::{
-        Connection,
         connection::Builder,
         proxy,
         zvariant::{OwnedObjectPath, Value},
@@ -47,8 +46,7 @@ trait FileChooserPortal {
 
 #[tokio::test]
 async fn test_file_chooser_open_file_dummy_ui() -> Result<(), Box<dyn std::error::Error>> {
-    skip_if_dbus_tests_disabled!();
-    let client_conn = Connection::session().await?;
+    let client_conn = try_dbus_session!();
     let sm = xdg_desktop_portal_gtk4::core::session_manager::SessionManager::new(
         client_conn.clone(),
         10,
@@ -79,8 +77,7 @@ async fn test_file_chooser_open_file_dummy_ui() -> Result<(), Box<dyn std::error
 
 #[tokio::test]
 async fn test_file_chooser_save_file_dummy_ui() -> Result<(), Box<dyn std::error::Error>> {
-    skip_if_dbus_tests_disabled!();
-    let client_conn = Connection::session().await?;
+    let client_conn = try_dbus_session!();
     let sm = xdg_desktop_portal_gtk4::core::session_manager::SessionManager::new(
         client_conn.clone(),
         10,

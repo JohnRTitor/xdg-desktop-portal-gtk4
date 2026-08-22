@@ -1,9 +1,8 @@
 mod common;
 use {
-    common::*,
     std::collections::HashMap,
-    xdg_desktop_portal_gtk4::portals::notification::dbus::{Notification, PortalNotification},
-    zbus::{Connection, connection::Builder, proxy},
+    xdg_desktop_portal_gtk4::portals::notification::dbus::Notification,
+    zbus::{connection::Builder, proxy},
 };
 
 #[proxy(
@@ -24,8 +23,7 @@ trait NotificationPortal {
 
 #[tokio::test]
 async fn test_notification_add_remove() -> Result<(), Box<dyn std::error::Error>> {
-    skip_if_dbus_tests_disabled!();
-    let client_conn = Connection::session().await?;
+    let client_conn = try_dbus_session!();
     let _conn = Builder::session()?
         .serve_at(
             "/org/freedesktop/portal/desktop",

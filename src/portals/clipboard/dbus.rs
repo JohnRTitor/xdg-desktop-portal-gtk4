@@ -378,7 +378,7 @@ impl ClipboardPortal {
 mod tests {
     use {
         super::*, crate::core::session_manager::SessionManager, gtk4::glib::MainContext,
-        tokio::sync::mpsc::unbounded_channel, zbus::zvariant::OwnedObjectPath,
+        tokio::sync::mpsc::unbounded_channel,
     };
 
     fn dummy_proxy() -> UiProxy {

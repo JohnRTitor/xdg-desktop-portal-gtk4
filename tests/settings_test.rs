@@ -23,8 +23,7 @@ trait Settings {
 
 #[tokio::test]
 async fn test_settings_read_unknown_namespace() -> Result<(), Box<dyn std::error::Error>> {
-    skip_if_dbus_tests_disabled!();
-    let _conn = Connection::session().await?;
+    let _conn = try_dbus_session!();
     let server = _conn.object_server();
     server
         .at(
@@ -47,8 +46,7 @@ async fn test_settings_read_unknown_namespace() -> Result<(), Box<dyn std::error
 
 #[tokio::test]
 async fn test_settings_read_all_empty_namespaces() -> Result<(), Box<dyn std::error::Error>> {
-    skip_if_dbus_tests_disabled!();
-    let _conn = Connection::session().await?;
+    let _conn = try_dbus_session!();
     let server = _conn.object_server();
     server
         .at(
@@ -73,8 +71,7 @@ async fn test_settings_read_all_empty_namespaces() -> Result<(), Box<dyn std::er
 
 #[tokio::test]
 async fn test_settings_read_all_wildcard_namespaces() -> Result<(), Box<dyn std::error::Error>> {
-    skip_if_dbus_tests_disabled!();
-    let _conn = Connection::session().await?;
+    let _conn = try_dbus_session!();
     let server = _conn.object_server();
     server
         .at(
@@ -100,8 +97,7 @@ async fn test_settings_read_all_wildcard_namespaces() -> Result<(), Box<dyn std:
 
 #[tokio::test]
 async fn test_settings_portal_properties() -> Result<(), Box<dyn std::error::Error>> {
-    skip_if_dbus_tests_disabled!();
-    let _conn = Connection::session().await?;
+    let _conn = try_dbus_session!();
     let server = _conn.object_server();
     server
         .at(

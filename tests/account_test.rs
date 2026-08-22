@@ -4,7 +4,6 @@ use {
     std::collections::HashMap,
     xdg_desktop_portal_gtk4::portals::account::dbus::Account,
     zbus::{
-        Connection,
         connection::Builder,
         proxy,
         zvariant::{OwnedObjectPath, Value},
@@ -28,8 +27,7 @@ trait Account {
 
 #[tokio::test]
 async fn test_get_user_information_dummy_ui() -> Result<(), Box<dyn std::error::Error>> {
-    skip_if_dbus_tests_disabled!();
-    let client_conn = Connection::session().await?;
+    let client_conn = try_dbus_session!();
     let sm = xdg_desktop_portal_gtk4::core::session_manager::SessionManager::new(
         client_conn.clone(),
         10,

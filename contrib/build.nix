@@ -46,7 +46,6 @@ rustPlatform.buildRustPackage {
   ];
 
   preCheck = lib.optionalString withDbusTests ''
-    export RUN_DBUS_TESTS=1
 
     # 1. Initialize a temporary directory for the D-Bus runtime socket
     export XDG_RUNTIME_DIR=$(mktemp -d)

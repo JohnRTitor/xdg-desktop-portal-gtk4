@@ -1,14 +1,13 @@
 use {
     std::collections::HashMap,
     zbus::{
-        Connection,
         connection::Builder,
         proxy,
         zvariant::{OwnedObjectPath, Value},
     },
 };
 mod common;
-use {common::*, xdg_desktop_portal_gtk4::portals::inhibit::dbus::Inhibit};
+use xdg_desktop_portal_gtk4::portals::inhibit::dbus::Inhibit;
 
 #[proxy(
     interface = "org.freedesktop.impl.portal.Inhibit",
@@ -28,8 +27,7 @@ trait InhibitTest {
 
 #[tokio::test]
 async fn test_inhibit_returns_success() -> Result<(), Box<dyn std::error::Error>> {
-    skip_if_dbus_tests_disabled!();
-    let client_conn = Connection::session().await?;
+    let client_conn = try_dbus_session!();
     let _conn = Builder::session()?
         .serve_at(
             "/org/freedesktop/portal/desktop",

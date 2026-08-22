@@ -1,10 +1,8 @@
 mod common;
 use {
-    common::*,
     std::collections::HashMap,
     xdg_desktop_portal_gtk4::portals::email::dbus::Email,
     zbus::{
-        Connection,
         connection::Builder,
         proxy,
         zvariant::{OwnedObjectPath, Value},
@@ -28,8 +26,7 @@ trait EmailPortal {
 
 #[tokio::test]
 async fn test_compose_email_dummy_ui() -> Result<(), Box<dyn std::error::Error>> {
-    skip_if_dbus_tests_disabled!();
-    let client_conn = Connection::session().await?;
+    let client_conn = try_dbus_session!();
     let sm = xdg_desktop_portal_gtk4::core::session_manager::SessionManager::new(
         client_conn.clone(),
         10,

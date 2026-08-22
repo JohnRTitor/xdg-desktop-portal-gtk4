@@ -4,7 +4,6 @@ use {
     std::collections::HashMap,
     xdg_desktop_portal_gtk4::portals::app_chooser::dbus::AppChooser,
     zbus::{
-        Connection,
         connection::Builder,
         proxy,
         zvariant::{OwnedObjectPath, Value},
@@ -33,8 +32,7 @@ trait AppChooserPortal {
 
 #[tokio::test]
 async fn test_choose_application_dummy_ui() -> Result<(), Box<dyn std::error::Error>> {
-    skip_if_dbus_tests_disabled!();
-    let client_conn = Connection::session().await?;
+    let client_conn = try_dbus_session!();
     let sm = xdg_desktop_portal_gtk4::core::session_manager::SessionManager::new(
         client_conn.clone(),
         10,

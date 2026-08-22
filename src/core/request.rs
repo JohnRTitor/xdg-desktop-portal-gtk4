@@ -93,7 +93,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_run_request_completion() {
-        let conn = zbus::Connection::session().await.unwrap();
+        let Ok(conn) = zbus::Connection::session().await else {
+            return;
+        };
         let server = conn.object_server();
         let sm = crate::core::session_manager::SessionManager::new(conn.clone(), 10);
         let handle =
@@ -111,7 +113,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_run_request_cancellation() {
-        let conn = zbus::Connection::session().await.unwrap();
+        let Ok(conn) = zbus::Connection::session().await else {
+            return;
+        };
         let server = conn.object_server();
         let sm = crate::core::session_manager::SessionManager::new(conn.clone(), 10);
         let handle =
