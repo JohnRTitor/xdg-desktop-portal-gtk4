@@ -19,13 +19,13 @@ use {
     tokio::sync::{mpsc::channel, oneshot::Receiver},
 };
 
-#[derive(Eq, PartialEq, Clone)]
+#[derive(Debug, Eq, PartialEq, Clone)]
 pub struct Filter {
     pub name: String,
     pub elements: Vec<FilterKind>,
 }
 
-#[derive(Eq, PartialEq, Clone)]
+#[derive(Debug, Eq, PartialEq, Clone)]
 pub enum FilterKind {
     Glob(String),
     Mime(String),
@@ -71,6 +71,33 @@ pub struct FileChooserResult {
     pub current_filter: Option<Filter>,
     pub final_choices: Option<Vec<FinalChoice>>,
     pub writeable: bool,
+}
+
+/// Work out which filters the dialog should offer and which one to preselect.
+///
+/// The spec allows `current_filter` to be sent either alongside a non-empty
+/// `filters` list, in which case it selects one of them, or on its own, in which
+/// case it is applied unconditionally. Matching within a list is done by name,
+/// which is what GTK's own chooser does: two filters sharing a name are the same
+/// filter, and an application that sends a slightly different `current_filter`
+/// should still get its intent honoured.
+///
+/// Kept free of GTK so the decision can be unit tested.
+pub fn effective_filters(
+    filters: Option<&[Filter]>,
+    current_filter: Option<&Filter>,
+) -> (Vec<Filter>, Option<usize>) {
+    match filters {
+        Some(list) if !list.is_empty() => {
+            let selected =
+                current_filter.and_then(|cur| list.iter().position(|f| f.name == cur.name));
+            (list.to_vec(), selected)
+        }
+        _ => match current_filter {
+            Some(cur) => (vec![cur.clone()], Some(0)),
+            None => (Vec::new(), None),
+        },
+    }
 }
 
 struct DialogData {
@@ -145,10 +172,18 @@ impl FileChooserUi {
                             })
                         })
                         .collect();
-                    let writeable = dialog
-                        .choice(&read_only_choice)
-                        .map(|v| v == "false")
-                        .unwrap_or(false);
+                    // `read_only_choice` is only injected for Open actions, so
+                    // for any other action (and for `directory: true`) the
+                    // lookup misses. Default to writable, not read-only, so a
+                    // directory selection is not reported as a read-only grant.
+                    let writeable = if read_only_choice.is_empty() {
+                        true
+                    } else {
+                        dialog
+                            .choice(&read_only_choice)
+                            .map(|v| v == "false")
+                            .unwrap_or(true)
+                    };
                     Ok(FileChooserResult {
                         uris: files,
                         current_filter: filter,
@@ -216,16 +251,15 @@ impl FileChooserUi {
         dialog.set_modal(self.modal);
         dialog.set_default_response(ResponseType::Ok);
         let mut filters_map = HashMap::new();
-        if let Some(f) = &self.filters {
-            for filter in f {
-                let is_current = self.current_filter.as_ref() == Some(filter);
-                let f = map_filter(filter);
-                dialog.add_filter(&f);
-                if is_current {
-                    dialog.set_filter(&f);
-                }
-                filters_map.insert(f, filter.clone());
+        let (offered, preselected) =
+            effective_filters(self.filters.as_deref(), self.current_filter.as_ref());
+        for (i, filter) in offered.iter().enumerate() {
+            let mapped = map_filter(filter);
+            dialog.add_filter(&mapped);
+            if preselected == Some(i) {
+                dialog.set_filter(&mapped);
             }
+            filters_map.insert(mapped, filter.clone());
         }
         if let Some(f) = &self.current_name {
             dialog.set_current_name(f);
@@ -254,7 +288,11 @@ impl FileChooserUi {
                 read_only_id.push('_');
             }
             dialog.add_choice(&read_only_id, t!("open_files_read_only").as_ref(), &[]);
-            dialog.set_choice(&read_only_id, "true");
+            // Default to *writable*, which is what every other backend reports:
+            // the injected choice is "open read-only", so it starts unchecked.
+            // Defaulting it to checked flipped the `writable` result to false
+            // for every OpenFile request, silently downgrading the grant.
+            dialog.set_choice(&read_only_id, "false");
         }
         if let Some(choices) = &self.choices {
             for choice in choices {
