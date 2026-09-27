@@ -35,7 +35,10 @@ jobs:
       - uses: taiki-e/install-action@91ddec75689c4c78665b598d188dc821c5a43e5c # v2.85.9
         with:
           tool: nextest
-      - run: cargo nextest run --workspace --locked
+      - name: Test
+        # A D-Bus session bus is required: without one, every D-Bus-dependent
+        # test in this repository silently returns early and reports success.
+        run: dbus-run-session -- cargo nextest run --workspace --locked
 
   matrix-distro:
     strategy:
@@ -52,12 +55,14 @@ jobs:
       - name: Install dependencies (Fedora)
         if: contains(matrix.distro, 'fedora')
         run: |
-          dnf install -y gcc gtk4-devel git rust cargo
+          dnf install -y gcc gtk4-devel git rust cargo dbus
       - name: Install dependencies (Arch Linux)
         if: contains(matrix.distro, 'archlinux')
         run: |
-          pacman -Syu --noconfirm base-devel gtk4 git rust cargo
+          pacman -Syu --noconfirm base-devel gtk4 git rust cargo dbus
       - name: Build
         run: cargo build --locked
       - name: Test
-        run: cargo test --locked
+        # See the comment in the `test` job above: without a session bus the
+        # D-Bus tests skip themselves and pass without asserting anything.
+        run: dbus-run-session -- cargo test --locked

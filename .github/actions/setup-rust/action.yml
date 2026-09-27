@@ -20,5 +20,5 @@ runs:
         toolchain: ${{ inputs.toolchain }}
         components: ${{ inputs.components }}
     - name: Install native dependencies
-      run: sudo apt-get update && sudo apt-get install -y libgtk-4-dev
+      run: sudo apt-get update && sudo apt-get install -y libgtk-4-dev dbus
       shell: bash
