@@ -1,10 +1,6 @@
 //! Wire-contract regression tests for the portal implementations.
 //!
 //! Tests that currently pass are guards against future regressions.
-//! Tests marked `#[ignore = "AUDIT: ..."]` document *known* deviations from the
-//! xdg-desktop-portal specification (or from `xdg-desktop-portal-gtk`); they are
-//! expected to start passing once the corresponding audit finding is fixed.
-//! Run them with `cargo test --test contract_test -- --ignored`.
 
 use {
     std::collections::HashMap,
@@ -109,11 +105,12 @@ trait AppChooser {
 /// `UpdateChoices` for a handle with no live dialog must fail, so that
 /// frontend/backend desynchronisation is visible. `xdg-desktop-portal-gtk`
 /// answers `org.freedesktop.portal.Error.NotFound` ("Request not found",
-/// `appchooser.c:243-247`). `xdg-desktop-portal-gtk4` returns `Ok(())`
-/// unconditionally — and `tests/app_chooser_test.rs:63-65` currently asserts
-/// that silent success as if it were correct.
+/// `appchooser.c:243-247`); KDE answers the standard `InvalidArgs`.
+///
+/// This previously returned `Ok(())` unconditionally, and the existing
+/// `tests/app_chooser_test.rs` asserted that silent success as if it were
+/// correct.
 #[tokio::test]
-#[ignore = "AUDIT: UpdateChoices silently succeeds for unknown handles"]
 async fn app_chooser_update_choices_unknown_handle() {
     let Ok(client) = Connection::session().await else {
         return;
