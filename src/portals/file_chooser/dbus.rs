@@ -130,6 +130,8 @@ struct SaveFilesResults {
 enum SaveFilesError {
     #[error("User did not select exactly one path")]
     NotExactlyOnePath,
+    #[error("Client tried to save a file with an empty name")]
+    EmptyName,
     #[error("Client tried to save an absolute path")]
     AbsolutePath,
     #[error("Client tried to save a path with multiple components")]
@@ -238,6 +240,13 @@ impl FileChooser {
         // trick the portal into overwriting critical files.
         for file in files {
             let file = Path::new(&file.0);
+            if file.as_os_str().is_empty() {
+                // An empty name is not a path at all. It has no components, so
+                // it slips past the checks below, and `base.join("")` would
+                // resolve to the selected directory itself, which then gets
+                // renamed to "<dirname> (1)" and returned as a save target.
+                return Err(SaveFilesError::EmptyName);
+            }
             if file.is_absolute() {
                 return Err(SaveFilesError::AbsolutePath);
             }

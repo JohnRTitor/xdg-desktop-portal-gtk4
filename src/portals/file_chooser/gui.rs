@@ -268,7 +268,11 @@ impl FileChooserUi {
             let _ = dialog.set_current_folder(Some(&File::for_path(f)));
         }
         if let Some(f) = &self.current_filename {
-            let _ = dialog.set_file(&File::for_uri(f));
+            // `current_file` is a filesystem path in the caller's encoding, not
+            // a URI (the spec documents it as `ay`, like `current_folder`).
+            // Building a GFile with for_uri produced a relative URI that GTK
+            // silently ignored; for_path is what GTK's own chooser expects.
+            let _ = dialog.set_file(&File::for_path(f));
         }
         let mut read_only_id = String::new();
         if action == FileChooserAction::Open {

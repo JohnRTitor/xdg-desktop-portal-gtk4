@@ -135,7 +135,8 @@ impl Inhibit {
             .map(|s| String::from(s.as_str()))
             .ok_or_else(|| fdo::Error::Failed("Missing sender".into()))?;
 
-        let cancel_notify = Arc::new(Notify::new()); // We don't use this one in Inhibit itself but we must pass it
+        // Cancelled when the caller disconnects, or the request is closed.
+        let cancel_notify = Arc::new(Notify::new());
 
         if let Err(e) =
             self.session_manager
