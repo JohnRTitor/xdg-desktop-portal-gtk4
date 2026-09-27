@@ -2,6 +2,7 @@ cancel_action: रद्द करें
 choose_an_application: एक अनुप्रयोग चुनें।
 create_action: बनाएं (_r)
 create_web_application: वेब अनुप्रयोग बनाएं
+create_application: वेब अनुप्रयोग बनाएं
 deny_access_action: पहुंच अस्वीकारें
 deny_action: अस्वीकार करें
 grant_access_action: पहुंच स्वीकारें

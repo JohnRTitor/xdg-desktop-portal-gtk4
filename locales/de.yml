@@ -3,6 +3,7 @@ cancel_action: Abbrechen
 choose_an_application: Eine Anwendung wählen.
 create_action: E_rstellen
 create_web_application: Web-Anwendung erstellen
+create_application: Web-Anwendung erstellen
 deny_access_action: Zugriff verweigern
 deny_action: Ablehnen
 grant_access_action: Zugriff gewähren

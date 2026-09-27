@@ -2,6 +2,7 @@ allow_action: Leisti
 cancel_action: Atsisakyti
 choose_an_application: Pasirinkite programą.
 create_action: Sukurti
+create_application: Create Application
 deny_access_action: Drausti prieigą
 deny_action: Neleisti
 grant_access_action: Suteikti prieigą

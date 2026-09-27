@@ -2,6 +2,7 @@ allow_action: Povoliť
 cancel_action: Zrušiť
 choose_an_application: Zvoľte aplikáciu.
 create_action: Vytvoriť priečinok
+create_application: Create Application
 deny_access_action: Zamietnuť prístup
 deny_action: Zamietnuť
 grant_access_action: Udeliť prístup

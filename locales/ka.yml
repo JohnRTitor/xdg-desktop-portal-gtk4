@@ -2,6 +2,7 @@ allow_action: დაშვება
 cancel_action: გაუქმება
 choose_an_application: აირჩიეთ აპლიკაცია.
 create_action: შექმნა
+create_application: Create Application
 deny_access_action: წვდომის უარყოფა
 deny_action: უარყოფა
 grant_access_action: წვდომის მინიჭება

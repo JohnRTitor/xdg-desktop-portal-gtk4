@@ -3,6 +3,7 @@ cancel_action: Prekliči
 choose_an_application: Izberite program.
 create_action: Ustva_ri
 create_web_application: Ustvari spletni program
+create_application: Ustvari spletni program
 deny_access_action: Zavrni dostop
 deny_action: Zavrni
 grant_access_action: Dovoli dostop

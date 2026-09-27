@@ -2,6 +2,7 @@ allow_action: _Autoriser
 cancel_action: Annuler
 choose_an_application: Choisir une application
 create_action: Créer
+create_application: Create Application
 deny_access_action: Refuser l'accès
 deny_action: Interdire
 grant_access_action: Accorder l'accès

@@ -3,6 +3,7 @@ cancel_action: İptal
 choose_an_application: Uygulama seç.
 create_action: _Oluştur
 create_web_application: Web Uygulaması Oluştur
+create_application: Web Uygulaması Oluştur
 deny_access_action: Erişimi Reddet
 deny_action: Reddet
 grant_access_action: Erişime İzin Ver

@@ -3,6 +3,7 @@ cancel_action: 取消
 choose_an_application: 选择一个应用程序。
 create_action: 创建(_R)
 create_web_application: 创建网页应用程序
+create_application: 创建网页应用程序
 deny_access_action: 拒绝访问
 deny_action: 拒绝
 grant_access_action: 授权访问

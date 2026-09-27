@@ -3,6 +3,7 @@ cancel_action: Anuluj
 choose_an_application: Proszę wybrać program.
 create_action: _Utwórz
 create_web_application: Utworzenie programu WWW
+create_application: Utworzenie programu WWW
 deny_access_action: Odmów dostępu
 deny_action: Odmów
 grant_access_action: Udziel dostępu

@@ -3,6 +3,7 @@ cancel_action: ביטול
 choose_an_application: בחירת יישום.
 create_action: י_צירה
 create_web_application: יצירת יישום רשת
+create_application: יצירת יישום רשת
 deny_access_action: מניעת גישה
 deny_action: דחייה
 grant_access_action: הענקת גישה

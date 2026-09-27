@@ -2,6 +2,7 @@ allow_action: Дозволити
 cancel_action: Скасувати
 choose_an_application: Виберіть програму.
 create_action: Створити
+create_application: Create Application
 deny_access_action: Заборонити доступ
 deny_action: Відмовити
 grant_access_action: Надати доступ

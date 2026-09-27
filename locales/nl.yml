@@ -2,6 +2,7 @@ allow_action: Toestaan
 cancel_action: Annuleren
 choose_an_application: Kies een toepassing.
 create_action: Aanmaken
+create_application: Create Application
 deny_access_action: Toegang weigeren
 deny_action: Weigeren
 grant_access_action: Toegang verlenen

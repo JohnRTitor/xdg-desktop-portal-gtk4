@@ -136,8 +136,13 @@ impl AppChooserUi {
                     let token = launch_context
                         .startup_notify_id(None::<&gio::AppInfo>, &[])
                         .map(|s| s.into());
+                    // The contract asks for the desktop file id *without* the
+                    // `.desktop` suffix, so callers can use it directly as an
+                    // application id. GAppInfo::id() includes the suffix.
+                    let name = row.widget_name();
+                    let choice = name.strip_suffix(".desktop").unwrap_or(&name).to_owned();
                     Ok(AppChooserResult {
-                        choice: row.widget_name().into(),
+                        choice,
                         activation_token: token,
                     })
                 } else {

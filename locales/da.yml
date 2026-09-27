@@ -2,6 +2,7 @@ allow_action: Tillad
 cancel_action: Annuller
 choose_an_application: Vælg et program.
 create_action: Opret mappe
+create_application: Create Application
 deny_access_action: Nægt adgang
 deny_action: Nægt
 grant_access_action: Giv adgang

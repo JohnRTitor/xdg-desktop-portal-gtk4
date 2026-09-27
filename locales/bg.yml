@@ -2,6 +2,7 @@ cancel_action: Отказване
 choose_an_application: Изберете програма.
 create_action: _Създаване
 create_web_application: Създаване на уеб програма
+create_application: Създаване на уеб програма
 deny_access_action: Отказване на достъп
 grant_access_action: Позволяване на достъп
 open_action: _Отваряне

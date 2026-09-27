@@ -2,6 +2,7 @@ cancel_action: Anullar
 choose_an_application: Selecte un application.
 create_action: C_rear
 create_web_application: Crear un application web
+create_application: Crear un application web
 deny_access_action: Refusar li accesse
 deny_action: Refusar
 grant_access_action: Permisser li accesse

@@ -3,6 +3,7 @@ cancel_action: Cancel·la
 choose_an_application: Trieu una aplicació.
 create_action: C_rea
 create_web_application: Crea una aplicació web
+create_application: Crea una aplicació web
 deny_access_action: Denega l'accés
 deny_action: Denega
 grant_access_action: Permet l'accés

@@ -64,11 +64,12 @@ async fn test_choose_application_dummy_ui() -> Result<(), Box<dyn std::error::Er
 
     assert!(res.is_err());
 
-    // Also test UpdateChoices which should succeed (no-op or sends to dropped channel)
+    // UpdateChoices for a handle whose dialog is not running must be reported,
+    // not silently accepted. This previously asserted the opposite.
     let update_res = proxy
         .update_choices(path, vec!["new_choice".to_string()])
         .await;
-    assert!(update_res.is_ok());
+    assert!(update_res.is_err());
 
     Ok(())
 }

@@ -3,6 +3,7 @@ cancel_action: Mégse
 choose_an_application: Válasszon egy alkalmazást.
 create_action: Lét_rehozás
 create_web_application: Webalkalmazás létrehozása
+create_application: Webalkalmazás létrehozása
 deny_access_action: Hozzáférés megtagadása
 deny_action: Elutasítás
 grant_access_action: Hozzáférés megadása

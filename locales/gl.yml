@@ -2,6 +2,7 @@ allow_action: Permitir
 cancel_action: Cancelar
 choose_an_application: Escolla unha aplicación.
 create_action: Crear un cartafol
+create_application: Create Application
 deny_access_action: Denegar acceso
 deny_action: Denegar
 grant_access_action: Conceder acceso

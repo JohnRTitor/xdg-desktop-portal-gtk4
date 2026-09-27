@@ -170,13 +170,33 @@ impl AppChooser {
         choices: Vec<String>,
     ) -> fdo::Result<()> {
         tracing::info!("UpdateChoices called for handle: {}", handle.as_str());
-        // Look up the channel sender for this specific request handle.
-        // If found, send the new list of choices to the GTK task.
-        // This runs on the Tokio thread, while the receiving end runs on the GTK thread.
-        if let Some(sender) = self.active_dialogs.lock().get(&handle) {
-            let _ = sender.try_send(choices);
-        }
-        Ok(())
+        // A handle with no live dialog means the frontend and the backend have
+        // lost track of each other. Say so instead of reporting success, which
+        // hid exactly this desynchronisation; xdg-desktop-portal-gtk answers
+        // A handle with no live dialog means the frontend and the backend have
+        // lost track of each other. Say so instead of reporting success, which
+        // hid exactly this desynchronisation. xdg-desktop-portal-gtk answers
+        // org.freedesktop.portal.Error.NotFound here; KDE answers the standard
+        // InvalidArgs for a handle it does not recognise. We use InvalidArgs,
+        // which is meaningful and does not require synthesising a custom error
+        // name, rather than continuing to report a false success.
+        //
+        // The sender is cloned out under the lock rather than held across the
+        // send, and `send` is awaited rather than `try_send` so a slow GTK
+        // thread cannot make the frontend's update silently disappear.
+        let sender = self
+            .active_dialogs
+            .lock()
+            .get(&handle)
+            .cloned()
+            .ok_or_else(|| {
+                fdo::Error::InvalidArgs(format!("No live dialog for {}", handle.as_str()))
+            })?;
+
+        sender
+            .send(choices)
+            .await
+            .map_err(|_| fdo::Error::InvalidArgs("The chooser dialog went away".into()))
     }
 }
 
@@ -244,9 +264,13 @@ mod tests {
         );
         let path = OwnedObjectPath::try_from("/unknown/handle").unwrap();
 
-        // Should succeed but do nothing
+        // A handle with no live dialog must be reported, not silently accepted:
+        // returning success here is what hid frontend/backend desynchronisation.
         let res = chooser.update_choices(path, vec![]).await;
-        assert!(res.is_ok());
+        assert!(
+            res.is_err(),
+            "UpdateChoices must fail for a handle with no live dialog"
+        );
     }
 
     #[test]

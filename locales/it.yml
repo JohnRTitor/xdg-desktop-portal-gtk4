@@ -2,6 +2,7 @@ allow_action: Consenti
 cancel_action: Annulla
 choose_an_application: Scegliere un'applicazione.
 create_action: Crea
+create_application: Create Application
 deny_access_action: Nega accesso
 deny_action: Nega
 grant_access_action: Consenti accesso

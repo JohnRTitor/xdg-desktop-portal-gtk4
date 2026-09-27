@@ -3,6 +3,7 @@ cancel_action: Anulează
 choose_an_application: Alegeți o aplicație.
 create_action: C_reează
 create_web_application: Creează o aplicație web
+create_application: Creează o aplicație web
 deny_access_action: Refuză accesul
 deny_action: Respinge
 grant_access_action: Acordă accesul

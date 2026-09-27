@@ -3,6 +3,7 @@ cancel_action: Anullar
 choose_an_application: Causir una aplicacion.
 deny_access_action: Refusar l'accès
 deny_action: Refusar
+create_application: Create Application
 grant_access_action: Acordar l'accès
 name: Nom
 open_action: _Dobrir

@@ -3,6 +3,7 @@ cancel_action: キャンセル
 choose_an_application: アプリケーションを選択してください。
 create_action: 作成(_R)
 create_web_application: Web アプリケーションを作成
+create_application: Web アプリケーションを作成
 deny_access_action: アクセスを拒否
 deny_action: 拒否
 grant_access_action: アクセスを許可

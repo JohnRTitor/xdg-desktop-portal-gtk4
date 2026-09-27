@@ -83,7 +83,13 @@ impl DynamicLauncher {
             parent_window,
             activation_token: options.activation_token.clone(),
             name,
-            editable_name: options.editable_name.unwrap_or(false),
+            // The contract defaults `editable_name` to true; the name field is
+            // the whole point of the dialog. Defaulting it to false left the
+            // entry read-only unless the caller opted in.
+            editable_name: options.editable_name.unwrap_or(true),
+            // 1 = application, 2 = web application (impl.DynamicLauncher).
+            launcher_type: options.launcher_type.unwrap_or(1),
+            modal: options.modal.unwrap_or(true),
             icon_name,
             icon_data,
         }
@@ -91,6 +97,13 @@ impl DynamicLauncher {
         .await;
 
         match res {
+            // An empty name is not a usable launcher entry. GTK3 answers 3
+            // for this rather than 0, so the frontend can tell "user accepted
+            // nothing" from "user accepted this".
+            Ok(res) if res.name.trim().is_empty() => {
+                tracing::debug!("PrepareInstall accepted an empty name");
+                Response(3, PrepareInstallResults::default())
+            }
             Ok(res) => {
                 Response::success(PrepareInstallResults {
                     name: res.name,

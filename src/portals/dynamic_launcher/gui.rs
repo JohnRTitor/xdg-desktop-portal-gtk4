@@ -15,6 +15,9 @@ pub struct DynamicLauncherUi {
     pub activation_token: Option<String>,
     pub name: String,
     pub editable_name: bool,
+    /// 1 = application, 2 = web application.
+    pub launcher_type: u32,
+    pub modal: bool,
     pub icon_name: Option<String>,
     pub icon_data: Option<Vec<u8>>,
 }
@@ -39,10 +42,22 @@ impl DynamicLauncherUi {
         context: MainContext,
         close_on_close: Receiver<()>,
     ) {
-        let title = t!("create_web_application");
-        let subtitle = format!("{} wants to create a web application.", self.app_id);
+        // launcher_type 1 is an application launcher, 2 a web application. The
+        // dialog said "web application" unconditionally, even for a plain
+        // application launcher.
+        let is_webapp = self.launcher_type == 2;
+        let title = if is_webapp {
+            t!("create_web_application")
+        } else {
+            t!("create_application")
+        };
+        let subtitle = if is_webapp {
+            format!("{} wants to create a web application.", self.app_id)
+        } else {
+            format!("{} wants to create an application.", self.app_id)
+        };
 
-        let dialog = crate::gui::dialog::CustomDialog::new(&title, true);
+        let dialog = crate::gui::dialog::CustomDialog::new(&title, self.modal);
 
         let cancel_button = Button::with_label(&t!("cancel_action"));
         let ok_button = Button::with_label(&t!("create_action"));

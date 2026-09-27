@@ -3,6 +3,7 @@ cancel_action: Avbryt
 choose_an_application: Välj ett program.
 create_action: S_kapa
 create_web_application: Skapa webbapplikation
+create_application: Skapa webbapplikation
 deny_access_action: Neka åtkomst
 deny_action: Neka
 grant_access_action: Bevilja åtkomst

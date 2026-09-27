@@ -3,6 +3,7 @@ cancel_action: Отменить
 choose_an_application: Выберите приложение.
 create_action: С_оздать
 create_web_application: Создать веб-приложение
+create_application: Создать веб-приложение
 deny_access_action: Отказать в доступе
 deny_action: Отказать
 grant_access_action: Предоставить доступ

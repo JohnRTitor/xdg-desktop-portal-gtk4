@@ -2,6 +2,7 @@ allow_action: Dozvoli
 cancel_action: Odustani
 choose_an_application: Odaberi program.
 create_web_application: Stvori web aplikaciju
+create_application: Stvori web aplikaciju
 deny_access_action: Zabrani pristup
 grant_access_action: Dozvoli pristup
 name: Naziv

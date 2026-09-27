@@ -3,6 +3,7 @@ cancel_action: Zrušit
 choose_an_application: Vyberte aplikaci.
 create_action: _Vytvořit
 create_web_application: Vytvořit webovou aplikaci
+create_application: Vytvořit webovou aplikaci
 deny_access_action: Zamítnout přístup
 deny_action: Zamítnout
 grant_access_action: Udělit přístup
