@@ -277,3 +277,45 @@ async fn request_close_reports_other_not_cancelled() {
         "a request closed via Request.Close() must report response code 2 (other)"
     );
 }
+
+// --------------------------------------------------------------------- print --
+
+/// A `PreparePrint` token is only valid for the application that obtained it.
+///
+/// Tokens used to be looked up by value alone, so any sandboxed application
+/// could consume another application's cached printer, page setup and settings
+/// by guessing a token. `xdg-desktop-portal-gtk` rejects a mismatched `app_id`
+/// and leaves the entry in place for its rightful owner (`print.c:124-141`).
+#[test]
+fn print_token_is_bound_to_app_id() {
+    use xdg_desktop_portal_gtk4::portals::print::gui::{TokenClaim, claim_token};
+
+    let mut jobs: HashMap<u32, (String, &'static str)> =
+        HashMap::from([(7, ("org.example.Owner".to_string(), "job"))]);
+
+    // The rightful owner gets the job, and the token is consumed.
+    match claim_token(&mut jobs, 7, "org.example.Owner") {
+        TokenClaim::Granted("job") => {}
+        _ => panic!("the owner must be granted its own token"),
+    }
+    assert!(!jobs.contains_key(&7), "a granted token must be consumed");
+
+    jobs.insert(7, ("org.example.Owner".to_string(), "job"));
+
+    // A different application is refused...
+    assert!(matches!(
+        claim_token(&mut jobs, 7, "org.example.Attacker"),
+        TokenClaim::WrongOwner(ref o) if o == "org.example.Owner"
+    ));
+    // ...and, crucially, the token survives so the owner can still use it.
+    assert!(
+        jobs.contains_key(&7),
+        "a refused claim must not consume another application's token"
+    );
+
+    // An unknown token is reported as such.
+    assert!(matches!(
+        claim_token(&mut jobs, 999, "org.example.Owner"),
+        TokenClaim::Unknown
+    ));
+}

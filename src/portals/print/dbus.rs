@@ -1,3 +1,14 @@
+/// Flatten a portal options dict into the string map the print UI consumes,
+/// keeping only the string values that GTK can be fed through a KeyFile.
+fn flatten_dict(dict: HashMap<String, Value<'_>>) -> HashMap<String, String> {
+    dict.into_iter()
+        .filter_map(|(k, v)| match &v {
+            Value::Str(s) => Some((k, s.to_string())),
+            _ => None,
+        })
+        .collect()
+}
+
 use {
     super::gui::{ExecutePrintUi, PrintUi},
     crate::{
@@ -74,8 +85,8 @@ impl Print {
         app_id: String,
         parent_window: String,
         title: String,
-        _settings: HashMap<String, Value<'_>>,
-        _page_setup: HashMap<String, Value<'_>>,
+        settings: HashMap<String, Value<'_>>,
+        page_setup: HashMap<String, Value<'_>>,
         options: PreparePrintOptions,
     ) -> Response<PreparePrintResults> {
         let res = PrintUi {
@@ -83,6 +94,11 @@ impl Print {
             parent_window,
             activation_token: options.activation_token.clone(),
             title,
+            // These used to be discarded, so an application that requested a
+            // particular printer, paper size or orientation got a dialog that
+            // ignored all of it.
+            settings: flatten_dict(settings),
+            page_setup: flatten_dict(page_setup),
         }
         .run(&self.proxy)
         .await;
@@ -105,7 +121,7 @@ impl Print {
 
     async fn print_impl(
         &self,
-        _app_id: String,
+        app_id: String,
         _parent_window: String,
         _title: String,
         fd: Fd<'_>,
@@ -120,7 +136,16 @@ impl Print {
         // it is safe to extract the raw_fd here and pass it down.
         let raw_fd = fd.as_raw_fd();
 
-        let res = ExecutePrintUi { token, fd: raw_fd }.run(&self.proxy).await;
+        // A token is only valid for the application that obtained it. Without
+        // this check any app could consume another app's cached printer and
+        // settings by guessing a token.
+        let res = ExecutePrintUi {
+            token,
+            app_id,
+            fd: raw_fd,
+        }
+        .run(&self.proxy)
+        .await;
 
         match res {
             Ok(_) => Response::success(PrintResults::default()),
