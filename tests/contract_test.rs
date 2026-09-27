@@ -49,11 +49,10 @@ trait Clipboard {
 ///   `QDBusError::InvalidArgs` when the handle is not a clipboard-enabled
 ///   session, and `InvalidArgs` for an unknown serial.
 ///
-/// `xdg-desktop-portal-gtk4` ignores `session_handle` in all three methods and
-/// keeps `pending_transfers` in a single *global* `serial -> sender` map, so any
-/// session can consume any other session's clipboard file descriptor.
+/// The transfer map is additionally keyed by session, so validating the session
+/// is not merely cosmetic: a caller that passes an unknown session but a real
+/// serial still cannot reach the other session's descriptor.
 #[tokio::test]
-#[ignore = "AUDIT: clipboard methods ignore session_handle (cross-session FD hijack)"]
 async fn clipboard_validates_session_handle() {
     let Ok(client) = Connection::session().await else {
         return;

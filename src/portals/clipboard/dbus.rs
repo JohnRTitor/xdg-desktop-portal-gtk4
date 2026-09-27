@@ -41,6 +41,26 @@ struct TransferRequest {
     fd_sender: Sender<OwnedFd>,
 }
 
+/// Per-session serial counters, so one application cannot predict or collide
+/// with another application's transfer serials.
+static SERIALS: std::sync::LazyLock<Mutex<HashMap<String, Arc<AtomicU32>>>> =
+    std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
+
+fn next_serial(session: &str) -> u32 {
+    let mut counters = SERIALS.lock();
+    let counter = counters
+        .entry(session.to_owned())
+        .or_insert_with(|| Arc::new(AtomicU32::new(1)))
+        .clone();
+    let serial = counter.fetch_add(1, Ordering::SeqCst);
+    // Skip 0, which the spec reserves as "no serial".
+    if serial == 0 {
+        counter.fetch_add(1, Ordering::SeqCst)
+    } else {
+        serial
+    }
+}
+
 /// D-Bus interface wrapper for the Clipboard portal.
 ///
 /// This struct holds the shared state for clipboard operations, notably managing
@@ -51,11 +71,18 @@ pub struct ClipboardPortal {
     /// We emit `SelectionOwnerChanged` signals to all these sessions when the host clipboard changes.
     active_sessions: Arc<Mutex<Vec<ObjectPath<'static>>>>,
 
-    /// Maps a unique serial number to an active transfer request.
-    /// When the host wants to read from a sandboxed app, we generate a serial, pass it to the app
-    /// via `SelectionTransfer`, and when the app calls `SelectionWrite` with that serial, we map
-    /// it back to the `fd_sender` to provide the writing end of a pipe.
-    pending_transfers: Arc<Mutex<HashMap<u32, TransferRequest>>>,
+    /// Maps a `(session, serial)` pair to an active transfer request.
+    ///
+    /// When the host wants to read from a sandboxed app, we generate a serial
+    /// scoped to that session, pass it to the app via `SelectionTransfer`, and
+    /// when the app calls `SelectionWrite` with the same session and serial we
+    /// map it back to the `fd_sender` to provide the writing end of a pipe.
+    ///
+    /// The session is part of the key on purpose. Serials are a per-session
+    /// namespace, and validating the session separately is not sufficient on its
+    /// own: a caller that passed an unknown session but a serial belonging to
+    /// someone else must still not receive that session's descriptor.
+    pending_transfers: Arc<Mutex<HashMap<(String, u32), TransferRequest>>>,
 
     connection: Connection,
     proxy: UiProxy,
@@ -126,6 +153,32 @@ impl ClipboardPortal {
             connection,
             proxy,
             session_manager,
+        }
+    }
+}
+
+impl ClipboardPortal {
+    /// Reject operations on a session that never called `RequestClipboard`.
+    ///
+    /// GNOME resolves the session first and answers
+    /// `org.freedesktop.portal.Error.NotFound`; KDE answers
+    /// `QDBusError::InvalidArgs` ("not a clipboard enabled session"). Without
+    /// this check the session argument was accepted and discarded, so any
+    /// sandboxed app holding a clipboard session could drive another session's
+    /// transfers.
+    fn require_clipboard_session(&self, session: &ObjectPath<'_>) -> fdo::Result<String> {
+        let session = session.as_str();
+        if self
+            .active_sessions
+            .lock()
+            .iter()
+            .any(|s| s.as_str() == session)
+        {
+            Ok(session.to_owned())
+        } else {
+            Err(fdo::Error::InvalidArgs(format!(
+                "Session {session} has not requested clipboard access"
+            )))
         }
     }
 }
@@ -258,24 +311,27 @@ impl ClipboardPortal {
                     return;
                 };
 
-                static SERIAL: AtomicU32 = AtomicU32::new(1);
-                let serial = SERIAL.fetch_add(1, Ordering::SeqCst);
+                // Serials are a per-session namespace, so each session gets its
+                // own counter. A process-wide counter would let one app's
+                // serial be predicted by another app.
+                let serial = next_serial(&session_handle_owned);
 
+                let key = (session_handle_owned.to_string(), serial);
                 pending_transfers_clone
                     .lock()
-                    .insert(serial, TransferRequest { fd_sender });
+                    .insert(key.clone(), TransferRequest { fd_sender });
 
                 if let Err(e) =
                     Self::selection_transfer(&emitter, &session_handle_owned, &mime, serial).await
                 {
                     tracing::error!("Failed to emit SelectionTransfer: {}", e);
-                    pending_transfers_clone.lock().remove(&serial);
+                    pending_transfers_clone.lock().remove(&key);
                 } else {
                     let pending = pending_transfers_clone.clone();
                     tokio::spawn(async move {
                         tokio::time::sleep(Duration::from_secs(10)).await;
-                        if pending.lock().remove(&serial).is_some() {
-                            tracing::warn!("Clipboard transfer request {} timed out", serial);
+                        if pending.lock().remove(&key).is_some() {
+                            tracing::warn!("Clipboard transfer request {serial} timed out");
                         }
                     });
                 }
@@ -290,16 +346,13 @@ impl ClipboardPortal {
         session_handle: ObjectPath<'_>,
         serial: u32,
     ) -> fdo::Result<Fd<'_>> {
-        tracing::debug!(
-            "SelectionWrite called for session: {:?} serial: {}",
-            session_handle,
-            serial
-        );
+        let session = self.require_clipboard_session(&session_handle)?;
+        tracing::debug!("SelectionWrite called for session: {session} serial: {serial}");
         let transfer = self
             .pending_transfers
             .lock()
-            .remove(&serial)
-            .ok_or_else(|| fdo::Error::InvalidArgs(format!("Invalid serial {}", serial)))?;
+            .remove(&(session, serial))
+            .ok_or_else(|| fdo::Error::InvalidArgs(format!("Invalid serial {serial}")))?;
 
         let (read_fd, write_fd) = rustix::pipe::pipe()
             .map_err(|e| fdo::Error::Failed(format!("Failed to create pipe: {}", e)))?;
@@ -320,13 +373,11 @@ impl ClipboardPortal {
         serial: u32,
         success: bool,
     ) -> fdo::Result<()> {
+        let session = self.require_clipboard_session(&session_handle)?;
         tracing::debug!(
-            "SelectionWriteDone called for session: {:?} serial: {} success: {}",
-            session_handle,
-            serial,
-            success
+            "SelectionWriteDone called for session: {session} serial: {serial} success: {success}"
         );
-        self.pending_transfers.lock().remove(&serial);
+        self.pending_transfers.lock().remove(&(session, serial));
         Ok(())
     }
 
@@ -335,11 +386,8 @@ impl ClipboardPortal {
         session_handle: ObjectPath<'_>,
         mime_type: String,
     ) -> fdo::Result<Fd<'_>> {
-        tracing::debug!(
-            "SelectionRead called for session: {:?} mime_type: {}",
-            session_handle,
-            mime_type
-        );
+        let session = self.require_clipboard_session(&session_handle)?;
+        tracing::debug!("SelectionRead called for session: {session} mime_type: {mime_type}");
 
         let (read_fd, write_fd) = rustix::pipe::pipe()
             .map_err(|e| fdo::Error::Failed(format!("Failed to create pipe: {}", e)))?;
