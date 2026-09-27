@@ -10,6 +10,13 @@ use {
     },
 };
 
+/// `(id, properties, access_options)` as the Usb portal contract defines it.
+type UsbDeviceIn = (
+    String,
+    HashMap<String, OwnedValue>,
+    HashMap<String, OwnedValue>,
+);
+
 #[proxy(
     interface = "org.freedesktop.impl.portal.Usb",
     default_service = "org.freedesktop.impl.portal.desktop.gtk4",
@@ -22,11 +29,7 @@ trait Usb {
         handle: OwnedObjectPath,
         parent_window: &str,
         app_id: &str,
-        devices: Vec<(
-            String,
-            HashMap<String, OwnedValue>,
-            HashMap<String, OwnedValue>,
-        )>,
+        devices: Vec<UsbDeviceIn>,
         options: HashMap<String, OwnedValue>,
     ) -> zbus::Result<u32>;
 }

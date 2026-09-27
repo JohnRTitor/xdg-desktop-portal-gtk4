@@ -1,3 +1,5 @@
+#![allow(clippy::too_many_arguments)] // proxy macro generates 8-arg client methods
+
 mod common;
 use {
     common::*,

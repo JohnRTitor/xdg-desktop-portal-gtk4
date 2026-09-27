@@ -333,6 +333,7 @@ impl FileChooser {
 #[interface(name = "org.freedesktop.impl.portal.FileChooser")]
 impl FileChooser {
     #[tracing::instrument(skip_all, fields(app_id = %app_id, handle = %handle.as_str()))]
+    #[allow(clippy::too_many_arguments)]
     async fn open_file(
         &self,
         #[zbus(header)] header: Header<'_>,
@@ -359,6 +360,7 @@ impl FileChooser {
     }
 
     #[tracing::instrument(skip_all, fields(app_id = %app_id, handle = %handle.as_str()))]
+    #[allow(clippy::too_many_arguments)]
     async fn save_file(
         &self,
         #[zbus(header)] header: Header<'_>,
@@ -385,6 +387,7 @@ impl FileChooser {
     }
 
     #[tracing::instrument(skip_all, fields(app_id = %app_id, handle = %handle.as_str()))]
+    #[allow(clippy::too_many_arguments)]
     async fn save_files(
         &self,
         #[zbus(header)] header: Header<'_>,

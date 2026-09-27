@@ -62,7 +62,7 @@ impl AppChooserUi {
         let label_text = if let Some(ref filename) = self.filename {
             t!("select_application_to_open_file", filename = filename)
         } else {
-            t!("select_application_to_open").into()
+            t!("select_application_to_open")
         };
         let label = Label::new(Some(&*label_text));
         dialog.content_area.append(&label);

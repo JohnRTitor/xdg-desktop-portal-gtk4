@@ -102,7 +102,7 @@ mod tests {
             OwnedObjectPath::try_from("/org/freedesktop/portal/desktop/request/1").unwrap();
 
         let response: Response<u32> =
-            run_request(&server, sm, "test_app", "test_sender", handle, async {
+            run_request(server, sm, "test_app", "test_sender", handle, async {
                 Response::success(42)
             })
             .await;
@@ -141,7 +141,7 @@ mod tests {
         });
 
         let response: Response<u32> =
-            run_request(&server, sm, "test_app", "test_sender", handle, async {
+            run_request(server, sm, "test_app", "test_sender", handle, async {
                 tokio::time::sleep(std::time::Duration::from_secs(10)).await;
                 Response::success(42)
             })

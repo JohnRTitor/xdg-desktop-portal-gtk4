@@ -135,6 +135,7 @@ impl AppChooser {
 /// or handle a specific content type.
 #[interface(name = "org.freedesktop.impl.portal.AppChooser")]
 impl AppChooser {
+    #[allow(clippy::too_many_arguments)]
     #[zbus(name = "ChooseApplication")]
     #[tracing::instrument(skip_all, fields(app_id = %app_id, handle = %handle.as_str()))]
     async fn choose_application(
