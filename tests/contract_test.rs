@@ -161,32 +161,56 @@ async fn app_chooser_update_choices_unknown_handle() {
 /// list is nonempty, it should match a filter in the list ... Alternatively, it
 /// may be specified when the list is empty to apply the filter unconditionally."
 ///
-/// `xdg-desktop-portal-gtk` implements exactly that (`filechooser.c:554-595`:
-/// `if (!filters) gtk_file_chooser_set_filter (...)`), and also matches by
-/// *name* rather than by value, so a caller that supplies a slightly different
-/// `current_filter` still gets it selected.
+/// xdg-desktop-portal-gtk implements both halves (`filechooser.c:554-595`) and
+/// matches within a list by *name* rather than by value.
 ///
-/// `xdg-desktop-portal-gtk4` (`file_chooser/gui.rs:219-229`) applies
-/// `current_filter` only from inside `if let Some(f) = &self.filters`, so a
-/// caller that passes `current_filter` without `filters` silently gets an
-/// unfiltered chooser. This test pins the required behaviour.
+/// This exercises the real decision function, which previously could not be
+/// reached from a test.
 #[test]
-#[ignore = "AUDIT: current_filter is ignored unless a non-empty filters list is given"]
 fn file_chooser_current_filter_applies_without_filters_list() {
-    use xdg_desktop_portal_gtk4::portals::file_chooser::gui::{Filter, FilterKind};
-    let current = Filter {
+    use xdg_desktop_portal_gtk4::portals::file_chooser::gui::{
+        Filter, FilterKind, effective_filters,
+    };
+    let text = Filter {
         name: "Text".into(),
         elements: vec![FilterKind::Glob("*.txt".into())],
     };
-    let filters: Option<Vec<Filter>> = None;
-    let matched = filters
-        .as_ref()
-        .map(|fs| fs.iter().any(|f| f.name == current.name))
-        .unwrap_or(false);
-    assert!(
-        matched,
-        "current_filter must be applied unconditionally when `filters` is absent"
-    );
+    let images = Filter {
+        name: "Images".into(),
+        elements: vec![FilterKind::Mime("image/png".into())],
+    };
+
+    // `current_filter` alone: applied unconditionally as the only filter.
+    let (offered, selected) = effective_filters(None, Some(&text));
+    assert_eq!(offered, vec![text.clone()]);
+    assert_eq!(selected, Some(0));
+    // An empty list behaves the same as an absent one.
+    let (offered, selected) = effective_filters(Some(&[]), Some(&text));
+    assert_eq!(offered, vec![text.clone()]);
+    assert_eq!(selected, Some(0));
+
+    // With a list, `current_filter` selects within it.
+    let list = vec![images.clone(), text.clone()];
+    let (offered, selected) = effective_filters(Some(&list), Some(&text));
+    assert_eq!(offered, list);
+    assert_eq!(selected, Some(1));
+
+    // Matching is by name, so a `current_filter` that differs in its elements
+    // still selects the list entry the application meant.
+    let loose = Filter {
+        name: "Text".into(),
+        elements: vec![FilterKind::Glob("*.text".into())],
+    };
+    let (_, selected) = effective_filters(Some(&list), Some(&loose));
+    assert_eq!(selected, Some(1));
+
+    // A `current_filter` matching nothing in a non-empty list selects nothing.
+    let unrelated = Filter {
+        name: "Audio".into(),
+        elements: vec![FilterKind::Mime("audio/*".into())],
+    };
+    let (_, selected) = effective_filters(Some(&list), Some(&unrelated));
+    assert_eq!(selected, None);
 }
 
 // ------------------------------------------------------------------ account --
@@ -213,7 +237,6 @@ trait Account {
 /// request indistinguishable from a user rejection in logs and in
 /// `xdg-desktop-portal`'s own bookkeeping.
 #[tokio::test]
-#[ignore = "AUDIT: Request.Close() reports 1 (cancelled) instead of 2 (other)"]
 async fn request_close_reports_other_not_cancelled() {
     use xdg_desktop_portal_gtk4::core::request::run_request;
 

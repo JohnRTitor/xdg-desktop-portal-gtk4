@@ -17,7 +17,7 @@ trait Settings {
         namespaces: &[&str],
     ) -> zbus::Result<HashMap<String, HashMap<String, OwnedValue>>>;
 
-    #[zbus(property)]
+    #[zbus(property, name = "version")]
     fn version(&self) -> zbus::Result<u32>;
 }
 

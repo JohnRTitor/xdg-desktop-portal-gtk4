@@ -2,6 +2,7 @@ use {serde::Serialize, zbus::zvariant::Type};
 
 const PORTAL_SUCCESS: u32 = 0;
 const PORTAL_CANCELLED: u32 = 1;
+const PORTAL_OTHER: u32 = 2;
 
 #[derive(Serialize, Type)]
 pub struct Response<T: Type>(pub u32, pub T);
@@ -16,6 +17,20 @@ impl<T: Type> Response<T> {
         T: Default,
     {
         Self(PORTAL_CANCELLED, T::default())
+    }
+
+    /// Response code 2, "other".
+    ///
+    /// This is what a request that was never actually performed should report:
+    /// a request closed by the frontend (`Request.Close`), a request whose
+    /// sender vanished mid-flight, or a request rejected before it started.
+    /// It is deliberately distinct from [`Self::cancelled`], which means "the
+    /// user said no". Every other backend uses 2 for these cases.
+    pub fn other() -> Self
+    where
+        T: Default,
+    {
+        Self(PORTAL_OTHER, T::default())
     }
 }
 

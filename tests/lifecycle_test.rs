@@ -31,7 +31,6 @@ async fn notified(n: &Notify) -> bool {
 /// exactly the situation it exists to protect against (a leaking or
 /// misbehaving app).
 #[tokio::test]
-#[ignore = "AUDIT: SessionManager decrements the per-app budget twice, freeing it early"]
 async fn disconnect_does_not_double_decrement_per_app_budget() {
     let Ok(bus) = Connection::session().await else {
         eprintln!("no session bus; skipping");
@@ -80,17 +79,27 @@ async fn disconnect_does_not_double_decrement_per_app_budget() {
     // sender disappears, otherwise the signal is emitted before we listen.
     tokio::time::sleep(Duration::from_millis(300)).await;
 
-    // Sender #1 vanishes from the bus.
+    // Sender #1 vanishes from the bus. The NameOwnerChanged sweep removes its
+    // entry and releases exactly one budget slot for the app -- /p/1 really is
+    // gone, so that slot legitimately comes back.
     drop(s1);
     assert!(
         notified(&n1).await,
         "sender disconnect must cancel its request"
     );
 
-    // What run_request() does once the cancelled future unwinds.
+    // What run_request() does once the cancelled future unwinds. This must be a
+    // no-op: the sweep already accounted for /p/1, and decrementing again is
+    // what previously drove the app's count to zero and deleted the entry,
+    // freeing the whole budget while /p/2 was still live.
     sm.unregister("app.a", &name1, "/p/1");
 
-    // /p/2 is still live, so app.a must still be at its limit.
+    // Exactly one slot came back, not two.
+    assert!(
+        sm.register("app.a", ":1.fake", "/p/reclaimed", Arc::new(Notify::new()))
+            .is_ok(),
+        "the one request lost to the disconnect must free exactly one budget slot"
+    );
     assert!(
         sm.register("app.a", ":1.fake", "/p/overflow", Arc::new(Notify::new()))
             .is_err(),

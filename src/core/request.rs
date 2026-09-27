@@ -31,10 +31,8 @@ where
 {
     let notify = Arc::new(Notify::new());
     let cancel_notify = Arc::new(Notify::new());
-    if let Err(e) = session_manager.register(app_id, sender, handle.as_str(), cancel_notify.clone())
-    {
-        tracing::error!("Failed to register request with SessionManager: {}", e);
-    }
+    let registered =
+        session_manager.register(app_id, sender, handle.as_str(), cancel_notify.clone());
 
     let request_exported = server
         .at(
@@ -46,17 +44,37 @@ where
         .await
         .is_ok();
 
-    let response = tokio::select! {
-        v = f => v,
-        _ = notify.notified() => Response::cancelled(),
-        _ = cancel_notify.notified() => Response::cancelled(),
+    let response = match &registered {
+        // The app is already at its concurrent-request limit. Do not run the
+        // portal work: export the Request (so a later Close() still succeeds)
+        // and report the request as "other" immediately. Previously the error
+        // was only logged and the work ran anyway, which made
+        // `max_sessions_per_app` purely advisory.
+        Err(e) => {
+            tracing::warn!(
+                "Rejecting request {} for {}: {}",
+                handle.as_str(),
+                app_id,
+                e
+            );
+            Response::other()
+        }
+        Ok(()) => tokio::select! {
+            v = f => v,
+            // Requested by the frontend, or the caller vanished. Either way the
+            // work never completed, which is "other", not "the user cancelled".
+            _ = notify.notified() => Response::other(),
+            _ = cancel_notify.notified() => Response::other(),
+        },
     };
 
     if request_exported {
         let _ = server.remove::<Request, _>(&handle).await;
     }
 
-    session_manager.unregister(app_id, sender, handle.as_str());
+    if registered.is_ok() {
+        session_manager.unregister(app_id, sender, handle.as_str());
+    }
 
     response
 }
@@ -147,7 +165,7 @@ mod tests {
             })
             .await;
 
-        assert_eq!(response.0, 1); // 1 is cancelled
+        assert_eq!(response.0, 2); // 2 is "other": the request was closed, not user-cancelled
         assert_eq!(response.1, 0); // Default u32
     }
 }

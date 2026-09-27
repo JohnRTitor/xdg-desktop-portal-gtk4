@@ -110,20 +110,40 @@ impl SessionManager {
     ///
     /// This should be called when a request naturally completes (either success, cancellation, or error)
     /// so that we don't leak cancellation senders and the application's session count decrements.
+    ///
+    /// Releasing the per-app budget slot is conditional on actually still
+    /// holding the registration. The `NameOwnerChanged` sweep in [`Self::run`]
+    /// removes a departed sender's entries *and* decrements the counter once
+    /// per entry; `run_request` then calls this for each of those same
+    /// requests as their futures unwind. Unconditionally decrementing here
+    /// therefore counted every departed request twice, which drove the app's
+    /// count to zero and removed the entry entirely -- freeing the app's
+    /// budget while its still-live requests on other senders were running.
     pub fn unregister(&self, app_id: &str, sender: &str, object_path: &str) {
         let mut state = self.state.lock();
+
+        let held = state.sender_objects.get_mut(sender).is_some_and(|objects| {
+            let before = objects.len();
+            objects.retain(|(p, _, _)| p != object_path);
+            objects.len() != before
+        });
+
+        if state
+            .sender_objects
+            .get(sender)
+            .is_some_and(|objects| objects.is_empty())
+        {
+            state.sender_objects.remove(sender);
+        }
+
+        if !held {
+            return;
+        }
 
         if let Some(count) = state.app_sessions.get_mut(app_id) {
             *count = count.saturating_sub(1);
             if *count == 0 {
                 state.app_sessions.remove(app_id);
-            }
-        }
-
-        if let Some(objects) = state.sender_objects.get_mut(sender) {
-            objects.retain(|(p, _, _)| p != object_path);
-            if objects.is_empty() {
-                state.sender_objects.remove(sender);
             }
         }
     }
