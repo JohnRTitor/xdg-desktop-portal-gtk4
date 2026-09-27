@@ -358,14 +358,10 @@ async fn method_signatures_match_upstream_contract() {
 /// from the Rust fn name and capitalises it, so a getter written
 /// `fn version()` is exported as `Version`, not `version`.
 ///
-/// `clipboard/dbus.rs:371` and `settings/dbus.rs:190` are both missing the
-/// explicit `name = "version"`, so those two interfaces are currently wrong.
-/// Note this is invisible to the existing tests: `tests/settings_test.rs:20`
-/// declares its proxy with a bare `#[zbus(property)] fn version()` and therefore
-/// generates the same wrong name, and the clipboard unit test calls
-/// `portal.version()` directly in Rust without a D-Bus round trip.
+/// `clipboard/dbus.rs` and `settings/dbus.rs` used to omit the explicit
+/// `name = "version"` and therefore exported `Version`, which the contract does
+/// not define. This test was added with that defect present and caught it.
 #[tokio::test]
-#[ignore = "AUDIT: Clipboard/Settings export `Version`, contract requires `version`"]
 async fn property_names_match_upstream_contract() {
     let Some(xml) = introspect_backend().await else {
         eprintln!("no private session bus; skipping");

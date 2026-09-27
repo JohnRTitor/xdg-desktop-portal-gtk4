@@ -368,7 +368,7 @@ impl ClipboardPortal {
         serial: u32,
     ) -> zbus::Result<()>;
 
-    #[zbus(property)]
+    #[zbus(property, name = "version")]
     fn version(&self) -> u32 {
         2
     }
