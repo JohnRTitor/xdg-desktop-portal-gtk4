@@ -480,32 +480,7 @@ impl Notification {
             }
         }
 
-        let mut action_targets = HashMap::new();
-        let mut parsed_actions: Vec<String> = Vec::new();
-
-        if let Some(default_action) = notification.default_action.as_ref() {
-            parsed_actions.push("default".into());
-            parsed_actions.push(default_action.clone());
-            if let Some(target) = notification.default_action_target.as_ref() {
-                action_targets.insert("default".into(), target.clone());
-            }
-        }
-
-        if let Some(buttons) = notification.buttons.as_ref() {
-            for (action, options) in buttons {
-                let label = options
-                    .get("label")
-                    .and_then(|v| <&str>::try_from(std::ops::Deref::deref(v)).ok())
-                    .unwrap_or(action.as_str());
-                parsed_actions.push(action.clone());
-                parsed_actions.push(label.into());
-                if let Some(target) = options.get("action-target") {
-                    action_targets.insert(action.clone(), target.clone());
-                }
-            }
-        }
-
-        let actions: Vec<&str> = parsed_actions.iter().map(|s| s.as_str()).collect();
+        let (actions, action_targets) = build_actions(&notification);
 
         if let Some(proxy) = &self.proxy {
             let replaces_id = active_id(&self.active_notifications, &app_id, &id).unwrap_or(0);
@@ -621,6 +596,60 @@ impl Notification {
     }
 }
 
+/// How many `&str` slots [`build_actions`] will push, so the vector is sized
+/// once. Each action contributes an id and a label.
+fn actions_capacity(notification: &PortalNotification) -> usize {
+    let buttons = notification.buttons.as_ref().map_or(0, Vec::len);
+    2 * (usize::from(notification.default_action.is_some()) + buttons)
+}
+
+/// Builds the FDO action list and the per-action target map.
+///
+/// `Notify` takes the actions as a flat alternating list of `(id, label)` pairs,
+/// and the reply needs each action's target keyed by its id.
+///
+/// The labels are borrowed straight out of `notification` rather than collected
+/// into an owned `Vec<String>` first. The previous code built one `String` per
+/// id and per label -- including for a label, which was already a `&str` borrowed
+/// from the caller's options -- and then dropped the whole vector after taking
+/// `&str` from it, so every action cost two allocations that lived only long
+/// enough to be reborrowed. `notification` outlives the `Notify` call, so the
+/// borrows are valid for as long as the caller needs them.
+///
+/// The targets are still cloned: they are `OwnedValue`s that must outlive this
+/// function, since they are stored in the reverse map and read later by the
+/// `ActionInvoked` listener.
+fn build_actions(notification: &PortalNotification) -> (Vec<&str>, HashMap<String, OwnedValue>) {
+    let mut actions = Vec::with_capacity(actions_capacity(notification));
+    let mut targets = HashMap::new();
+
+    if let Some(default_action) = notification.default_action.as_deref() {
+        actions.push("default");
+        actions.push(default_action);
+        if let Some(target) = notification.default_action_target.as_ref() {
+            targets.insert("default".to_owned(), target.clone());
+        }
+    }
+
+    if let Some(buttons) = notification.buttons.as_deref() {
+        for (action, options) in buttons {
+            // An explicit label wins; otherwise the action id doubles as the
+            // label, matching what the reference implementations send.
+            let label = options
+                .get("label")
+                .and_then(|v| <&str>::try_from(std::ops::Deref::deref(v)).ok())
+                .unwrap_or(action.as_str());
+            actions.push(action.as_str());
+            actions.push(label);
+            if let Some(target) = options.get("action-target") {
+                targets.insert(action.clone(), target.clone());
+            }
+        }
+    }
+
+    (actions, targets)
+}
+
 /// Spawns a background task that listens to `ActionInvoked` signals from the system notification daemon.
 ///
 /// When an action is invoked on a notification created through this portal, this function looks up
@@ -660,17 +689,31 @@ async fn listen_for_action_invoked(
         let platform_data_val = Value::from(platform_data.clone());
         params.push(platform_data_val);
 
-        let mut app_path = String::from("/");
-        app_path.push_str(&app_id.replace('.', "/").replace('-', "_"));
+        // Build the application object path in one pass. `replace` twice would
+        // allocate an intermediate `String` for the first pass and another for
+        // the second, plus the `String::from("/")` seed that `push_str` then
+        // reallocates as it grows.
+        let mut app_path = String::with_capacity(app_id.len() + 1);
+        app_path.push('/');
+        app_path.extend(app_id.chars().map(|c| match c {
+            '.' => '/',
+            '-' => '_',
+            other => other,
+        }));
 
+        // `app_id` and `portal_id` are borrowed from `target_data`, which dies
+        // at the end of this iteration, so the spawned task needs owned values.
+        // They are `Arc<str>`, so each clone is a refcount bump rather than a
+        // new allocation.
         let app_id_clone = app_id.clone();
+        let portal_id_clone = portal_id.clone();
+        // `app_path` and `params` are owned locals that are dead after the
+        // spawn, so they are moved rather than cloned. `params` holds only
+        // `Value<'static>` (both entries are built from owned `OwnedValue`s),
+        // so it reaches the task without a deep copy of every element.
         let action_key_clone = String::from(action_key);
         let server_clone = server.clone();
-        let portal_id_clone = portal_id.clone();
         let session_bus_clone = session_bus.clone();
-        let app_path_clone = app_path.clone();
-        let params_clone = params.clone();
-        let platform_data_clone = platform_data.clone();
 
         tokio::spawn(async move {
             if let Some(action_name) = action_key_clone.strip_prefix("app.") {
@@ -684,8 +727,8 @@ async fn listen_for_action_invoked(
                     tracing::error!("Invalid D-Bus destination: {}", app_id_clone);
                     return;
                 };
-                let Ok(builder) = builder.path(app_path_clone.as_str()) else {
-                    tracing::error!("Invalid D-Bus path: {}", app_path_clone);
+                let Ok(builder) = builder.path(app_path.as_str()) else {
+                    tracing::error!("Invalid D-Bus path: {}", app_path);
                     return;
                 };
                 let proxy_res = builder
@@ -695,7 +738,7 @@ async fn listen_for_action_invoked(
 
                 if let Ok(proxy) = proxy_res {
                     let _ = proxy
-                        .activate_action(action_name, &params_clone, &platform_data_clone)
+                        .activate_action(action_name, &params, &platform_data)
                         .await;
                 }
             } else {
@@ -705,8 +748,8 @@ async fn listen_for_action_invoked(
                     tracing::error!("Invalid D-Bus destination: {}", app_id_clone);
                     return;
                 };
-                let Ok(builder) = builder.path(app_path_clone.as_str()) else {
-                    tracing::error!("Invalid D-Bus path: {}", app_path_clone);
+                let Ok(builder) = builder.path(app_path.as_str()) else {
+                    tracing::error!("Invalid D-Bus path: {}", app_path);
                     return;
                 };
                 let proxy_res = builder
@@ -715,7 +758,7 @@ async fn listen_for_action_invoked(
                     .await;
 
                 if let Ok(proxy) = proxy_res {
-                    let _ = proxy.activate(&platform_data_clone).await;
+                    let _ = proxy.activate(&platform_data).await;
                 }
 
                 let iface_ref_res = server_clone
@@ -728,7 +771,7 @@ async fn listen_for_action_invoked(
                         &app_id_clone,
                         &portal_id_clone,
                         &action_key_clone,
-                        &params_clone,
+                        &params,
                     )
                     .await;
                 }
@@ -1109,5 +1152,158 @@ mod bytes_tests {
                 payload.len()
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod action_list_tests {
+    use super::*;
+
+    fn owned(s: &str) -> OwnedValue {
+        OwnedValue::try_from(Value::from(s)).expect("str to OwnedValue is infallible")
+    }
+
+    fn notification_with_default_action() -> PortalNotification {
+        PortalNotification {
+            default_action: Some("open".into()),
+            default_action_target: Some(owned("t")),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn no_actions_yields_an_empty_list() {
+        let n = PortalNotification::default();
+        let (actions, targets) = build_actions(&n);
+        assert!(actions.is_empty());
+        assert!(targets.is_empty());
+    }
+
+    #[test]
+    fn the_default_action_is_reported_under_the_reserved_id() {
+        let n = notification_with_default_action();
+        let (actions, targets) = build_actions(&n);
+        assert_eq!(actions, vec!["default", "open"]);
+        assert_eq!(targets.len(), 1);
+        assert_eq!(targets["default"], owned("t"));
+    }
+
+    #[test]
+    fn a_default_action_without_a_target_still_reports_the_action() {
+        let n = PortalNotification {
+            default_action: Some("open".into()),
+            ..Default::default()
+        };
+        let (actions, targets) = build_actions(&n);
+        assert_eq!(actions, vec!["default", "open"]);
+        assert!(
+            targets.is_empty(),
+            "an action with no target must not get an empty entry"
+        );
+    }
+
+    /// The wire format is a flat alternating list, so an odd length would
+    /// silently pair a label with the next action's id.
+    #[test]
+    fn the_list_is_always_id_label_pairs() {
+        let n = PortalNotification {
+            default_action: Some("open".into()),
+            default_action_target: Some(owned("t")),
+            buttons: Some(vec![
+                ("reply".into(), HashMap::new()),
+                (
+                    "archive".into(),
+                    HashMap::from([("label".into(), owned("Archive"))]),
+                ),
+            ]),
+            ..Default::default()
+        };
+        let (actions, _) = build_actions(&n);
+        assert_eq!(actions.len() % 2, 0, "ids and labels must pair up");
+        assert_eq!(
+            actions,
+            vec!["default", "open", "reply", "reply", "archive", "Archive"]
+        );
+    }
+
+    #[test]
+    fn an_explicit_label_overrides_the_action_id() {
+        let n = PortalNotification {
+            buttons: Some(vec![(
+                "app.reply".into(),
+                HashMap::from([("label".into(), owned("Reply"))]),
+            )]),
+            ..Default::default()
+        };
+        let (actions, _) = build_actions(&n);
+        assert_eq!(actions, vec!["app.reply", "Reply"]);
+    }
+
+    /// An absent label falls back to the id, which is what the reference
+    /// implementations do and what keeps the list correctly paired.
+    #[test]
+    fn a_missing_label_falls_back_to_the_action_id() {
+        let n = PortalNotification {
+            buttons: Some(vec![("app.reply".into(), HashMap::new())]),
+            ..Default::default()
+        };
+        let (actions, _) = build_actions(&n);
+        assert_eq!(actions, vec!["app.reply", "app.reply"]);
+    }
+
+    #[test]
+    fn targets_are_kept_per_action() {
+        let n = PortalNotification {
+            default_action: Some("open".into()),
+            default_action_target: Some(owned("default-target")),
+            buttons: Some(vec![
+                (
+                    "reply".into(),
+                    HashMap::from([("action-target".into(), owned("reply-target"))]),
+                ),
+                ("archive".into(), HashMap::new()),
+            ]),
+            ..Default::default()
+        };
+        let (_, targets) = build_actions(&n);
+        assert_eq!(targets["default"], owned("default-target"));
+        assert_eq!(targets["reply"], owned("reply-target"));
+        assert!(
+            !targets.contains_key("archive"),
+            "a button with no target must not be recorded"
+        );
+    }
+
+    /// The regression this guards: the list used to be built as a
+    /// `Vec<String>`, allocating one `String` per id and per label -- including
+    /// for labels, which were already `&str` -- and the whole vector was then
+    /// dropped after reborrowing it as `Vec<&str>`. Two buttons with no labels
+    /// and no targets must now cost only the `Vec` itself.
+    #[test]
+    fn building_the_list_does_not_allocate_a_string_per_action() {
+        let n = PortalNotification {
+            default_action: Some("open".into()),
+            buttons: Some(vec![
+                ("reply".into(), HashMap::new()),
+                ("archive".into(), HashMap::new()),
+            ]),
+            ..Default::default()
+        };
+
+        let scope = crate::alloc_probe::AllocScope::start();
+        let (actions, targets) = build_actions(&n);
+        let snap = scope.finish();
+        std::hint::black_box(&actions);
+        std::hint::black_box(&targets);
+
+        assert_eq!(actions.len(), 6, "three actions, id and label each");
+        assert!(
+            targets.is_empty(),
+            "no targets were requested, so none may be cloned"
+        );
+        assert_eq!(
+            snap.count, 1,
+            "only the result Vec may allocate, got {snap:?}"
+        );
     }
 }

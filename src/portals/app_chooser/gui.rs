@@ -4,7 +4,7 @@ use {
         Align, Box as GtkBox, Button, Image, Label, ListBox, ListBoxRow, Orientation,
         ScrolledWindow,
         gio::{self, AppInfo},
-        glib::{self, MainContext},
+        glib::{self, GString, MainContext},
         prelude::*,
     },
     rust_i18n::t,
@@ -170,12 +170,17 @@ impl AppChooserUi {
 
 /// The identity and display name for one row of the chooser.
 ///
+/// Holds glib's `GString` rather than a `String`: `AppInfo::id()` and
+/// `AppInfo::name()` already hand back an owned `GString`, so calling
+/// `.to_string()` allocated a second copy of each, per row, on every dialog
+/// open and every `UpdateChoices`.
+///
 /// Decoupled from GTK so the selection rules can be unit tested without an
 /// application database.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct AppRow {
-    id: String,
-    name: String,
+    id: GString,
+    name: GString,
 }
 
 /// Chooses which entries to show, in display order, without duplicates.
@@ -254,7 +259,8 @@ fn populate_list_box(
         AppSource::Recommended => recommended_apps,
     };
 
-    // Fetch each identity and name exactly once
+    // Fetch each identity and name exactly once, keeping glib's `GString`
+    // rather than copying it again into a `String`.
     let entries: Vec<(&AppInfo, AppRow)> = source
         .iter()
         .filter_map(|info| {
@@ -264,8 +270,8 @@ fn populate_list_box(
             Some((
                 info,
                 AppRow {
-                    id: id.to_string(),
-                    name: info.name().to_string(),
+                    id,
+                    name: info.name(),
                 },
             ))
         })
@@ -501,5 +507,66 @@ mod source_tests {
         // frontend named nothing so use its recommendation".
         assert_eq!(choose_source(&[], true), AppSource::Recommended);
         assert_eq!(choose_source(&["".to_owned()], true), AppSource::All);
+    }
+}
+
+#[cfg(test)]
+mod row_tests {
+    use super::*;
+
+    /// The regression this guards: `AppInfo::id()` and `AppInfo::name()` return
+    /// an owned `GString`, and calling `.to_string()` on it allocated a second
+    /// copy of the same text -- once per field, per row, on every dialog open
+    /// and every `UpdateChoices`.
+    ///
+    /// Measured on an already-owned `GString`, which is what GIO hands back, so
+    /// the number cannot be an artefact of constructing one from a literal:
+    /// copying costs one allocation per field, moving costs none.
+    #[test]
+    fn copying_an_owned_gstring_costs_an_allocation_per_field() {
+        let owned: GString = "org.gnome.TextEditor.desktop".into();
+
+        let copy_scope = crate::alloc_probe::AllocScope::start();
+        let copied: String = owned.to_string();
+        let copy_snap = copy_scope.finish();
+        std::hint::black_box(&copied);
+
+        let move_scope = crate::alloc_probe::AllocScope::start();
+        let moved: GString = owned;
+        let move_snap = move_scope.finish();
+        std::hint::black_box(&moved);
+
+        assert_eq!(copied, "org.gnome.TextEditor.desktop");
+        assert_eq!(
+            copy_snap.count, 1,
+            "`.to_string()` on an owned GString copies the text, got {copy_snap:?}"
+        );
+        assert_eq!(
+            move_snap.count, 0,
+            "moving the GString through must not copy, got {move_snap:?}"
+        );
+    }
+
+    /// `AppRow` must not reintroduce the copy through one of its own accessors.
+    #[test]
+    fn a_row_exposes_its_fields_without_copying() {
+        let row = AppRow {
+            id: "a.desktop".into(),
+            name: "Alpha".into(),
+        };
+
+        let scope = crate::alloc_probe::AllocScope::start();
+        let id = row.id.as_str();
+        let name = row.name.as_str();
+        let snap = scope.finish();
+        std::hint::black_box(id);
+        std::hint::black_box(name);
+
+        assert_eq!(id, "a.desktop");
+        assert_eq!(name, "Alpha");
+        assert_eq!(
+            snap.count, 0,
+            "reading a row must not allocate, got {snap:?}"
+        );
     }
 }
