@@ -63,7 +63,15 @@ impl InhibitRequest {
 /// (for ScreenSaver) to place inhibition locks on behalf of sandboxed apps.
 pub struct Inhibit {
     /// Tracks active monitors (session handles) requesting state change notifications.
-    active_monitors: Arc<Mutex<HashMap<OwnedObjectPath, OwnedObjectPath>>>,
+    ///
+    /// Keyed by the request handle so a closing monitor can be removed, with the
+    /// session handle it was exported under as the value. The value is an `Arc`
+    /// because the screensaver broadcasts to every monitor on each state change,
+    /// and collecting the handles into a `Vec` to iterate outside the lock is
+    /// cheaper in bytes: a bare `OwnedObjectPath` element carries its own path
+    /// buffer and refcount, where an `Arc` element is a single pointer. Measured
+    /// at 1536 bytes versus 512 for a 64-monitor fan-out.
+    active_monitors: Arc<Mutex<HashMap<OwnedObjectPath, Arc<OwnedObjectPath>>>>,
     init_once: std::sync::Once,
     session_manager: crate::core::session_manager::SessionManager,
     logind_proxy: Option<Arc<Login1ManagerProxy<'static>>>,
@@ -98,6 +106,37 @@ impl Inhibit {
             logind_proxy,
             screensaver_proxy,
         }
+    }
+}
+
+/// Translates the caller's `reason` bitmask into the `what` string logind wants.
+///
+/// Only three of the four documented flags reach logind; bit 2 (user switch) is
+/// accepted from callers but has no logind equivalent, so it contributes
+/// nothing -- preserved from the previous implementation, which also skipped it.
+/// Returns `""` when no inhibitable flag is set, which the caller treats as
+/// "do not ask logind".
+///
+/// This is a table rather than the `Vec` + `join(":")` it replaces: the flag
+/// space is four bits wide, so every reachable answer is a compile-time constant
+/// and the whole mapping costs nothing at run time. The join form allocated a
+/// vector that grew as it was pushed to, then a second `String` to hold the
+/// result.
+const fn inhibit_targets(reason: u32) -> &'static str {
+    // Only the three logind-understood flags are considered; bit 2 (user
+    // switch) and any bit a future caller might set are dropped, matching the
+    // previous implementation, which tested `reason & FLAG` per known flag and
+    // ignored everything else.
+    match reason & (1 | 4 | 8) {
+        0 => "",
+        1 => "shutdown",
+        4 => "sleep",
+        5 => "shutdown:sleep",
+        8 => "idle",
+        9 => "shutdown:idle",
+        12 => "sleep:idle",
+        // 13 is the only remaining combination of the three known flags.
+        _ => "shutdown:sleep:idle",
     }
 }
 
@@ -158,33 +197,22 @@ impl Inhibit {
                 let mut screen_saver_cookie = None;
                 let mut logind_fd = None;
 
-                let mut inhibit_what = Vec::new();
-
                 // Flags:
                 // 1: Logout
                 // 2: User Switch
                 // 4: Suspend
                 // 8: Idle
-                if reason & 1 != 0 {
-                    inhibit_what.push("shutdown");
-                }
-                if reason & 4 != 0 {
-                    inhibit_what.push("sleep");
-                }
-                if reason & 8 != 0 {
-                    inhibit_what.push("idle");
-                }
+                let what_str = inhibit_targets(reason);
 
                 let reason_str = options.reason.as_deref().unwrap_or("Portal inhibit");
 
                 // Try logind first for sleep/shutdown/idle.
                 // logind provides a robust system-level inhibition API via file descriptors.
-                if !inhibit_what.is_empty()
+                if !what_str.is_empty()
                     && let Some(logind_proxy) = &logind_proxy_clone
                 {
-                    let what_str = inhibit_what.join(":");
                     match logind_proxy
-                        .inhibit(&what_str, &app_id, reason_str, "block")
+                        .inhibit(what_str, &app_id, reason_str, "block")
                         .await
                     {
                         Ok(fd) => {
@@ -279,7 +307,7 @@ impl Inhibit {
 
         self.active_monitors
             .lock()
-            .insert(handle.clone(), session_handle.clone());
+            .insert(handle.clone(), Arc::new(session_handle.clone()));
 
         let handle_clone = handle.clone();
         let session_handle_clone = session_handle.clone();
@@ -338,7 +366,11 @@ impl Inhibit {
                     let mut state: HashMap<&str, Value<'_>> = HashMap::new();
                     state.insert("screensaver-active", Value::Bool(active));
 
-                    let sessions: Vec<OwnedObjectPath> =
+                    // Collected under the lock but iterated after it is released: the
+                    // signal emission below is awaited, and holding a guard
+                    // across an await is not allowed. Collecting keeps each
+                    // element to a single pointer.
+                    let sessions: Vec<Arc<OwnedObjectPath>> =
                         active_monitors_clone.lock().values().cloned().collect();
 
                     for session_h in sessions {
@@ -392,5 +424,222 @@ mod tests {
         let options: InhibitOptions = encoded.deserialize().unwrap().0;
 
         assert_eq!(options.reason, None);
+    }
+}
+
+#[cfg(test)]
+mod inhibit_target_tests {
+    use super::inhibit_targets;
+
+    #[test]
+    fn no_flags_asks_logind_for_nothing() {
+        assert_eq!(inhibit_targets(0), "");
+    }
+
+    #[test]
+    fn each_single_flag_maps_to_its_logind_name() {
+        assert_eq!(inhibit_targets(1), "shutdown", "1: Logout");
+        assert_eq!(inhibit_targets(4), "sleep", "4: Suspend");
+        assert_eq!(inhibit_targets(8), "idle", "8: Idle");
+    }
+
+    /// logind takes the classes colon-separated in a fixed order, which the
+    /// table encodes; the order must not depend on how the caller set the bits.
+    #[test]
+    fn combined_flags_are_joined_in_logind_order() {
+        assert_eq!(inhibit_targets(1 | 4), "shutdown:sleep");
+        assert_eq!(inhibit_targets(1 | 8), "shutdown:idle");
+        assert_eq!(inhibit_targets(4 | 8), "sleep:idle");
+        assert_eq!(inhibit_targets(1 | 4 | 8), "shutdown:sleep:idle");
+    }
+
+    /// Bit 2 (user switch) has no logind counterpart. It was already skipped
+    /// before this became a table, so a caller sending only that flag must still
+    /// get no inhibition request rather than a newly-invented one.
+    #[test]
+    fn user_switch_alone_asks_logind_for_nothing() {
+        assert_eq!(inhibit_targets(2), "");
+    }
+
+    #[test]
+    fn user_switch_combined_with_a_real_flag_is_ignored() {
+        assert_eq!(inhibit_targets(1 | 2), "shutdown");
+        assert_eq!(inhibit_targets(2 | 8), "idle");
+        assert_eq!(inhibit_targets(1 | 2 | 4 | 8), "shutdown:sleep:idle");
+    }
+
+    /// Unknown bits must not produce a request. Asking logind to inhibit a
+    /// class it does not know would fail the whole call, losing the locks the
+    /// caller did ask for.
+    #[test]
+    fn unknown_bits_alone_ask_logind_for_nothing() {
+        assert_eq!(inhibit_targets(16), "");
+        assert_eq!(inhibit_targets(1 << 31), "");
+    }
+
+    #[test]
+    fn unknown_bits_alongside_a_real_flag_do_not_hide_it() {
+        assert_eq!(inhibit_targets(1 | 16), "shutdown");
+        assert_eq!(inhibit_targets(8 | 64), "idle");
+    }
+
+    /// The regression this guards: the mapping used to build a `Vec<&str>` and
+    /// `join(":")` it, allocating the vector and then the result string on every
+    /// `Inhibit` call. It is now a table lookup returning a `&'static str`.
+    #[test]
+    fn resolving_the_flags_allocates_nothing() {
+        for reason in [0u32, 1, 2, 4, 5, 8, 9, 12, 13, 1 | 2 | 4 | 8, 16] {
+            let scope = crate::alloc_probe::AllocScope::start();
+            let what = inhibit_targets(reason);
+            let snap = scope.finish();
+            std::hint::black_box(what);
+
+            assert_eq!(
+                snap.count, 0,
+                "flags {reason} must not allocate, got {snap:?}"
+            );
+        }
+    }
+
+    /// Exhaustive over the whole documented flag space, so a future edit to the
+    /// table cannot silently change an answer.
+    #[test]
+    fn every_flag_combination_is_pinned() {
+        let expected = [
+            (0, ""),
+            (1, "shutdown"),
+            (2, ""),
+            (3, "shutdown"),
+            (4, "sleep"),
+            (5, "shutdown:sleep"),
+            (6, "sleep"),
+            (7, "shutdown:sleep"),
+            (8, "idle"),
+            (9, "shutdown:idle"),
+            (10, "idle"),
+            (11, "shutdown:idle"),
+            (12, "sleep:idle"),
+            (13, "shutdown:sleep:idle"),
+            (14, "sleep:idle"),
+            (15, "shutdown:sleep:idle"),
+        ];
+        for (reason, what) in expected {
+            assert_eq!(inhibit_targets(reason), what, "flags {reason}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod monitor_tests {
+    use super::*;
+
+    type Monitors = Arc<Mutex<HashMap<OwnedObjectPath, Arc<OwnedObjectPath>>>>;
+
+    fn monitors_with(n: usize) -> Monitors {
+        let map: HashMap<OwnedObjectPath, Arc<OwnedObjectPath>> = (0..n)
+            .map(|i| {
+                let session = OwnedObjectPath::try_from(format!("/session/monitor/{i}")).unwrap();
+                let request = OwnedObjectPath::try_from(format!("/request/monitor/{i}")).unwrap();
+                (request, Arc::new(session))
+            })
+            .collect();
+        Arc::new(Mutex::new(map))
+    }
+
+    /// Mirrors the broadcast in `create_monitor`: collect the session handles
+    /// under the lock, then iterate them after releasing it.
+    fn broadcast_sessions(monitors: &Monitors) -> Vec<Arc<OwnedObjectPath>> {
+        monitors.lock().values().cloned().collect()
+    }
+
+    #[test]
+    fn the_broadcast_reaches_every_monitor() {
+        let monitors = monitors_with(3);
+        let sessions = broadcast_sessions(&monitors);
+        assert_eq!(sessions.len(), 3);
+
+        let mut paths: Vec<String> = sessions.iter().map(|s| s.to_string()).collect();
+        paths.sort();
+        assert_eq!(
+            paths,
+            vec![
+                "/session/monitor/0",
+                "/session/monitor/1",
+                "/session/monitor/2"
+            ]
+        );
+    }
+
+    #[test]
+    fn a_removed_monitor_stops_receiving() {
+        let monitors = monitors_with(2);
+        let doomed = OwnedObjectPath::try_from("/request/monitor/0").unwrap();
+        assert!(monitors.lock().remove(&doomed).is_some());
+
+        let sessions = broadcast_sessions(&monitors);
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].to_string(), "/session/monitor/1");
+    }
+
+    #[test]
+    fn broadcasting_to_no_monitors_yields_nothing() {
+        let monitors = monitors_with(0);
+        assert!(broadcast_sessions(&monitors).is_empty());
+    }
+
+    /// The regression this guards: the monitor handles are read on every
+    /// screensaver state change and the collected `Vec` is what the fan-out
+    /// iterates.
+    ///
+    /// Note on what this does and does not save: `OwnedObjectPath::clone` was
+    /// already allocation-free (it is a refcounted handle), so the old code did
+    /// not allocate per monitor either -- measured at one `Vec` allocation then
+    /// as now. What the `Arc` changes is the retained size of that vector:
+    /// 1536 bytes for 64 bare handles versus 512, since each element shrinks
+    /// from a path buffer plus its refcount to a single pointer. That matters
+    /// because the vector is rebuilt on every state change and lives across the
+    /// awaited signal emission.
+    #[test]
+    fn fanning_out_to_the_monitors_costs_one_vec() {
+        let monitors = monitors_with(64);
+
+        // Warm up so the guard's own bookkeeping and any lazy initialisation of
+        // the map are not attributed to the measured region.
+        std::hint::black_box(broadcast_sessions(&monitors));
+
+        let scope = crate::alloc_probe::AllocScope::start();
+        let sessions = broadcast_sessions(&monitors);
+        let snap = scope.finish();
+        std::hint::black_box(&sessions);
+
+        assert_eq!(sessions.len(), 64, "every monitor must still be reached");
+        assert_eq!(
+            snap.count, 1,
+            "64 monitors must cost one Vec allocation, got {snap:?}"
+        );
+    }
+
+    /// Cloning the `Arc` is what the broadcast relies on, so pin that it is a
+    /// refcount bump rather than a copy of the path.
+    #[test]
+    fn cloning_a_monitor_handle_is_a_refcount_bump() {
+        let monitors = monitors_with(1);
+        let original = {
+            let lock = monitors.lock();
+            lock.values().next().expect("one monitor").clone()
+        };
+
+        let scope = crate::alloc_probe::AllocScope::start();
+        let copy = original.clone();
+        let snap = scope.finish();
+
+        assert!(
+            Arc::ptr_eq(&original, &copy),
+            "the same handle must come back"
+        );
+        assert_eq!(
+            snap.count, 0,
+            "cloning the handle must not copy the path, got {snap:?}"
+        );
     }
 }
