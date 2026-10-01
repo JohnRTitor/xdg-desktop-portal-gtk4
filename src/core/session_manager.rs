@@ -25,18 +25,25 @@ pub enum SessionError {
 
 type CancellableSender = Arc<Notify>;
 
+/// A request tracked against its app, kept alongside the sender's request list.
+struct TrackedRequest {
+    object_path: String,
+    app_id: Arc<str>,
+    cancel: CancellableSender,
+}
+
 #[derive(Default)]
 pub(crate) struct SessionManagerState {
     /// Maps a D-Bus sender name (e.g., ":1.42") to a list of its active requests.
     ///
-    /// Each request is represented by its object path, the app ID, and a oneshot
-    /// cancellation sender. This allows us to instantly notify the specific request
-    /// task to abort when the sender disconnects.
-    sender_objects: HashMap<String, Vec<(String, String, CancellableSender)>>,
+    /// Each request records its object path, the app ID, and a cancellation
+    /// sender. This allows us to instantly notify the specific request task to
+    /// abort when the sender disconnects.
+    sender_objects: HashMap<String, Vec<TrackedRequest>>,
 
     // Maps an application ID (e.g., "org.gnome.TextEditor") to the number of active sessions.
     // Used to enforce rate-limiting / spam prevention (max_sessions_per_app).
-    app_sessions: HashMap<String, usize>,
+    app_sessions: HashMap<Arc<str>, usize>,
 }
 
 /// Tracks active portal sessions and cancels them if the calling application exits.
@@ -80,30 +87,34 @@ impl SessionManager {
         cancel: CancellableSender,
     ) -> Result<(), SessionError> {
         let mut state = self.state.lock();
+        register_tracked(
+            &mut state,
+            self.max_sessions_per_app,
+            app_id,
+            sender,
+            object_path,
+            cancel,
+        )
+    }
 
-        let count = state.app_sessions.get_mut(app_id);
-        if let Some(count_ref) = count {
-            if *count_ref >= self.max_sessions_per_app {
-                return Err(SessionError::LimitExceeded {
-                    app_id: app_id.into(),
-                });
+    fn push_tracked(
+        state: &mut SessionManagerState,
+        sender: &str,
+        object_path: &str,
+        app_id: Arc<str>,
+        cancel: CancellableSender,
+    ) {
+        let entry = TrackedRequest {
+            object_path: object_path.into(),
+            app_id,
+            cancel,
+        };
+        match state.sender_objects.get_mut(sender) {
+            Some(list) => list.push(entry),
+            None => {
+                state.sender_objects.insert(sender.into(), vec![entry]);
             }
-            *count_ref += 1;
-        } else {
-            state.app_sessions.insert(app_id.into(), 1);
         }
-
-        let sender_list = state.sender_objects.get_mut(sender);
-        if let Some(list) = sender_list {
-            list.push((object_path.into(), app_id.into(), cancel));
-        } else {
-            state.sender_objects.insert(
-                sender.into(),
-                vec![(object_path.into(), app_id.into(), cancel)],
-            );
-        }
-
-        Ok(())
     }
 
     /// Unregisters a session or request.
@@ -122,17 +133,18 @@ impl SessionManager {
     pub fn unregister(&self, app_id: &str, sender: &str, object_path: &str) {
         let mut state = self.state.lock();
 
-        let held = state.sender_objects.get_mut(sender).is_some_and(|objects| {
-            let before = objects.len();
-            objects.retain(|(p, _, _)| p != object_path);
-            objects.len() != before
-        });
+        // Fold the emptiness test into the borrow already held, so `sender` is
+        // hashed once here rather than twice.
+        let (held, sender_is_empty) = match state.sender_objects.get_mut(sender) {
+            Some(objects) => {
+                let before = objects.len();
+                objects.retain(|req| req.object_path != object_path);
+                (objects.len() != before, objects.is_empty())
+            }
+            None => (false, false),
+        };
 
-        if state
-            .sender_objects
-            .get(sender)
-            .is_some_and(|objects| objects.is_empty())
-        {
+        if sender_is_empty {
             state.sender_objects.remove(sender);
         }
 
@@ -168,26 +180,94 @@ impl SessionManager {
 
                 let objects_to_close = {
                     let mut state = self.state.lock();
-                    let closed = state.sender_objects.remove(name).unwrap_or_default();
-
-                    for (_, app_id, _) in &closed {
-                        if let Some(count) = state.app_sessions.get_mut(app_id) {
-                            *count = count.saturating_sub(1);
-                            if *count == 0 {
-                                state.app_sessions.remove(app_id);
-                            }
-                        }
-                    }
-                    closed
+                    sweep_sender(&mut state, name)
                 };
 
-                for (path, _, cancel) in objects_to_close {
-                    tracing::info!("Client {} disconnected, cancelling {}", name, path);
-                    cancel.notify_one();
+                for req in objects_to_close {
+                    tracing::info!(
+                        "Client {} disconnected, cancelling {}",
+                        name,
+                        req.object_path
+                    );
+                    req.cancel.notify_one();
                 }
             }
         }
         Ok(())
+    }
+}
+
+/// The body of [`SessionManager::register`], without the lock.
+///
+/// Split out so the budget and key-sharing rules can be tested without a D-Bus
+/// connection.
+fn register_tracked(
+    state: &mut SessionManagerState,
+    max_sessions_per_app: usize,
+    app_id: &str,
+    sender: &str,
+    object_path: &str,
+    cancel: CancellableSender,
+) -> Result<(), SessionError> {
+    // `Arc<str>: Borrow<str>`, so `get_key_value` finds an app that is already
+    // counted without allocating. Only a genuinely new app pays for its key;
+    // everything else is a refcount bump on the existing one.
+    let shared_app_id: Arc<str> = match state.app_sessions.get_key_value(app_id) {
+        Some((key, count)) => {
+            // Checked against the pre-increment count, and a refusal returns
+            // before anything is tracked, so a rejected request never leaves an
+            // entry that the disconnect sweep would later decrement.
+            if *count >= max_sessions_per_app {
+                return Err(SessionError::LimitExceeded {
+                    app_id: app_id.into(),
+                });
+            }
+            key.clone()
+        }
+        None => Arc::from(app_id),
+    };
+
+    // The borrow from `get_key_value` ended with the match above, so this mutable
+    // access is fine.
+    match state.app_sessions.get_mut(shared_app_id.as_ref()) {
+        Some(count) => *count += 1,
+        None => {
+            state.app_sessions.insert(shared_app_id.clone(), 1);
+        }
+    }
+
+    SessionManager::push_tracked(state, sender, object_path, shared_app_id, cancel);
+    Ok(())
+}
+
+/// Drops every request belonging to a departed sender and releases the per-app
+/// budget slots they held.
+///
+/// Returns the removed requests so the caller can notify their cancellation
+/// senders. Factored out of [`SessionManager::run`] so it can be tested without a
+/// D-Bus connection: this is where the `app_sessions` key type matters, and a
+/// lookup that stopped matching would silently leak budget slots until the app
+/// was permanently rate-limited.
+fn sweep_sender(state: &mut SessionManagerState, sender: &str) -> Vec<TrackedRequest> {
+    let closed = state.sender_objects.remove(sender).unwrap_or_default();
+    for req in &closed {
+        if let Some(count) = state.app_sessions.get_mut(req.app_id.as_ref()) {
+            *count = count.saturating_sub(1);
+            if *count == 0 {
+                state.app_sessions.remove(req.app_id.as_ref());
+            }
+        }
+    }
+    closed
+}
+
+#[cfg(test)]
+impl SessionManagerState {
+    /// Test helper: registers one tracked request and counts it against
+    /// `app_id`, bypassing the budget check.
+    fn push_for_test(&mut self, sender: &str, object_path: &str, app_id: Arc<str>) {
+        *self.app_sessions.entry(app_id.clone()).or_insert(0) += 1;
+        SessionManager::push_tracked(self, sender, object_path, app_id, Arc::new(Notify::new()));
     }
 }
 
@@ -197,9 +277,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_session_manager_register_unregister() {
+        // NOTE: this test returns early without asserting anything when there is
+        // no session bus, so it is green but vacuous outside `dbus-run-session`.
+        // `sweep_tests` above covers the counter bookkeeping without a bus.
         let conn_result = Connection::session().await;
         if conn_result.is_err() {
-            println!("Skipping dbus test because connection failed");
+            println!("SKIPPED test_session_manager_register_unregister: no session bus");
             return;
         }
         let conn = conn_result.unwrap();
@@ -242,5 +325,93 @@ mod tests {
         let state = manager.state.lock();
         assert!(state.app_sessions.is_empty());
         assert!(state.sender_objects.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod sweep_tests {
+    use super::*;
+
+    fn state_with(entries: &[(&str, &str, &str)]) -> SessionManagerState {
+        // (app_id, sender, object_path)
+        let mut state = SessionManagerState::default();
+        for (app_id, sender, object_path) in entries {
+            state.push_for_test(sender, object_path, Arc::from(*app_id));
+        }
+        state
+    }
+
+    #[test]
+    fn sweep_releases_the_budget_slot_per_request() {
+        let mut state = state_with(&[("app", ":1", "/r1"), ("app", ":1", "/r2")]);
+        let closed = sweep_sender(&mut state, ":1");
+        assert_eq!(closed.len(), 2);
+        assert!(
+            state.sender_objects.is_empty(),
+            "the sender's list must be gone"
+        );
+        assert_eq!(state.app_sessions.get("app"), None, "count reached zero");
+    }
+
+    #[test]
+    fn sweep_leaves_the_entry_while_another_request_remains() {
+        let mut state = state_with(&[("app", ":1", "/r1"), ("app", ":2", "/r2")]);
+        sweep_sender(&mut state, ":1");
+        assert_eq!(
+            state.app_sessions.get("app"),
+            Some(&1),
+            "the surviving sender's request must keep its slot"
+        );
+        assert_eq!(state.sender_objects.len(), 1);
+    }
+
+    #[test]
+    fn sweep_of_one_sender_does_not_touch_another_apps_budget() {
+        let mut state = state_with(&[("a", ":1", "/r1"), ("b", ":1", "/r2")]);
+        sweep_sender(&mut state, ":1");
+        assert!(state.app_sessions.is_empty(), "both apps hit zero");
+        assert!(state.sender_objects.is_empty());
+    }
+
+    #[test]
+    fn sweep_of_an_unknown_sender_is_a_no_op() {
+        let mut state = state_with(&[("app", ":1", "/r1")]);
+        assert!(sweep_sender(&mut state, ":99").is_empty());
+        assert_eq!(state.app_sessions.get("app"), Some(&1));
+        assert_eq!(state.sender_objects.len(), 1);
+    }
+
+    #[test]
+    fn sweep_repeatedly_does_not_double_decrement() {
+        // The `NameOwnerChanged` sweep and `unregister` both act on the same
+        // requests; each must decrement exactly once.
+        let mut state = state_with(&[("app", ":1", "/r1")]);
+        sweep_sender(&mut state, ":1");
+        assert_eq!(state.app_sessions.get("app"), None);
+        // A second sweep finds nothing and must not underflow a fresh app entry.
+        state.app_sessions.insert(Arc::from("app"), 3);
+        assert!(sweep_sender(&mut state, ":1").is_empty());
+        assert_eq!(
+            state.app_sessions.get("app"),
+            Some(&3),
+            "an unrelated count must be untouched"
+        );
+    }
+
+    #[test]
+    fn budget_never_reaches_zero_for_a_live_request() {
+        // Guards the key-type coupling: if `req.app_id` ever stopped matching the
+        // `app_sessions` key, the count would never be released and the app would
+        // stay rate-limited after `max_sessions_per_app` disconnects.
+        let mut state = state_with(&[("app", ":1", "/r1")]);
+        for _ in 0..5 {
+            sweep_sender(&mut state, ":1");
+            state.push_for_test(":1", "/r1", Arc::from("app"));
+        }
+        assert_eq!(
+            state.app_sessions.get("app"),
+            Some(&1),
+            "a live request must always retain exactly one slot"
+        );
     }
 }

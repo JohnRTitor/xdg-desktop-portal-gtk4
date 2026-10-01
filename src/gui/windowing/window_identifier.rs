@@ -1,6 +1,7 @@
+/// A parent window handle as supplied by `xdg-desktop-portal`
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WindowIdentifier {
-    Wayland(String),
+    Wayland(Box<str>),
     X11(u64),
 }
 
@@ -27,6 +28,12 @@ impl WindowIdentifier {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[cfg(target_pointer_width = "64")]
+    fn wayland_handle_variant_is_smaller() {
+        assert_eq!(std::mem::size_of::<WindowIdentifier>(), 16);
+    }
 
     #[test]
     fn test_parse_wayland() {

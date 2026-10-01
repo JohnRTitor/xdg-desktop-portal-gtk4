@@ -85,22 +85,141 @@ pub struct PortalNotification {
     sound: Option<OwnedValue>,
 }
 
-pub type NotificationTargetData = (
-    String,
-    String,
-    HashMap<String, OwnedValue>,
-    Option<Arc<TempSoundFile>>,
-);
-pub type ReverseMapType = Arc<Mutex<HashMap<u32, Arc<NotificationTargetData>>>>;
+/// Identifies one notification as the calling app knows it.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct NotifKey {
+    pub app_id: Arc<str>,
+    pub portal_id: Arc<str>,
+}
+
+impl NotifKey {
+    pub fn new(app_id: &str, portal_id: &str) -> Self {
+        Self {
+            app_id: Arc::from(app_id),
+            portal_id: Arc::from(portal_id),
+        }
+    }
+}
+
+/// The per-notification state the signal listeners need, keyed by the host's
+/// notification ID.
+pub struct NotificationTarget {
+    /// Back-reference to the same `NotifKey` used as the forward map's key.
+    pub key: Arc<NotifKey>,
+    pub action_targets: HashMap<String, OwnedValue>,
+    pub sound_file: Option<Arc<TempSoundFile>>,
+}
+
+/// Maps a calling app's view of a notification to the host's notification ID.
+///
+/// Keyed as `app_id -> portal_id -> id` rather than by a single composite key so
+/// a lookup can borrow both halves of the key. `Arc<NotifKey>: Borrow<NotifKey>`
+/// only helps for an owned key, and building one to search with would allocate;
+/// two nested maps let `RemoveNotification` find its entry in constant time with
+/// no allocation. That matters because this map is neither rate-limited nor
+/// evicted, so an unprivileged caller can grow it at will and a linear scan here
+/// would be quadratic under the lock.
+pub type ActiveNotifications = Arc<Mutex<HashMap<Arc<str>, HashMap<Arc<str>, u32>>>>;
+/// Maps the host's notification ID back to the portal-side state.
+pub type ReverseMapType = Arc<Mutex<HashMap<u32, Arc<NotificationTarget>>>>;
+
+/// Looks up the host notification ID for `(app_id, portal_id)` without allocating.
+fn active_id(active: &ActiveNotifications, app_id: &str, portal_id: &str) -> Option<u32> {
+    active
+        .lock()
+        .get(app_id)
+        .and_then(|by_portal| by_portal.get(portal_id))
+        .copied()
+}
+
+/// Removes the forward mapping for `(app_id, portal_id)`, returning the host
+/// notification ID it pointed at.
+///
+/// See [`ActiveNotifications`] for why the map is nested: this must stay a
+/// constant-time, allocation-free lookup.
+fn remove_active_notification(
+    active: &ActiveNotifications,
+    app_id: &str,
+    portal_id: &str,
+) -> Option<u32> {
+    let mut lock = active.lock();
+    let removed = lock.get_mut(app_id)?.remove(portal_id);
+    if removed.is_some() && lock[app_id].is_empty() {
+        lock.remove(app_id);
+    }
+    removed
+}
+
+/// Registers a notification in both maps, returning the shared key.
+///
+/// The same [`NotifKey`] must be used for the forward map's key and the reverse
+/// map's back-reference; building it twice would reintroduce the duplicate
+/// storage this type exists to remove. Factored out so a test can assert the
+/// sharing rather than having to trust the call site.
+fn register_notification(
+    active: &ActiveNotifications,
+    reverse: &ReverseMapType,
+    app_id: &str,
+    portal_id: &str,
+    fdo_id: u32,
+    action_targets: HashMap<String, OwnedValue>,
+    sound_file: Option<Arc<TempSoundFile>>,
+) -> Arc<NotifKey> {
+    let key = Arc::new(NotifKey::new(app_id, portal_id));
+    active
+        .lock()
+        .entry(key.app_id.clone())
+        .or_default()
+        .insert(key.portal_id.clone(), fdo_id);
+    reverse.lock().insert(
+        fdo_id,
+        Arc::new(NotificationTarget {
+            key: key.clone(),
+            action_targets,
+            sound_file,
+        }),
+    );
+    key
+}
+
+/// Retires a notification the host daemon reported closed.
+///
+/// Returns whether the forward entry was also removed.
+///
+/// The forward entry is only removed when it still maps to *this* host ID. The
+/// host can replace a notification and then emit `NotificationClosed` for the
+/// old one; removing unconditionally would drop the live replacement's mapping.
+fn retire_closed_notification(
+    reverse: &ReverseMapType,
+    active: &ActiveNotifications,
+    fdo_id: u32,
+) -> bool {
+    let Some(target) = reverse.lock().remove(&fdo_id) else {
+        return false;
+    };
+    let key = target.key.clone();
+    let mut lock = active.lock();
+    let Some(by_portal) = lock.get_mut(key.app_id.as_ref()) else {
+        return false;
+    };
+    if by_portal.get(key.portal_id.as_ref()) != Some(&fdo_id) {
+        return false;
+    }
+    by_portal.remove(key.portal_id.as_ref());
+    if by_portal.is_empty() {
+        lock.remove(key.app_id.as_ref());
+    }
+    true
+}
 
 /// The D-Bus interface wrapper for the Notification portal.
 ///
 /// This struct holds shared state used to map between the sandboxed application's
 /// portal notification IDs and the host system's actual notification IDs.
 pub struct Notification {
-    /// Maps a composite key `(app_id, portal_id)` to the system notification ID (`u32`).
+    /// Maps a [`NotifKey`] to the system notification ID (`u32`).
     /// This is used so we can replace or remove an existing notification.
-    active_notifications: Arc<Mutex<HashMap<(String, String), u32>>>,
+    active_notifications: ActiveNotifications,
 
     /// Maps the system D-Bus notification ID (`u32`) back to the portal `app_id`, `portal_id`,
     /// action targets, and optional sound temp file.
@@ -288,7 +407,13 @@ impl Notification {
                                         };
                                         let mut data = Vec::new();
                                         if file.read_to_end(&mut data).is_ok() {
-                                            let bytes = Bytes::from(&data);
+                                            // `from_owned` hands the buffer's
+                                            // contents to GLib instead of
+                                            // memcpy'ing them out. `read_to_end`
+                                            // over-allocates, so the retained
+                                            // allocation can be larger than the
+                                            // image.
+                                            let bytes = Bytes::from_owned(data);
                                             let stream = MemoryInputStream::from_bytes(&bytes);
                                             if let Ok(pixbuf) =
                                                 Pixbuf::from_stream(&stream, Cancellable::NONE)
@@ -323,7 +448,7 @@ impl Notification {
                                         gdk_pixbuf::Pixbuf,
                                         gtk4::{gio::MemoryInputStream, glib::Bytes},
                                     };
-                                    let bytes = Bytes::from(&byte_array);
+                                    let bytes = Bytes::from_owned(byte_array);
                                     let stream = MemoryInputStream::from_bytes(&bytes);
                                     if let Ok(pixbuf) =
                                         Pixbuf::from_stream(&stream, Cancellable::NONE)
@@ -383,11 +508,7 @@ impl Notification {
         let actions: Vec<&str> = parsed_actions.iter().map(|s| s.as_str()).collect();
 
         if let Some(proxy) = &self.proxy {
-            let key = (app_id.clone(), id.clone());
-            let replaces_id = {
-                let lock = self.active_notifications.lock();
-                *lock.get(&key).unwrap_or(&0)
-            };
+            let replaces_id = active_id(&self.active_notifications, &app_id, &id).unwrap_or(0);
 
             if replaces_id != 0 {
                 self.reverse_map.lock().remove(&replaces_id);
@@ -406,10 +527,14 @@ impl Notification {
                 )
                 .await
             {
-                self.active_notifications.lock().insert(key, new_id);
-                self.reverse_map.lock().insert(
+                register_notification(
+                    &self.active_notifications,
+                    &self.reverse_map,
+                    &app_id,
+                    &id,
                     new_id,
-                    Arc::new((app_id.clone(), id.clone(), action_targets, sound_file)),
+                    action_targets,
+                    sound_file,
                 );
             }
         }
@@ -454,8 +579,8 @@ impl Notification {
     }
 
     async fn remove_notification(&self, app_id: String, id: String) {
-        let key = (app_id, id);
-        let fdo_id = self.active_notifications.lock().remove(&key);
+        let fdo_id =
+            remove_active_notification(&self.active_notifications, app_id.as_str(), id.as_str());
         if let Some(fdo_id) = fdo_id
             && let Some(proxy) = &self.proxy
         {
@@ -516,9 +641,11 @@ async fn listen_for_action_invoked(
 
         let target_data = reverse_map.lock().get(&id).cloned();
 
-        let Some((app_id, portal_id, action_targets, _)) = target_data.as_deref() else {
+        let Some(target) = target_data.as_deref() else {
             continue;
         };
+        let (app_id, portal_id) = (&target.key.app_id, &target.key.portal_id);
+        let action_targets = &target.action_targets;
 
         let mut params: Vec<Value<'_>> = vec![];
 
@@ -552,7 +679,7 @@ async fn listen_for_action_invoked(
                 // (the app_id or unique connection name) changes dynamically on every single request,
                 // we must instantiate it on the fly.
                 let Ok(builder) = ApplicationProxy::builder(&session_bus_clone)
-                    .destination(app_id_clone.as_str())
+                    .destination(app_id_clone.as_ref())
                 else {
                     tracing::error!("Invalid D-Bus destination: {}", app_id_clone);
                     return;
@@ -573,7 +700,7 @@ async fn listen_for_action_invoked(
                 }
             } else {
                 let Ok(builder) = ApplicationProxy::builder(&session_bus_clone)
-                    .destination(app_id_clone.as_str())
+                    .destination(app_id_clone.as_ref())
                 else {
                     tracing::error!("Invalid D-Bus destination: {}", app_id_clone);
                     return;
@@ -613,7 +740,7 @@ async fn listen_for_action_invoked(
 
 async fn listen_for_notification_closed(
     reverse_map: ReverseMapType,
-    active_notifications: Arc<parking_lot::Mutex<HashMap<(String, String), u32>>>,
+    active_notifications: ActiveNotifications,
     proxy: Arc<NotificationsProxy<'static>>,
 ) -> zbus::Result<()> {
     let mut stream = proxy.receive_notification_closed().await?;
@@ -622,17 +749,7 @@ async fn listen_for_notification_closed(
         let args = signal.args()?;
         let id = args.id;
 
-        let Some(target_data) = reverse_map.lock().remove(&id) else {
-            continue;
-        };
-
-        let key = (target_data.0.clone(), target_data.1.clone());
-        let mut lock = active_notifications.lock();
-        // To avoid a race condition where the FDO server replaces the notification
-        // but still emits NotificationClosed for the old one, we only remove if it's the exact same FDO ID.
-        if lock.get(&key) == Some(&id) {
-            lock.remove(&key);
-        }
+        retire_closed_notification(&reverse_map, &active_notifications, id);
     }
     Ok(())
 }
@@ -672,5 +789,325 @@ mod tests {
         assert_eq!(notification.body.as_deref(), Some("Test Body"));
         assert_eq!(notification.priority.as_deref(), Some("high"));
         assert_eq!(notification.category, None);
+    }
+}
+
+#[cfg(test)]
+mod notification_map_tests {
+    use super::*;
+
+    fn empty_maps() -> (ActiveNotifications, ReverseMapType) {
+        (
+            Arc::new(Mutex::new(HashMap::new())),
+            Arc::new(Mutex::new(HashMap::new())),
+        )
+    }
+
+    #[test]
+    fn key_fields_round_trip() {
+        let key = NotifKey::new("org.gnome.TextEditor", "42");
+        assert_eq!(&*key.app_id, "org.gnome.TextEditor");
+        assert_eq!(&*key.portal_id, "42");
+    }
+
+    #[test]
+    fn keys_compare_by_value_not_identity() {
+        let a = NotifKey::new("app", "1");
+        assert_eq!(a, NotifKey::new("app", "1"), "equal contents compare equal");
+        assert_ne!(a, NotifKey::new("app", "2"));
+        assert_ne!(a, NotifKey::new("other", "1"));
+    }
+
+    /// The point of the refactor: one `NotifKey`, shared by both maps.
+    #[test]
+    fn registration_shares_one_key_between_both_maps() {
+        let (active, reverse) = empty_maps();
+        let key = register_notification(
+            &active,
+            &reverse,
+            "org.example.App",
+            "7",
+            42,
+            HashMap::new(),
+            None,
+        );
+
+        assert_eq!(active_id(&active, &key.app_id, &key.portal_id), Some(42));
+        let reverse_lock = reverse.lock();
+        let target = reverse_lock.get(&42).expect("reverse entry must exist");
+        assert!(
+            Arc::ptr_eq(&key, &target.key),
+            "the reverse map must hold the very same key, not a copy"
+        );
+    }
+
+    #[test]
+    fn retiring_a_closed_notification_clears_both_maps() {
+        let (active, reverse) = empty_maps();
+        register_notification(
+            &active,
+            &reverse,
+            "org.example.App",
+            "7",
+            42,
+            HashMap::new(),
+            None,
+        );
+
+        assert!(retire_closed_notification(&reverse, &active, 42));
+        assert!(active.lock().is_empty(), "forward entry must be gone");
+        assert!(reverse.lock().is_empty(), "reverse entry must be gone");
+    }
+
+    /// The race the guard exists for: the host replaces a notification and then
+    /// reports the *old* one closed. The live replacement's mapping must survive.
+    #[test]
+    fn retiring_a_superseded_id_keeps_the_live_mapping() {
+        let (active, reverse) = empty_maps();
+        let key = register_notification(
+            &active,
+            &reverse,
+            "org.example.App",
+            "7",
+            42,
+            HashMap::new(),
+            None,
+        );
+        // The host replaced it: same portal key, new host ID.
+        register_notification(
+            &active,
+            &reverse,
+            "org.example.App",
+            "7",
+            99,
+            HashMap::new(),
+            None,
+        );
+
+        // A late NotificationClosed for the *old* host ID arrives.
+        assert!(
+            !retire_closed_notification(&reverse, &active, 42),
+            "a superseded id must not retire the replacement"
+        );
+        assert_eq!(
+            active_id(&active, &key.app_id, &key.portal_id),
+            Some(99),
+            "the live mapping must survive"
+        );
+        assert!(reverse.lock().contains_key(&99));
+        assert!(!reverse.lock().contains_key(&42));
+    }
+
+    #[test]
+    fn retiring_an_unknown_id_is_a_no_op() {
+        let (active, reverse) = empty_maps();
+        register_notification(
+            &active,
+            &reverse,
+            "org.example.App",
+            "7",
+            42,
+            HashMap::new(),
+            None,
+        );
+        assert!(!retire_closed_notification(&reverse, &active, 1234));
+        assert_eq!(active.lock().len(), 1);
+        assert_eq!(reverse.lock().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn retiring_releases_the_sound_file_arc() {
+        let dir = std::env::temp_dir().join("xdpg-notif-sound-test");
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("sound.snd");
+        std::fs::write(&path, b"x").unwrap();
+
+        let (active, reverse) = empty_maps();
+        let sound = Arc::new(TempSoundFile { path });
+        assert_eq!(Arc::strong_count(&sound), 1);
+        register_notification(
+            &active,
+            &reverse,
+            "org.example.App",
+            "7",
+            42,
+            HashMap::new(),
+            Some(sound.clone()),
+        );
+        assert_eq!(Arc::strong_count(&sound), 2);
+
+        assert!(retire_closed_notification(&reverse, &active, 42));
+        assert!(
+            !reverse.lock().contains_key(&42),
+            "retiring must drop the target, releasing its Arc<TempSoundFile>"
+        );
+        assert_eq!(
+            Arc::strong_count(&sound),
+            1,
+            "the last portal-held reference must be gone, so TempSoundFile::drop runs"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn remove_notification_finds_the_entry_without_allocating() {
+        let (active, _reverse) = empty_maps();
+        register_notification(
+            &active,
+            &_reverse,
+            "org.example.App",
+            "7",
+            42,
+            HashMap::new(),
+            None,
+        );
+
+        let scope = crate::alloc_probe::AllocScope::start();
+        let removed = remove_active_notification(&active, "org.example.App", "7");
+        let snap = scope.finish();
+        assert_eq!(removed, Some(42));
+        assert_eq!(
+            snap.count, 0,
+            "removal must borrow the key rather than build one, got {snap:?}",
+        );
+    }
+
+    #[test]
+    fn remove_notification_only_matches_the_exact_pair() {
+        let (active, _reverse) = empty_maps();
+        register_notification(
+            &active,
+            &_reverse,
+            "org.example.App",
+            "7",
+            42,
+            HashMap::new(),
+            None,
+        );
+
+        for (app_id, portal_id) in [
+            ("org.example.App", "8"),
+            ("org.example.Ap", "7"),
+            ("org.example", "7"),
+            ("", ""),
+        ] {
+            assert_eq!(
+                remove_active_notification(&active, app_id, portal_id),
+                None,
+                "{app_id:?}/{portal_id:?} must not match",
+            );
+        }
+        assert_eq!(active.lock().len(), 1, "failed lookups must not remove");
+    }
+
+    #[test]
+    fn remove_notification_reports_a_miss() {
+        let (active, _reverse) = empty_maps();
+        assert_eq!(remove_active_notification(&active, "nope", "nope"), None);
+    }
+
+    /// `active_notifications` is neither rate-limited nor evicted, so an
+    /// unprivileged caller can grow it. A lookup that scans it would make
+    /// `RemoveNotification` quadratic while holding the lock that
+    /// `add_notification` and the signal listeners also need.
+    #[test]
+    fn lookup_stays_hashed_as_the_map_grows() {
+        let (active, _reverse) = empty_maps();
+        for i in 0..2000 {
+            register_notification(
+                &active,
+                &_reverse,
+                "org.example.App",
+                &format!("n{i}"),
+                i as u32 + 1,
+                HashMap::new(),
+                None,
+            );
+        }
+        assert_eq!(
+            active_id(&active, "org.example.App", "n1999"),
+            Some(2000),
+            "a deep entry must still be found"
+        );
+        assert_eq!(
+            remove_active_notification(&active, "org.example.App", "n1999"),
+            Some(2000)
+        );
+        assert_eq!(active_id(&active, "org.example.App", "n1999"), None);
+    }
+
+    #[test]
+    fn an_app_with_no_notifications_left_is_forgotten() {
+        let (active, reverse) = empty_maps();
+        register_notification(
+            &active,
+            &reverse,
+            "org.example.A",
+            "1",
+            5,
+            HashMap::new(),
+            None,
+        );
+        register_notification(
+            &active,
+            &reverse,
+            "org.example.B",
+            "1",
+            6,
+            HashMap::new(),
+            None,
+        );
+
+        assert!(remove_active_notification(&active, "org.example.A", "1").is_some());
+        {
+            let lock = active.lock();
+            assert!(
+                !lock.contains_key("org.example.A"),
+                "an emptied app must not keep an empty inner map"
+            );
+            assert!(
+                lock.contains_key("org.example.B"),
+                "other apps are untouched"
+            );
+        }
+        // The inner map survives while the app still has live notifications.
+        register_notification(
+            &active,
+            &reverse,
+            "org.example.B",
+            "2",
+            7,
+            HashMap::new(),
+            None,
+        );
+        assert!(remove_active_notification(&active, "org.example.B", "1").is_some());
+        assert_eq!(active_id(&active, "org.example.B", "2"), Some(7));
+    }
+}
+
+#[cfg(test)]
+mod bytes_tests {
+    /// `Bytes::from_owned` replaces a copy in the pixbuf decode path. The failure
+    /// mode of getting the length wrong is silent (a truncated image), so pin that
+    /// it carries exactly the same bytes as the copying constructor.
+    #[test]
+    fn from_owned_matches_a_copying_from_slice() {
+        use gtk4::glib::Bytes;
+
+        for payload in [
+            vec![],
+            vec![0u8],
+            vec![0, 1, 2, 253, 254, 255],
+            vec![7u8; 5000],
+        ] {
+            let owned = Bytes::from_owned(payload.clone());
+            let copied = Bytes::from(payload.as_slice());
+            assert_eq!(owned.len(), copied.len(), "length must match");
+            assert!(
+                owned == copied,
+                "content must match for {} bytes",
+                payload.len()
+            );
+        }
     }
 }

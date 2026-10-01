@@ -25,11 +25,26 @@ impl SettingsState {
         self.namespaces.get(ns).and_then(|m| m.get(key).cloned())
     }
 
+    /// Inserts `val` under `namespaces[ns][key]`.
+    ///
+    /// The namespace key is materialised only when the namespace is new. A plain
+    /// `self.namespaces.entry(ns.to_owned())` allocates a fresh `String` for
+    /// *every* call, hashes it, and then throws it away whenever the namespace
+    /// already exists. `read_gsettings` inserts one key at a time into the same
+    /// `org.gnome.desktop.interface` namespace, so that wasted allocation was
+    /// paid once per key on every reload.
+    ///
+    /// The miss path costs a second hash lookup (`get_mut`, then `insert`).
+    /// That happens once per namespace per reload, so trading it for not
+    /// allocating on every key is the right way round.
     pub fn insert(&mut self, ns: &str, key: &str, val: OwnedValue) {
-        self.namespaces
-            .entry(ns.to_owned())
-            .or_default()
-            .insert(key.to_owned(), val);
+        if let Some(inner) = self.namespaces.get_mut(ns) {
+            inner.insert(key.to_owned(), val);
+            return;
+        }
+        let mut inner = HashMap::new();
+        inner.insert(key.to_owned(), val);
+        self.namespaces.insert(ns.to_owned(), inner);
     }
 }
 
@@ -257,6 +272,122 @@ impl SettingsAggregator {
             "reduced-motion",
             OwnedValue::try_from(Value::U32(reduced_motion_val))
                 .expect("Converting primitive Value to OwnedValue is infallible"),
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn bool_value(v: bool) -> OwnedValue {
+        OwnedValue::try_from(Value::Bool(v)).expect("primitive Value to OwnedValue is infallible")
+    }
+
+    #[test]
+    fn insert_populates_the_named_namespace() {
+        let mut state = SettingsState::default();
+        state.insert(
+            NS_GNOME_DESKTOP_INTERFACE,
+            "gtk-theme-name",
+            bool_value(true),
+        );
+
+        assert_eq!(state.namespaces.len(), 1);
+        assert!(state.namespaces.contains_key(NS_GNOME_DESKTOP_INTERFACE));
+        assert!(
+            state
+                .namespaces
+                .get(NS_GNOME_DESKTOP_INTERFACE)
+                .unwrap()
+                .contains_key("gtk-theme-name")
+        );
+        assert_eq!(
+            state.get(NS_GNOME_DESKTOP_INTERFACE, "gtk-theme-name"),
+            Some(bool_value(true))
+        );
+    }
+
+    #[test]
+    fn insert_replaces_an_existing_key() {
+        let mut state = SettingsState::default();
+        state.insert(
+            NS_GNOME_DESKTOP_INTERFACE,
+            "gtk-enable-animations",
+            bool_value(true),
+        );
+        state.insert(
+            NS_GNOME_DESKTOP_INTERFACE,
+            "gtk-enable-animations",
+            bool_value(false),
+        );
+
+        assert_eq!(state.namespaces.len(), 1);
+        assert_eq!(
+            state.get(NS_GNOME_DESKTOP_INTERFACE, "gtk-enable-animations"),
+            Some(bool_value(false))
+        );
+    }
+
+    #[test]
+    fn insert_separates_distinct_namespaces() {
+        let mut state = SettingsState::default();
+        state.insert(NS_GNOME_DESKTOP_INTERFACE, "shared-key", bool_value(true));
+        state.insert(NS_FREEDESKTOP_APPEARANCE, "shared-key", bool_value(false));
+
+        assert_eq!(state.namespaces.len(), 2);
+        assert_eq!(
+            state.get(NS_GNOME_DESKTOP_INTERFACE, "shared-key"),
+            Some(bool_value(true))
+        );
+        assert_eq!(
+            state.get(NS_FREEDESKTOP_APPEARANCE, "shared-key"),
+            Some(bool_value(false))
+        );
+    }
+
+    #[test]
+    fn get_returns_none_for_unknown_namespace_and_key() {
+        let mut state = SettingsState::default();
+        state.insert(NS_GNOME_DESKTOP_INTERFACE, "present", bool_value(true));
+
+        assert_eq!(state.get(NS_FREEDESKTOP_APPEARANCE, "present"), None);
+        assert_eq!(state.get(NS_GNOME_DESKTOP_INTERFACE, "absent"), None);
+    }
+
+    /// The regression this guards: `insert` used to build a fresh namespace
+    /// `String` on every call, so loading N keys into one namespace cost N
+    /// throwaway allocations on top of the N key allocations. `read_gsettings`
+    /// does exactly that, once per key, on every reload.
+    #[test]
+    fn insert_into_one_namespace_allocates_one_key_string_per_key() {
+        let keys: Vec<String> = (0..64).map(|i| format!("key-{i}")).collect();
+        let mut state = SettingsState::default();
+        // Warm up, then reserve the final table size, so the only allocations
+        // left to observe are the key `String`s themselves. Without this the
+        // bound below would depend on hashbrown's growth schedule.
+        state.insert(NS_GNOME_DESKTOP_INTERFACE, "warmup", bool_value(true));
+        state
+            .namespaces
+            .get_mut(NS_GNOME_DESKTOP_INTERFACE)
+            .expect("namespace just inserted")
+            .reserve(keys.len());
+
+        let scope = crate::alloc_probe::AllocScope::start();
+        for key in &keys {
+            state.insert(NS_GNOME_DESKTOP_INTERFACE, key, bool_value(true));
+        }
+        let snap = scope.finish();
+
+        assert_eq!(
+            state.namespaces.len(),
+            1,
+            "all keys belong to a single namespace",
+        );
+        assert_eq!(
+            snap.count as usize,
+            keys.len(),
+            "exactly one owned key per insert, and no per-call namespace String",
         );
     }
 }

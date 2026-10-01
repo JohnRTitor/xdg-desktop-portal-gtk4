@@ -209,6 +209,53 @@ fn file_chooser_current_filter_applies_without_filters_list() {
     assert_eq!(selected, None);
 }
 
+/// When the caller sends a `filters` list, the offered filters are the caller's
+/// own entries rather than a deep copy of them.
+///
+/// `effective_filters` used to return `(list.to_vec(), …)`, duplicating every
+/// `Filter`'s name and every element in its `Vec<FilterKind>` on each dialog.
+/// With a borrowed `Cow` that copy only happens on the `current_filter`-alone
+/// path, which has no list to borrow.
+///
+/// `build_dialog` reaches this by *moving* the list out of `FileChooserUi`
+/// (`self.filters.take()`), so the borrow survives into the real path rather than
+/// being undone by an `into_owned()` there.
+#[test]
+fn file_chooser_offered_filters_are_borrowed_when_a_list_is_given() {
+    use std::borrow::Cow;
+    use xdg_desktop_portal_gtk4::portals::file_chooser::gui::{
+        Filter, FilterKind, effective_filters,
+    };
+
+    let list = vec![
+        Filter {
+            name: "Images".into(),
+            elements: vec![
+                FilterKind::Glob("*.png".into()),
+                FilterKind::Mime("image/*".into()),
+            ],
+        },
+        Filter {
+            name: "Text".into(),
+            elements: vec![FilterKind::Glob("*.txt".into())],
+        },
+    ];
+
+    let (offered, _) = effective_filters(Some(&list), None);
+    assert!(
+        matches!(offered, Cow::Borrowed(_)),
+        "a caller-supplied list must be borrowed, not cloned",
+    );
+
+    // Without a list there is nothing to borrow, so a copy is unavoidable.
+    let single = Filter {
+        name: "Text".into(),
+        elements: vec![FilterKind::Glob("*.txt".into())],
+    };
+    let (offered, _) = effective_filters(None, Some(&single));
+    assert!(matches!(offered, Cow::Owned(_)));
+}
+
 // ------------------------------------------------------------------ account --
 
 #[zbus::proxy(
@@ -288,10 +335,11 @@ async fn request_close_reports_other_not_cancelled() {
 /// and leaves the entry in place for its rightful owner (`print.c:124-141`).
 #[test]
 fn print_token_is_bound_to_app_id() {
+    use std::sync::Arc;
     use xdg_desktop_portal_gtk4::portals::print::gui::{TokenClaim, claim_token};
 
-    let mut jobs: HashMap<u32, (String, &'static str)> =
-        HashMap::from([(7, ("org.example.Owner".to_string(), "job"))]);
+    let mut jobs: HashMap<u32, (Arc<str>, &'static str)> =
+        HashMap::from([(7, (Arc::from("org.example.Owner"), "job"))]);
 
     // The rightful owner gets the job, and the token is consumed.
     match claim_token(&mut jobs, 7, "org.example.Owner") {
@@ -300,12 +348,12 @@ fn print_token_is_bound_to_app_id() {
     }
     assert!(!jobs.contains_key(&7), "a granted token must be consumed");
 
-    jobs.insert(7, ("org.example.Owner".to_string(), "job"));
+    jobs.insert(7, (Arc::from("org.example.Owner"), "job"));
 
     // A different application is refused...
     assert!(matches!(
         claim_token(&mut jobs, 7, "org.example.Attacker"),
-        TokenClaim::WrongOwner(ref o) if o == "org.example.Owner"
+        TokenClaim::WrongOwner(ref o) if &**o == "org.example.Owner"
     ));
     // ...and, crucially, the token survives so the owner can still use it.
     assert!(

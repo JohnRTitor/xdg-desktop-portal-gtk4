@@ -94,15 +94,19 @@ impl AppChooser {
 
         let (update_sender, update_receiver) = channel(CHANNEL_BUFFER_SIZE);
 
-        {
-            let mut lock = self.active_dialogs.lock();
-            lock.insert(handle.clone(), update_sender);
-        }
-
+        // The map key and the guard each need their own owned handle, but the
+        // function parameter itself is dead after this point: it was previously
+        // cloned twice and then dropped unused, costing a third `String`
+        // allocation per request.
         let _guard = ActiveDialogGuard {
             active_dialogs: self.active_dialogs.clone(),
             handle: handle.clone(),
         };
+
+        {
+            let mut lock = self.active_dialogs.lock();
+            lock.insert(handle, update_sender);
+        }
 
         let ui = AppChooserUi {
             app_id,
@@ -170,9 +174,6 @@ impl AppChooser {
         choices: Vec<String>,
     ) -> fdo::Result<()> {
         tracing::info!("UpdateChoices called for handle: {}", handle.as_str());
-        // A handle with no live dialog means the frontend and the backend have
-        // lost track of each other. Say so instead of reporting success, which
-        // hid exactly this desynchronisation; xdg-desktop-portal-gtk answers
         // A handle with no live dialog means the frontend and the backend have
         // lost track of each other. Say so instead of reporting success, which
         // hid exactly this desynchronisation. xdg-desktop-portal-gtk answers

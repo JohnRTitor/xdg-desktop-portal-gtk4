@@ -8,6 +8,7 @@ use {
         prelude::*,
     },
     rust_i18n::t,
+    std::collections::HashSet,
     tokio::sync::{mpsc::Receiver as MpscReceiver, oneshot::Receiver as OneshotReceiver},
 };
 
@@ -167,6 +168,76 @@ impl AppChooserUi {
     }
 }
 
+/// The identity and display name for one row of the chooser.
+///
+/// Decoupled from GTK so the selection rules can be unit tested without an
+/// application database.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct AppRow {
+    id: String,
+    name: String,
+}
+
+/// Chooses which entries to show, in display order, without duplicates.
+///
+/// `T` is carried along untouched so the caller can pair each [`AppRow`] with
+/// the `AppInfo` it came from (for the icon) without cloning the row.
+///
+/// * `choices` non-empty: keep only entries whose id the frontend asked for.
+///   Membership goes through a `HashSet` rather than a linear scan, because this
+///   runs over every installed application and is re-run on every
+///   `UpdateChoices`.
+/// * `choices` empty: keep everything.
+///
+/// Entries sharing an id are collapsed, because `GAppInfo` can report the same
+/// `.desktop` file more than once (for example from two `XDG_DATA_DIRS`), and
+/// the caller returns one choice.
+fn select_rows<T>(entries: &[(T, AppRow)], choices: &[String]) -> Vec<usize> {
+    let wanted: HashSet<&str> = choices.iter().map(String::as_str).collect();
+    let mut seen: HashSet<&str> = HashSet::with_capacity(entries.len());
+
+    // One pass: filter by the frontend's choices and drop repeated ids,
+    // keeping the first instance `AppInfo::all()` reported.
+
+    let mut selected: Vec<usize> = (0..entries.len())
+        .filter(|&i| {
+            let id = entries[i].1.id.as_str();
+            (choices.is_empty() || wanted.contains(id)) && seen.insert(id)
+        })
+        .collect();
+
+    selected.sort_unstable_by(|&a, &b| {
+        entries[a]
+            .1
+            .name
+            .cmp(&entries[b].1.name)
+            .then_with(|| a.cmp(&b))
+    });
+    selected
+}
+
+/// Which application list to populate the dialog from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AppSource {
+    All,
+    Recommended,
+}
+
+/// Picks the application list, following the precedence the contract implies.
+///
+/// The frontend's named choices win over GIO's recommendation: when it named
+/// some, only those may be offered. Otherwise prefer the recommendation, and fall
+/// back to every installed application.
+fn choose_source(choices: &[String], has_recommendation: bool) -> AppSource {
+    if !choices.is_empty() {
+        AppSource::All
+    } else if has_recommendation {
+        AppSource::Recommended
+    } else {
+        AppSource::All
+    }
+}
+
 fn populate_list_box(
     list_box: &ListBox,
     choices: &[String],
@@ -178,29 +249,31 @@ fn populate_list_box(
         list_box.remove(&child);
     }
 
-    let mut apps_to_show: Vec<&AppInfo> = Vec::new();
+    let source: &[AppInfo] = match choose_source(choices, !recommended_apps.is_empty()) {
+        AppSource::All => all_apps,
+        AppSource::Recommended => recommended_apps,
+    };
 
-    if !choices.is_empty() {
-        // If the frontend provided specific choices (e.g., from its own history or cache),
-        // we only show those.
-        for app in all_apps {
-            if let Some(id) = app.id()
-                && choices.iter().any(|c| c == id.as_str())
-            {
-                apps_to_show.push(app);
-            }
-        }
-    } else if !recommended_apps.is_empty() {
-        apps_to_show = recommended_apps.iter().collect();
-    } else {
-        apps_to_show = all_apps.iter().collect();
-    }
+    // Fetch each identity and name exactly once
+    let entries: Vec<(&AppInfo, AppRow)> = source
+        .iter()
+        .filter_map(|info| {
+            // Without a desktop-file id the row could never be matched back to
+            // a choice, so it is dropped rather than rendered and skipped.
+            let id = info.id()?;
+            Some((
+                info,
+                AppRow {
+                    id: id.to_string(),
+                    name: info.name().to_string(),
+                },
+            ))
+        })
+        .collect();
 
-    apps_to_show.sort_by_key(|a| a.name());
-    apps_to_show.dedup_by(|a, b| a.id() == b.id());
-
-    for app in apps_to_show {
-        let row = ListBoxRow::new();
+    for i in select_rows(&entries, choices) {
+        let (app, row) = &entries[i];
+        let list_row = ListBoxRow::new();
         let hbox = GtkBox::new(Orientation::Horizontal, crate::gui::DEFAULT_SPACING);
         hbox.set_margin_top(crate::gui::SMALL_MARGIN);
         hbox.set_margin_bottom(crate::gui::SMALL_MARGIN);
@@ -213,15 +286,220 @@ fn populate_list_box(
             hbox.append(&image);
         }
 
-        let name_label = Label::new(Some(&app.name()));
+        let name_label = Label::new(Some(row.name.as_str()));
         name_label.set_halign(Align::Start);
         hbox.append(&name_label);
 
-        row.set_child(Some(&hbox));
+        list_row.set_child(Some(&hbox));
+        list_row.set_widget_name(row.id.as_str());
+        list_box.append(&list_row);
+    }
+}
 
-        if let Some(id) = app.id() {
-            row.set_widget_name(id.as_ref());
-            list_box.append(&row);
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Builds a payload-free entry list so the selection rules can be exercised
+    /// without GIO, whose contents depend on which applications the host has
+    /// installed.
+    fn entries(rows: &[(&str, &str)]) -> Vec<((), AppRow)> {
+        rows.iter()
+            .map(|&(id, name)| {
+                (
+                    (),
+                    AppRow {
+                        id: id.into(),
+                        name: name.into(),
+                    },
+                )
+            })
+            .collect()
+    }
+
+    fn choices(values: &[&str]) -> Vec<String> {
+        values.iter().map(|v| (*v).to_owned()).collect()
+    }
+
+    fn ids<'a>(rows: &'a [((), AppRow)], selected: &[usize]) -> Vec<&'a str> {
+        selected.iter().map(|&i| rows[i].1.id.as_str()).collect()
+    }
+
+    #[test]
+    fn empty_choices_keep_everything_in_name_order() {
+        let rows = entries(&[
+            ("zeta.desktop", "Alpha"),
+            ("alpha.desktop", "Zulu"),
+            ("mid.desktop", "Mike"),
+        ]);
+        assert_eq!(
+            ids(&rows, &select_rows(&rows, &[])),
+            vec!["zeta.desktop", "mid.desktop", "alpha.desktop"],
+        );
+    }
+
+    #[test]
+    fn empty_entry_list_selects_nothing() {
+        let rows = entries(&[]);
+        assert!(select_rows(&rows, &[]).is_empty());
+        assert!(select_rows(&rows, &choices(&["a.desktop"])).is_empty());
+    }
+
+    #[test]
+    fn choices_filter_the_list() {
+        let rows = entries(&[
+            ("a.desktop", "Alpha"),
+            ("b.desktop", "Bravo"),
+            ("c.desktop", "Charlie"),
+        ]);
+        assert_eq!(
+            ids(
+                &rows,
+                &select_rows(&rows, &choices(&["a.desktop", "c.desktop"]))
+            ),
+            vec!["a.desktop", "c.desktop"],
+        );
+    }
+
+    #[test]
+    fn order_follows_display_name_not_the_choices_order() {
+        let rows = entries(&[("c.desktop", "Charlie"), ("a.desktop", "Alpha")]);
+        assert_eq!(
+            ids(
+                &rows,
+                &select_rows(&rows, &choices(&["c.desktop", "a.desktop"]))
+            ),
+            vec!["a.desktop", "c.desktop"],
+        );
+    }
+
+    #[test]
+    fn unknown_choices_are_ignored() {
+        let rows = entries(&[("a.desktop", "Alpha")]);
+        assert!(select_rows(&rows, &choices(&["nope.desktop"])).is_empty());
+        assert_eq!(
+            ids(
+                &rows,
+                &select_rows(&rows, &choices(&["a.desktop", "nope.desktop"]))
+            ),
+            vec!["a.desktop"],
+        );
+    }
+
+    #[test]
+    fn choice_matching_is_exact() {
+        let rows = entries(&[("org.example.App.desktop", "App")]);
+        // A prefix must not match, and neither must a superstring.
+        assert!(select_rows(&rows, &choices(&["org.example"])).is_empty());
+        assert!(select_rows(&rows, &choices(&["org.example.App.desktop.x"])).is_empty());
+        assert_eq!(
+            ids(
+                &rows,
+                &select_rows(&rows, &choices(&["org.example.App.desktop"]))
+            ),
+            vec!["org.example.App.desktop"],
+        );
+    }
+
+    #[test]
+    fn duplicate_ids_are_collapsed() {
+        // GIO can report the same desktop file twice, from two data dirs.
+        let rows = entries(&[("a.desktop", "Alpha"), ("a.desktop", "Alpha")]);
+        assert_eq!(ids(&rows, &select_rows(&rows, &[])), vec!["a.desktop"]);
+    }
+
+    #[test]
+    fn duplicates_are_collapsed_even_when_names_interleave() {
+        // Two rows share a desktop-file id but carry different names, and a third
+        // row sorts strictly between them. A name-first sort leaves the duplicates
+        // non-adjacent, so `dedup_by` never compares them and keeps both.
+        //
+        // GIO does not currently produce this (the same `.desktop` file reports the
+        // same display name, which sorts the duplicates together), so this is a
+        // robustness property of the ordering rather than a live bug.
+        let rows = entries(&[
+            ("a.desktop", "Mike"),
+            ("b.desktop", "Omega"),
+            ("a.desktop", "Zulu"),
+        ]);
+        let selected = select_rows(&rows, &[]);
+        assert_eq!(
+            selected.len(),
+            2,
+            "the duplicate id must collapse even when a name-sort separates it",
+        );
+        let kept = ids(&rows, &selected);
+        assert!(kept.contains(&"a.desktop"));
+        assert!(kept.contains(&"b.desktop"));
+    }
+
+    #[test]
+    fn distinct_ids_with_the_same_name_are_both_kept_in_enumeration_order() {
+        // `sort_by` is stable and the tie-break is the original index, so equal
+        // display names keep `AppInfo::all()`'s order -- which is what the
+        // previous single `sort_by_key` produced.
+        let rows = entries(&[("a.desktop", "Terminal"), ("b.desktop", "Terminal")]);
+        assert_eq!(
+            ids(&rows, &select_rows(&rows, &[])),
+            vec!["a.desktop", "b.desktop"],
+        );
+    }
+
+    #[test]
+    fn selected_indices_are_valid_and_unique() {
+        let rows = entries(&[
+            ("a.desktop", "Alpha"),
+            ("a.desktop", "Alpha"),
+            ("b.desktop", "Bravo"),
+        ]);
+        let selected = select_rows(&rows, &[]);
+        for &i in &selected {
+            assert!(i < rows.len());
         }
+        let mut sorted = selected.clone();
+        sorted.sort_unstable();
+        sorted.dedup();
+        assert_eq!(sorted.len(), selected.len(), "no index may repeat");
+    }
+
+    #[test]
+    fn dedup_keeps_the_first_enumerated_instance() {
+        // GIO reporting the same desktop file twice must leave the entry the
+        // enumeration saw first, so its icon does not change.
+        let rows = entries(&[("a.desktop", "Alpha"), ("a.desktop", "Alpha")]);
+        let selected = select_rows(&rows, &[]);
+        assert_eq!(selected, vec![0]);
+    }
+}
+
+#[cfg(test)]
+mod source_tests {
+    use super::*;
+
+    #[test]
+    fn frontend_choices_win_over_a_recommendation() {
+        assert_eq!(
+            choose_source(&["a.desktop".to_owned()], true),
+            AppSource::All
+        );
+    }
+
+    #[test]
+    fn a_recommendation_is_used_when_no_choices_are_given() {
+        assert_eq!(choose_source(&[], true), AppSource::Recommended);
+    }
+
+    #[test]
+    fn everything_is_shown_when_there_is_nothing_to_prefer() {
+        assert_eq!(choose_source(&[], false), AppSource::All);
+    }
+
+    #[test]
+    fn an_empty_choice_list_is_still_a_choice_list() {
+        // An empty `Vec` and an empty `String` are different inputs: the caller
+        // sends a `Vec`, and an empty one means "no preference", not "the
+        // frontend named nothing so use its recommendation".
+        assert_eq!(choose_source(&[], true), AppSource::Recommended);
+        assert_eq!(choose_source(&["".to_owned()], true), AppSource::All);
     }
 }

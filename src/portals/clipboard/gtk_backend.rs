@@ -9,6 +9,12 @@ use {
 
 const CHANNEL_BUFFER_SIZE: usize = 5;
 
+/// A list of MIME types advertised by the clipboard.
+pub type MimeList = Vec<Box<str>>;
+
+/// A request from GDK for the file descriptor backing one MIME type.
+pub type FdRequest = (Box<str>, OneshotSender<OwnedFd>);
+
 #[derive(Debug, thiserror::Error)]
 pub enum ClipboardError {
     #[error("Clipboard not available")]
@@ -19,7 +25,7 @@ pub enum ClipboardError {
 
 pub struct GtkClipboardBackend {
     clipboard: gdk::Clipboard,
-    formats_sender: tokio::sync::broadcast::Sender<Vec<String>>,
+    formats_sender: tokio::sync::broadcast::Sender<MimeList>,
 }
 
 thread_local! {
@@ -50,7 +56,7 @@ impl GtkClipboardBackend {
 
         clipboard.connect_formats_notify(move |cb| {
             let formats = cb.formats();
-            let mimes: Vec<String> = formats.mime_types().into_iter().map(String::from).collect();
+            let mimes: MimeList = formats.mime_types().into_iter().map(Into::into).collect();
             let _ = formats_tx_clone.send(mimes);
         });
 
@@ -61,9 +67,7 @@ impl GtkClipboardBackend {
     }
 }
 
-pub fn claim_selection(
-    mimes: Vec<String>,
-) -> Result<Receiver<(String, OneshotSender<OwnedFd>)>, ClipboardError> {
+pub fn claim_selection(mimes: MimeList) -> Result<Receiver<FdRequest>, ClipboardError> {
     get_backend(|backend| {
         let (request_tx, request_rx) = channel(10);
         let provider =
@@ -78,7 +82,7 @@ pub fn claim_selection(
     })?
 }
 
-pub fn read_selection(mime: String, fd: OwnedFd) -> Result<(), ClipboardError> {
+pub fn read_selection(mime: Box<str>, fd: OwnedFd) -> Result<(), ClipboardError> {
     get_backend(|backend| {
         let clipboard = backend.clipboard.clone();
         glib::MainContext::default().spawn_local(async move {
@@ -109,19 +113,18 @@ pub fn read_selection(mime: String, fd: OwnedFd) -> Result<(), ClipboardError> {
     Ok(())
 }
 
-pub fn subscribe_changes() -> Result<tokio::sync::broadcast::Receiver<Vec<String>>, ClipboardError>
-{
+pub fn subscribe_changes() -> Result<tokio::sync::broadcast::Receiver<MimeList>, ClipboardError> {
     get_backend(|backend| backend.formats_sender.subscribe())
 }
 
-pub fn current_formats() -> Result<Vec<String>, ClipboardError> {
+pub fn current_formats() -> Result<MimeList, ClipboardError> {
     get_backend(|backend| {
         backend
             .clipboard
             .formats()
             .mime_types()
             .into_iter()
-            .map(String::from)
+            .map(Into::into)
             .collect()
     })
 }

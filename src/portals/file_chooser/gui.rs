@@ -11,6 +11,7 @@ use {
     },
     rust_i18n::t,
     std::{
+        borrow::Cow,
         cell::Cell,
         collections::{HashMap, HashSet},
         rc::Rc,
@@ -82,20 +83,25 @@ pub struct FileChooserResult {
 /// filter, and an application that sends a slightly different `current_filter`
 /// should still get its intent honoured.
 ///
+/// Returns a [`Cow`] so the common case -- a caller that sent `filters` -- hands
+/// back the caller's own slice instead of deep-cloning every [`Filter`] (its
+/// `name` plus every element in its `Vec<FilterKind>`). Only the `current_filter`
+/// -alone case has to build a new list, and only when there is one.
+///
 /// Kept free of GTK so the decision can be unit tested.
-pub fn effective_filters(
-    filters: Option<&[Filter]>,
-    current_filter: Option<&Filter>,
-) -> (Vec<Filter>, Option<usize>) {
+pub fn effective_filters<'a>(
+    filters: Option<&'a [Filter]>,
+    current_filter: Option<&'a Filter>,
+) -> (Cow<'a, [Filter]>, Option<usize>) {
     match filters {
         Some(list) if !list.is_empty() => {
             let selected =
                 current_filter.and_then(|cur| list.iter().position(|f| f.name == cur.name));
-            (list.to_vec(), selected)
+            (Cow::Borrowed(list), selected)
         }
         _ => match current_filter {
-            Some(cur) => (vec![cur.clone()], Some(0)),
-            None => (Vec::new(), None),
+            Some(cur) => (Cow::Owned(vec![cur.clone()]), Some(0)),
+            None => (Cow::Owned(Vec::new()), None),
         },
     }
 }
@@ -103,7 +109,14 @@ pub fn effective_filters(
 struct DialogData {
     dialog: FileChooserDialog,
     read_only_choice: String,
-    filters: HashMap<FileFilter, Filter>,
+    /// Maps a GTK filter to its index in [`Self::offered`].
+    ///
+    /// Storing the index rather than a cloned [`Filter`] matters because GTK
+    /// hands back whichever filter the user picked from the list the dialog was
+    /// given. Cloning here meant every offered filter was duplicated -- name plus
+    /// every element -- purely to answer that one lookup.
+    filters: HashMap<FileFilter, usize>,
+    offered: Vec<Filter>,
 }
 
 impl FileChooserUi {
@@ -117,7 +130,7 @@ impl FileChooserUi {
     }
 
     fn run_impl(
-        self,
+        mut self,
         send: crate::gui::UiDispatcher<Result<FileChooserResult, UiError>>,
         context: MainContext,
         close_on_close: Receiver<()>,
@@ -126,6 +139,7 @@ impl FileChooserUi {
             dialog,
             read_only_choice,
             filters,
+            offered,
         } = self.build_dialog();
         let current_filter = Rc::new(Cell::new(dialog.filter()));
         let cf = current_filter.clone();
@@ -159,7 +173,11 @@ impl FileChooserUi {
                         })
                         .collect();
                     add_recent(&self.app_id, &files);
-                    let filter = cf.take().and_then(|f| filters.get(&f).cloned());
+                    let filter = cf
+                        .take()
+                        .and_then(|f| filters.get(&f))
+                        .and_then(|&i| offered.get(i))
+                        .cloned();
                     let choices: Vec<_> = self
                         .choices
                         .as_deref()
@@ -223,7 +241,7 @@ impl FileChooserUi {
         });
     }
 
-    fn build_dialog(&self) -> DialogData {
+    fn build_dialog(&mut self) -> DialogData {
         let action = match (self.directory, self.save) {
             (true, _) => FileChooserAction::SelectFolder,
             (_, true) => FileChooserAction::Save,
@@ -251,15 +269,23 @@ impl FileChooserUi {
         dialog.set_modal(self.modal);
         dialog.set_default_response(ResponseType::Ok);
         let mut filters_map = HashMap::new();
+        // Take the caller's list rather than borrowing from `self`, so the
+        // `Cow::Borrowed` arm of `effective_filters` can hand the original
+        // storage straight through instead of deep-cloning every `Filter`.
+        let taken = self.filters.take();
         let (offered, preselected) =
-            effective_filters(self.filters.as_deref(), self.current_filter.as_ref());
+            effective_filters(taken.as_deref(), self.current_filter.as_ref());
+        let offered = match offered {
+            Cow::Owned(list) => list,
+            Cow::Borrowed(_) => taken.unwrap_or_default(),
+        };
         for (i, filter) in offered.iter().enumerate() {
             let mapped = map_filter(filter);
             dialog.add_filter(&mapped);
             if preselected == Some(i) {
                 dialog.set_filter(&mapped);
             }
-            filters_map.insert(mapped, filter.clone());
+            filters_map.insert(mapped, i);
         }
         if let Some(f) = &self.current_name {
             dialog.set_current_name(f);
@@ -300,7 +326,10 @@ impl FileChooserUi {
         }
         if let Some(choices) = &self.choices {
             for choice in choices {
-                let variants: Vec<_> = choice
+                // `add_choice` takes `&[(&str, &str)]` by value-pair, so this
+                // adapter `Vec` is required by the GTK signature and cannot be
+                // avoided by handing over the caller's own storage.
+                let variants: Vec<(&str, &str)> = choice
                     .variants
                     .iter()
                     .map(|variant| (variant.id.as_str(), variant.label.as_str()))
@@ -318,6 +347,7 @@ impl FileChooserUi {
             dialog,
             read_only_choice: read_only_id,
             filters: filters_map,
+            offered,
         }
     }
 }

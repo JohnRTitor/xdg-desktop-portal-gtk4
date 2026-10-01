@@ -22,12 +22,13 @@ use {std::sync::Arc, tokio::sync::Notify, zbus::interface};
 /// If a session needs to clean up GTK resources when closed, it should use the `on_close`
 /// notifier to signal a Tokio task that manages the GTK counterpart.
 pub struct Session {
-    pub id: String,
+    /// The session's object path.
+    pub id: Box<str>,
     pub on_close: Option<Arc<Notify>>,
 }
 
 impl Session {
-    pub fn new(id: String, on_close: Option<Arc<Notify>>) -> Self {
+    pub fn new(id: Box<str>, on_close: Option<Arc<Notify>>) -> Self {
         Self { id, on_close }
     }
 }
@@ -51,12 +52,18 @@ impl Session {
 mod tests {
     use super::*;
 
+    #[test]
+    #[cfg(target_pointer_width = "64")]
+    fn id_is_a_boxed_str() {
+        assert_eq!(std::mem::size_of::<Session>(), 24);
+    }
+
     #[tokio::test]
     async fn test_session_close() {
         let notify = Arc::new(Notify::new());
         let session = Session::new("test_session_id".into(), Some(notify.clone()));
 
-        assert_eq!(session.id, "test_session_id");
+        assert_eq!(&*session.id, "test_session_id");
 
         session.close().await;
 

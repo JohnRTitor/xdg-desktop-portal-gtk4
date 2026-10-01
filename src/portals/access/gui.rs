@@ -21,6 +21,7 @@ pub struct ChoiceVariant {
     pub label: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FinalChoice {
     pub id: String,
     pub variant_id: String,
@@ -44,6 +45,52 @@ pub struct AccessResult {
     pub final_choices: Option<Vec<FinalChoice>>,
 }
 
+/// Builds the reply to `AccessDialog` from the dialog's widget state.
+///
+/// Returns `None` when the caller sent no `choices` at all -- the contract only
+/// carries a `choices` key back when it asked for one. `choices_requested` must
+/// therefore be sampled *before* the choice list is consumed.
+///
+/// Takes borrowed iterators rather than collected vectors, so each id is cloned
+/// exactly once -- into its `FinalChoice` -- and the variants of an unselected
+/// radio group are never even inspected.
+fn build_final_choices<'a, B, R, V>(
+    choices_requested: bool,
+    booleans: B,
+    radios: R,
+) -> Option<Vec<FinalChoice>>
+where
+    B: IntoIterator<Item = (&'a str, bool)>,
+    R: IntoIterator<Item = (&'a str, V)>,
+    V: IntoIterator<Item = (&'a str, bool)>,
+{
+    if !choices_requested {
+        return None;
+    }
+    let mut out = Vec::new();
+    for (id, active) in booleans {
+        out.push(FinalChoice {
+            id: id.to_owned(),
+            variant_id: if active {
+                "true".into()
+            } else {
+                "false".into()
+            },
+        });
+    }
+    for (id, variants) in radios {
+        // A radio group with nothing selected contributes nothing, matching the
+        // previous `find(..is_active())` behaviour.
+        if let Some((variant_id, _)) = variants.into_iter().find(|(_, active)| *active) {
+            out.push(FinalChoice {
+                id: id.to_owned(),
+                variant_id: variant_id.to_owned(),
+            });
+        }
+    }
+    Some(out)
+}
+
 impl AccessUi {
     pub async fn run(self, proxy: &UiProxy) -> Result<AccessResult, UiError> {
         crate::gui::run_ui_task(
@@ -55,7 +102,7 @@ impl AccessUi {
     }
 
     fn run_impl(
-        self,
+        mut self,
         send: crate::gui::UiDispatcher<Result<AccessResult, UiError>>,
         context: MainContext,
         close_on_close: Receiver<()>,
@@ -97,7 +144,14 @@ impl AccessUi {
         let mut boolean_choices = Vec::new();
         let mut radio_choices = Vec::new();
 
-        if let Some(choices) = &self.choices {
+        // Whether the caller supplied choices at all, captured before the list
+        // is consumed below.
+        let choices_cfg = self.choices.is_some();
+
+        // `run_impl` owns `self`, and the choice IDs are needed again inside
+        // `'static` GTK signal closures. Taking the list consumes the IDs instead
+        // of cloning each one while the originals are still alive.
+        if let Some(choices) = std::mem::take(&mut self.choices) {
             for choice in choices {
                 if choice.variants.is_empty() {
                     let button = CheckButton::with_label(&choice.label);
@@ -106,7 +160,7 @@ impl AccessUi {
                         button.set_active(true);
                     }
                     dialog.content_area.append(&button);
-                    boolean_choices.push((choice.id.clone(), button));
+                    boolean_choices.push((choice.id, button));
                 } else {
                     let label = Label::new(Some(&choice.label));
                     label.set_halign(Align::Start);
@@ -138,7 +192,7 @@ impl AccessUi {
                         dialog.content_area.append(&radio);
                         variants_for_choice.push((variant.id.clone(), radio));
                     }
-                    radio_choices.push((choice.id.clone(), variants_for_choice));
+                    radio_choices.push((choice.id, variants_for_choice));
                 }
             }
         }
@@ -149,7 +203,6 @@ impl AccessUi {
             dialog.content_area.prepend(&image);
         }
 
-        let choices_cfg = self.choices.is_some();
         let window = dialog.window.clone();
 
         // Handle the user clicking the "X" button or pressing Escape.
@@ -175,29 +228,20 @@ impl AccessUi {
             #[weak]
             window,
             move |_| {
-                let mut final_choices = None;
-                if choices_cfg {
-                    let mut fc = Vec::new();
-                    for (id, button) in &boolean_choices {
-                        fc.push(FinalChoice {
-                            id: id.clone(),
-                            variant_id: if button.is_active() {
-                                "true".into()
-                            } else {
-                                "false".into()
-                            },
-                        });
-                    }
-                    for (id, variants) in &radio_choices {
-                        if let Some((v_id, _)) = variants.iter().find(|(_, r)| r.is_active()) {
-                            fc.push(FinalChoice {
-                                id: id.clone(),
-                                variant_id: v_id.clone(),
-                            });
-                        }
-                    }
-                    final_choices = Some(fc);
-                }
+                let final_choices = build_final_choices(
+                    choices_cfg,
+                    boolean_choices
+                        .iter()
+                        .map(|(id, button)| (id.as_str(), button.is_active())),
+                    radio_choices.iter().map(|(id, variants)| {
+                        (
+                            id.as_str(),
+                            variants
+                                .iter()
+                                .map(|(vid, button)| (vid.as_str(), button.is_active())),
+                        )
+                    }),
+                );
                 let _ = send_grant.dispatch(Ok(AccessResult { final_choices }));
                 window.close();
             }
@@ -222,5 +266,90 @@ impl AccessUi {
                 window.close();
             }
         ));
+    }
+}
+
+#[cfg(test)]
+mod final_choice_tests {
+    use super::*;
+
+    fn pairs(out: Option<Vec<FinalChoice>>) -> Option<Vec<(String, String)>> {
+        out.map(|choices| choices.into_iter().map(|c| (c.id, c.variant_id)).collect())
+    }
+
+    #[test]
+    fn no_choices_requested_yields_none_even_with_widgets() {
+        // Checkboxes exist for the dialog's own layout, but the caller must not
+        // receive a `choices` key it never asked for.
+        let out = build_final_choices(false, [("a", true), ("b", false)], [("c", [("c1", true)])]);
+        assert!(out.is_none());
+    }
+
+    /// The invariant the `mem::take` reordering depends on: a caller that sent
+    /// `choices: []` must still get an empty list back, not `None`.
+    #[test]
+    fn an_empty_choices_list_yields_some_empty_vec() {
+        assert_eq!(
+            build_final_choices(
+                true,
+                std::iter::empty::<(&str, bool)>(),
+                std::iter::empty::<(&str, [(&str, bool); 0])>(),
+            ),
+            Some(Vec::new()),
+        );
+    }
+
+    #[test]
+    fn boolean_choices_report_their_state() {
+        let out = build_final_choices(
+            true,
+            [("a", true), ("b", false)],
+            std::iter::empty::<(&str, [(&str, bool); 0])>(),
+        );
+        assert_eq!(
+            pairs(out),
+            Some(vec![
+                ("a".to_owned(), "true".to_owned()),
+                ("b".to_owned(), "false".to_owned()),
+            ])
+        );
+    }
+
+    #[test]
+    fn the_active_radio_variant_is_reported() {
+        let out = build_final_choices(
+            true,
+            std::iter::empty::<(&str, bool)>(),
+            [("m", [("m1", false), ("m2", true), ("m3", false)])],
+        );
+        assert_eq!(pairs(out), Some(vec![("m".to_owned(), "m2".to_owned())]));
+    }
+
+    #[test]
+    fn a_radio_group_with_nothing_selected_is_omitted() {
+        let out = build_final_choices(
+            true,
+            std::iter::empty::<(&str, bool)>(),
+            [("m", [("m1", false)])],
+        );
+        assert_eq!(pairs(out), Some(vec![]));
+    }
+
+    #[test]
+    fn booleans_come_before_radios() {
+        let out = build_final_choices(true, [("z", true)], [("a", [("a1", true)])]);
+        assert_eq!(
+            pairs(out),
+            Some(vec![
+                ("z".to_owned(), "true".to_owned()),
+                ("a".to_owned(), "a1".to_owned()),
+            ])
+        );
+    }
+
+    #[test]
+    fn an_empty_radio_group_contributes_nothing() {
+        let out = build_final_choices(true, std::iter::empty::<(&str, bool)>(), [("m", [])]);
+        assert_eq!(pairs(out), Some(vec![]));
     }
 }

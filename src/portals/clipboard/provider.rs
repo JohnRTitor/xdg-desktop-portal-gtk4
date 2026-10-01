@@ -7,14 +7,16 @@ use {
     },
 };
 
+use super::gtk_backend::MimeList;
+
 mod imp {
     use {super::*, gtk4::gdk::subclass::prelude::*};
 
-    pub type FdRequestSender = MpscSender<(String, OneshotSender<OwnedFd>)>;
+    pub type FdRequestSender = MpscSender<(Box<str>, OneshotSender<OwnedFd>)>;
 
     #[derive(Default)]
     pub struct PortalContentProvider {
-        pub mimes: RefCell<Vec<String>>,
+        pub mimes: RefCell<MimeList>,
         pub request_tx: RefCell<Option<FdRequestSender>>,
     }
 
@@ -31,7 +33,7 @@ mod imp {
         fn formats(&self) -> gdk::ContentFormats {
             let mut builder = gdk::ContentFormatsBuilder::new();
             for mime in self.mimes.borrow().iter() {
-                builder = builder.add_mime_type(mime);
+                builder = builder.add_mime_type(mime.as_ref());
             }
             builder.build()
         }
@@ -47,7 +49,7 @@ mod imp {
             _io_priority: glib::Priority,
         ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), glib::Error>> + 'static>>
         {
-            let mime_type = String::from(mime_type);
+            let mime_type: Box<str> = mime_type.into();
             let out_stream = stream.clone();
 
             // We clone the sender so we can use it in the future
@@ -108,7 +110,7 @@ glib::wrapper! {
 }
 
 impl PortalContentProvider {
-    pub fn new(mimes: Vec<String>, request_tx: imp::FdRequestSender) -> Self {
+    pub fn new(mimes: MimeList, request_tx: imp::FdRequestSender) -> Self {
         let obj: Self = glib::Object::new();
         let imp = gtk4::subclass::prelude::ObjectSubclassIsExt::imp(&obj);
         *imp.mimes.borrow_mut() = mimes;

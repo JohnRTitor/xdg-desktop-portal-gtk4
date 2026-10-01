@@ -47,8 +47,10 @@
 //!    If this notification is replacing an existing one (matching `app_id` + `id`), it passes the
 //!    existing host `u32` ID to replace it.
 //! 5. **State Tracking:** The returned system `u32` ID is saved in two thread-safe maps:
-//!    - `active_notifications`: Maps `(app_id, portal_id)` -> `u32`.
-//!    - `reverse_map`: Maps `u32` -> `(app_id, portal_id, action_targets, TempSoundFile)`.
+//!    - `active_notifications`: Maps a shared `NotifKey { app_id, portal_id }` -> `u32`.
+//!    - `reverse_map`: Maps `u32` -> `NotificationTarget { key, action_targets, sound_file }`.
+//!
+//! Both maps reference the *same* `Arc<NotifKey>`, so the identity pair is stored once.
 //!
 //! **Action Invoked (User Clicks a Button):**
 //! 1. The background task (`listen_for_action_invoked`) receives `ActionInvoked(u32)` from the host daemon.

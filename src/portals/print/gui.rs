@@ -5,15 +5,20 @@ use {
         glib::{self, MainContext},
         prelude::{DialogExt, GtkWindowExt, WidgetExt},
     },
-    std::{cell::RefCell, collections::HashMap, time::Duration},
+    std::{cell::RefCell, collections::HashMap, sync::Arc, time::Duration},
     tokio::sync::oneshot::Receiver,
     zbus::zvariant::{OwnedValue, Value},
 };
 
 const PRINT_TOKEN_TIMEOUT_SECS: u32 = 300;
 
+/// A print job parked between `PreparePrint` and `Print`.
+///
+/// Deliberately carries no `app_id`: ownership lives in the `PRINT_JOBS` value
+/// tuple, which is what `claim_token` authorises against. A copy of `app_id`
+/// inside the job was write-only, costing a `String` allocation and 24 bytes of
+/// struct for a value no reader could observe.
 pub struct CachedPrintJob {
-    pub app_id: String,
     pub title: String,
     pub printer: Printer,
     pub settings: gtk4::PrintSettings,
@@ -27,17 +32,21 @@ pub struct CachedPrintJob {
 thread_local! {
     /// Token -> (owning app_id, job). The owner is kept alongside the job so
     /// `claim_token` can authorise a claim without touching the GTK objects.
-    pub static PRINT_JOBS: RefCell<HashMap<u32, (String, CachedPrintJob)>> =
+    ///
+    /// The owner is an `Arc<str>` so that reporting a wrong-owner refusal
+    /// hands back a refcount bump instead of a fresh `String` allocation.
+    pub static PRINT_JOBS: RefCell<HashMap<u32, (Arc<str>, CachedPrintJob)>> =
         RefCell::new(HashMap::new());
 }
 
 /// Outcome of trying to claim a `PreparePrint` token.
+#[derive(Debug)]
 pub enum TokenClaim<T> {
     /// No such token.
     Unknown,
     /// The token exists but belongs to a different application. The entry is
     /// left in place so its rightful owner can still use it.
-    WrongOwner(String),
+    WrongOwner(Arc<str>),
     /// The token belonged to `app_id` and has been consumed.
     Granted(T),
 }
@@ -49,13 +58,13 @@ pub enum TokenClaim<T> {
 /// another application's cached printer, page setup and settings by guessing a
 /// token. `xdg-desktop-portal-gtk` performs the same owner check.
 pub fn claim_token<T>(
-    jobs: &mut HashMap<u32, (String, T)>,
+    jobs: &mut HashMap<u32, (Arc<str>, T)>,
     token: u32,
     app_id: &str,
 ) -> TokenClaim<T> {
     match jobs.get(&token) {
         None => TokenClaim::Unknown,
-        Some((owner, _)) if owner != app_id => TokenClaim::WrongOwner(owner.clone()),
+        Some((owner, _)) if owner.as_ref() != app_id => TokenClaim::WrongOwner(owner.clone()),
         Some(_) => match jobs.remove(&token) {
             Some((_, job)) => TokenClaim::Granted(job),
             None => TokenClaim::Unknown,
@@ -213,9 +222,8 @@ impl PrintUi {
                     jobs.borrow_mut().insert(
                         token,
                         (
-                            self.app_id.clone(),
+                            Arc::from(self.app_id.as_str()),
                             CachedPrintJob {
-                                app_id: self.app_id.clone(),
                                 title: self.title.clone(),
                                 printer,
                                 settings: settings_obj,
@@ -305,5 +313,97 @@ impl ExecutePrintUi {
             }
         });
         let _ = send.dispatch(Ok(()));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `CachedPrintJob` holds `!Send` GTK objects, so these exercise
+    /// `claim_token` with a plain payload. The ownership logic does not look at
+    /// the payload, so this covers the same branches the real caller hits.
+    type Jobs = HashMap<u32, (Arc<str>, u32)>;
+
+    fn jobs_with(token: u32, owner: &str, payload: u32) -> Jobs {
+        let mut jobs = Jobs::new();
+        jobs.insert(token, (Arc::from(owner), payload));
+        jobs
+    }
+
+    #[test]
+    fn claim_unknown_token_is_rejected() {
+        let mut jobs = jobs_with(7, "org.example.A", 99);
+        let claim = claim_token(&mut jobs, 8, "org.example.A");
+        assert!(matches!(claim, TokenClaim::Unknown));
+        // The unrelated entry must survive.
+        assert_eq!(jobs.len(), 1);
+    }
+
+    #[test]
+    fn claim_by_the_owning_app_is_granted_and_consumes_the_entry() {
+        let mut jobs = jobs_with(7, "org.example.A", 99);
+        let claim = claim_token(&mut jobs, 7, "org.example.A");
+        match claim {
+            TokenClaim::Granted(payload) => assert_eq!(payload, 99),
+            other => panic!("expected Granted, got {other:?}"),
+        }
+        assert!(jobs.is_empty(), "a granted token must not be reusable");
+    }
+
+    #[test]
+    fn claim_by_a_different_app_is_refused_and_leaves_the_entry() {
+        let mut jobs = jobs_with(7, "org.example.A", 99);
+        let claim = claim_token(&mut jobs, 7, "org.example.Evil");
+        match claim {
+            TokenClaim::WrongOwner(owner) => assert_eq!(&*owner, "org.example.A"),
+            other => panic!("expected WrongOwner, got {other:?}"),
+        }
+        // The rightful owner must still be able to use it.
+        assert_eq!(jobs.len(), 1, "a refused claim must not consume the token");
+        assert!(matches!(
+            claim_token(&mut jobs, 7, "org.example.A"),
+            TokenClaim::Granted(99)
+        ));
+    }
+
+    #[test]
+    fn owner_comparison_is_exact_not_prefix() {
+        let mut jobs = jobs_with(7, "org.example.A", 1);
+        // A prefix of the real owner must not be accepted.
+        assert!(matches!(
+            claim_token(&mut jobs, 7, "org.example"),
+            TokenClaim::WrongOwner(_)
+        ));
+        // Nor a superstring.
+        assert!(matches!(
+            claim_token(&mut jobs, 7, "org.example.A.evil"),
+            TokenClaim::WrongOwner(_)
+        ));
+        assert_eq!(jobs.len(), 1);
+    }
+
+    #[test]
+    fn wrong_owner_report_does_not_allocate() {
+        let mut jobs = jobs_with(7, "org.example.Owner", 1);
+        let scope = crate::alloc_probe::AllocScope::start();
+        let claim = claim_token(&mut jobs, 7, "org.example.Intruder");
+        let snap = scope.finish();
+        assert!(matches!(claim, TokenClaim::WrongOwner(_)));
+        assert_eq!(
+            snap.count, 0,
+            "reporting the owner should be a refcount bump, got {snap:?}",
+        );
+    }
+
+    #[test]
+    fn empty_owner_is_not_a_wildcard() {
+        // A job cached under an empty owner must not be claimable by an empty
+        // caller unless the owner really is empty.
+        let mut jobs = jobs_with(1, "", 5);
+        assert!(matches!(
+            claim_token(&mut jobs, 1, ""),
+            TokenClaim::Granted(5)
+        ));
     }
 }

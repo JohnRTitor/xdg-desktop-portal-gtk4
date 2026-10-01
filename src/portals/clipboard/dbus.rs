@@ -43,15 +43,27 @@ struct TransferRequest {
 
 /// Per-session serial counters, so one application cannot predict or collide
 /// with another application's transfer serials.
-static SERIALS: std::sync::LazyLock<Mutex<HashMap<String, Arc<AtomicU32>>>> =
+///
+/// Entries are created lazily by [`next_serial`] the first time a session calls
+/// `SetSelection`, and are removed by [`forget_session`] when the session is
+/// torn down. The key is an `Arc<str>` so teardown hands the same allocation to
+/// the removal path instead of rebuilding it.
+static SERIALS: std::sync::LazyLock<Mutex<HashMap<Arc<str>, Arc<AtomicU32>>>> =
     std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
 
 fn next_serial(session: &str) -> u32 {
     let mut counters = SERIALS.lock();
-    let counter = counters
-        .entry(session.to_owned())
-        .or_insert_with(|| Arc::new(AtomicU32::new(1)))
-        .clone();
+    // `HashMap::entry` needs an owned key, so `Arc::from(session)` would allocate
+    // on every call. `Arc<str>: Borrow<str>` makes `get` accept a borrowed key, so
+    // a session that already has a counter costs a refcount bump and nothing
+    // else. `next_serial` runs once per host clipboard request.
+    let counter = match counters.get(session) {
+        Some(existing) => existing.clone(),
+        None => counters
+            .entry(Arc::from(session))
+            .or_insert_with(|| Arc::new(AtomicU32::new(1)))
+            .clone(),
+    };
     let serial = counter.fetch_add(1, Ordering::SeqCst);
     // Skip 0, which the spec reserves as "no serial".
     if serial == 0 {
@@ -59,6 +71,59 @@ fn next_serial(session: &str) -> u32 {
     } else {
         serial
     }
+}
+
+/// Drops the serial counter for a session that no longer exists.
+///
+/// Without this the map grew without bound: `SERIALS` is a process-lifetime
+/// `static`, and clipboard session handles are minted fresh per session, so a
+/// long-lived client that opened many sessions in sequence leaked one `Arc<str>`
+/// plus one `Arc<AtomicU32>` per session for the lifetime of the daemon.
+///
+/// Only safe to call once the session is finished: a still-live `SetSelection`
+/// task for the same handle would restart the namespace at 1 and reuse a serial.
+/// See the comment in `set_selection`.
+fn forget_session(session: &str) -> bool {
+    SERIALS.lock().remove(session).is_some()
+}
+
+/// Builds the `SelectionOwnerChanged` options dict.
+///
+/// Shared by the host-change broadcast and by `RequestClipboard`, which used to
+/// carry two copies of this. The payload depends only on the advertised mime
+/// types, so a caller fanning out to several sessions must build it once and
+/// clone the map rather than rebuilding it per session.
+fn owner_changed_options<'a>(mimes: &'a gtk_backend::MimeList) -> HashMap<&'static str, Value<'a>> {
+    let mut options = HashMap::new();
+    // `Box<str>` has no `zvariant` `Type` impl, so the array is built from
+    // borrowed `&str`s pointing into the list rather than from owned copies.
+    options.insert(
+        "mime_types",
+        Value::from(mimes.iter().map(|m| m.as_ref()).collect::<Vec<&str>>()),
+    );
+    options.insert("session_is_owner", Value::from(false));
+    options
+}
+
+/// Extracts the advertised mime types from a `SetSelection` options dict.
+///
+/// The inverse of [`owner_changed_options`]'s mime encoding.
+fn parse_mime_types(options: &HashMap<&str, Value<'_>>) -> gtk_backend::MimeList {
+    let mut mimes = gtk_backend::MimeList::new();
+    if let Some(Value::Array(arr)) = options.get("mime_types") {
+        for i in 0..arr.len() {
+            if let Ok(Some(Value::Str(s))) = arr.get::<Value<'_>>(i) {
+                mimes.push(s.as_str().into());
+            }
+        }
+    }
+    mimes
+}
+
+/// Number of live serial counters. Used by the tests to assert on growth.
+#[cfg(test)]
+fn tracked_serial_count() -> usize {
+    SERIALS.lock().len()
 }
 
 /// D-Bus interface wrapper for the Clipboard portal.
@@ -133,16 +198,17 @@ impl ClipboardPortal {
                     }
                 };
 
-                let mut options = HashMap::new();
-                let mimes_val = Value::from(mimes.clone());
-                options.insert("mime_types", &mimes_val);
-                let is_owner = Value::from(false);
-                options.insert("session_is_owner", &is_owner);
+                // Built once per clipboard change rather than once per session: the
+                // payload is identical for every session, so only the
+                // per-session projection into the signal's reference-typed
+                // map below is repeated.
+                let options = owner_changed_options(&mimes);
 
                 let sessions = sessions_clone.lock().clone();
                 for session in sessions {
-                    let _ =
-                        Self::selection_owner_changed(&emitter, &session, options.clone()).await;
+                    let per_session: HashMap<&str, &Value<'_>> =
+                        options.iter().map(|(k, v)| (*k, v)).collect();
+                    let _ = Self::selection_owner_changed(&emitter, &session, per_session).await;
                 }
             }
         });
@@ -213,7 +279,22 @@ impl ClipboardPortal {
             cancel_notify.clone(),
         ) {
             tracing::warn!("Session limit exceeded for clipboard: {}", e);
-            // Even if it fails, we continue, but we won't clean up automatically
+            // Even if it fails, we continue, but we won't clean up automatically.
+            //
+            // Both the `active_sessions` entry pushed above and any serial
+            // counter this session later creates are therefore retained until
+            // the process exits. This is pre-existing for `active_sessions`, and
+            // it is trivially reachable: the clipboard portal registers every
+            // client under the shared pseudo-app-id `"clipboard"`, so any one
+            // unprivileged app calling `RequestClipboard` ten times drives the
+            // counter to the limit and every later call from *any* app takes this
+            // branch, permanently.
+            //
+            // Not fixed here because closing it means changing session-limit
+            // semantics (reject the request, or give the clipboard portal a
+            // per-sender budget) rather than optimising a data structure. The
+            // serial counter is retained along with it, so `SERIALS` grows
+            // without bound on this path too.
         } else {
             let active_sessions_clone = self.active_sessions.clone();
             let session_handle_clone = session_handle_owned.clone();
@@ -233,6 +314,12 @@ impl ClipboardPortal {
                     &sender,
                     session_handle_clone.as_str(),
                 );
+                if forget_session(session_handle_clone.as_str()) {
+                    tracing::debug!(
+                        "Released clipboard serial counter for {:?}",
+                        session_handle_clone
+                    );
+                }
             });
         }
 
@@ -249,18 +336,16 @@ impl ClipboardPortal {
         .unwrap_or_default();
 
         if let Ok(emitter) = SignalEmitter::new(&conn_clone, crate::core::DBUS_PATH) {
-            let mut options = HashMap::new();
-            let mimes_val = Value::from(mimes);
-            options.insert("mime_types", &mimes_val);
-            let is_owner = Value::from(false);
-            options.insert("session_is_owner", &is_owner);
+            let options = owner_changed_options(&mimes);
             tracing::debug!(
                 "Emitting SelectionOwnerChanged for {:?} with mimes: {:?}",
                 session_handle_owned,
-                mimes_val
+                options.get("mime_types")
             );
+            let per_session: HashMap<&str, &Value<'_>> =
+                options.iter().map(|(k, v)| (*k, v)).collect();
             if let Err(e) =
-                Self::selection_owner_changed(&emitter, &session_handle_owned, options).await
+                Self::selection_owner_changed(&emitter, &session_handle_owned, per_session).await
             {
                 tracing::error!("Failed to emit SelectionOwnerChanged: {}", e);
             } else {
@@ -278,14 +363,7 @@ impl ClipboardPortal {
         options: HashMap<&str, Value<'_>>,
     ) -> fdo::Result<()> {
         tracing::debug!("SetSelection called for session: {:?}", session_handle);
-        let mut mimes = Vec::new();
-        if let Some(Value::Array(arr)) = options.get("mime_types") {
-            for i in 0..arr.len() {
-                if let Ok(Some(Value::Str(s))) = arr.get::<Value<'_>>(i) {
-                    mimes.push(s.as_str().into());
-                }
-            }
-        }
+        let mimes = parse_mime_types(&options);
 
         let (tx, rx) = channel();
         let _ = self.proxy.sender.send(Box::new(move || {
@@ -336,6 +414,13 @@ impl ClipboardPortal {
                     });
                 }
             }
+
+            // NOTE: the counter is deliberately *not* released here. `SetSelection`
+            // is re-callable, and `set_content` drops the previous provider, so
+            // this loop can end while a newer task for the same session handle is
+            // still minting serials. Releasing here would restart that namespace
+            // at 1 and overwrite a still-pending `(session, 1)` transfer. The
+            // counter is released on session teardown instead.
         });
 
         Ok(())
@@ -393,7 +478,7 @@ impl ClipboardPortal {
             .map_err(|e| fdo::Error::Failed(format!("Failed to create pipe: {}", e)))?;
 
         let _ = self.proxy.sender.send(Box::new(move || {
-            if let Err(e) = gtk_backend::read_selection(mime_type, write_fd) {
+            if let Err(e) = gtk_backend::read_selection(mime_type.into_boxed_str(), write_fd) {
                 tracing::error!("Failed to read selection: {}", e);
             }
         }));
@@ -464,5 +549,257 @@ mod tests {
         assert!(res.is_err());
         assert!(matches!(res.unwrap_err(), fdo::Error::InvalidArgs(_)));
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod serial_tests {
+    use super::*;
+
+    /// `SERIALS` is a process-wide `static` shared by every test in this binary,
+    /// and `cargo test` runs tests on parallel threads. Serialising these tests
+    /// against each other makes the absolute-count assertions below sound; the
+    /// unique session names keep them independent of the surrounding suite.
+    static SERIAL_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    /// Holds the serial-test lock for its lifetime and releases any serial
+    /// counters a test created, so a failing assertion cannot leak state into
+    /// the next test.
+    struct SerialTestGuard {
+        _lock: parking_lot::MutexGuard<'static, ()>,
+        sessions: Vec<&'static str>,
+    }
+
+    impl SerialTestGuard {
+        fn new(sessions: &[&'static str]) -> Self {
+            let lock = SERIAL_TEST_LOCK.lock();
+            Self {
+                _lock: lock,
+                sessions: sessions.to_vec(),
+            }
+        }
+    }
+
+    impl Drop for SerialTestGuard {
+        fn drop(&mut self) {
+            for session in &self.sessions {
+                forget_session(session);
+            }
+        }
+    }
+
+    #[test]
+    fn serials_are_per_session_namespaces() {
+        let _guard = SerialTestGuard::new(&[
+            "/test/clipboard/serials/ns-a",
+            "/test/clipboard/serials/ns-b",
+        ]);
+        assert_eq!(next_serial("/test/clipboard/serials/ns-a"), 1);
+        assert_eq!(
+            next_serial("/test/clipboard/serials/ns-b"),
+            1,
+            "counters must not be shared across sessions",
+        );
+    }
+
+    #[test]
+    fn serials_increment_within_a_session() {
+        let _guard = SerialTestGuard::new(&["/test/clipboard/serials/increment"]);
+        let s = "/test/clipboard/serials/increment";
+        assert_eq!(next_serial(s), 1);
+        assert_eq!(next_serial(s), 2);
+        assert_eq!(next_serial(s), 3);
+    }
+
+    #[test]
+    fn serial_never_returns_the_reserved_zero() {
+        let _guard = SerialTestGuard::new(&["/test/clipboard/serials/zero"]);
+        let s = "/test/clipboard/serials/zero";
+        for _ in 0..8 {
+            assert_ne!(next_serial(s), 0, "0 is reserved by the contract");
+        }
+    }
+
+    #[test]
+    fn counter_is_created_lazily_only_when_requested() {
+        let _guard = SerialTestGuard::new(&["/test/clipboard/serials/lazy"]);
+        let s = "/test/clipboard/serials/lazy";
+        // Deltas rather than absolutes: `SERIALS` is process-wide, so an
+        // absolute count is only correct while nothing else in the binary is
+        // using it.
+        let before = tracked_serial_count();
+        next_serial(s);
+        assert_eq!(
+            tracked_serial_count(),
+            before + 1,
+            "using a serial creates exactly one counter",
+        );
+    }
+
+    #[test]
+    fn repeated_use_does_not_grow_the_map() {
+        let _guard = SerialTestGuard::new(&["/test/clipboard/serials/stable"]);
+        let s = "/test/clipboard/serials/stable";
+        next_serial(s);
+        let after_first = tracked_serial_count();
+        for _ in 0..100 {
+            next_serial(s);
+        }
+        assert_eq!(
+            tracked_serial_count(),
+            after_first,
+            "repeated SetSelection on one session must reuse one counter",
+        );
+    }
+
+    #[test]
+    fn forget_session_releases_the_counter() {
+        let _guard = SerialTestGuard::new(&["/test/clipboard/serials/forget"]);
+        let s = "/test/clipboard/serials/forget";
+        next_serial(s);
+        let held = tracked_serial_count();
+        assert!(forget_session(s), "removal must report that it removed one");
+        assert_eq!(
+            tracked_serial_count(),
+            held - 1,
+            "teardown must not leave the counter behind",
+        );
+        assert!(!forget_session(s), "removal is idempotent");
+    }
+
+    /// The regression this guards: `next_serial` used to build an owned key for
+    /// `HashMap::entry`, so every clipboard request allocated a session `Arc`
+    /// even when the session already had a counter.
+    #[test]
+    fn a_warm_counter_lookup_does_not_allocate() {
+        let _guard = SerialTestGuard::new(&["/test/clipboard/serials/warm"]);
+        let s = "/test/clipboard/serials/warm";
+        assert_eq!(next_serial(s), 1);
+
+        let scope = crate::alloc_probe::AllocScope::start();
+        let serial = next_serial(s);
+        let snap = scope.finish();
+
+        assert_eq!(serial, 2, "the counter must keep advancing");
+        assert_eq!(
+            snap.count, 0,
+            "an existing counter must be found by borrow, not rebuilt, got {snap:?}",
+        );
+    }
+
+    #[test]
+    fn forgetting_one_session_leaves_others_alone() {
+        let _guard = SerialTestGuard::new(&[
+            "/test/clipboard/serials/keep",
+            "/test/clipboard/serials/drop",
+        ]);
+        next_serial("/test/clipboard/serials/keep");
+        next_serial("/test/clipboard/serials/drop");
+        forget_session("/test/clipboard/serials/drop");
+        assert_eq!(
+            tracked_serial_count(),
+            1,
+            "only the forgotten session's counter is released",
+        );
+        // A surviving session keeps counting where it left off, so releasing
+        // another session's counter cannot restart it.
+        assert_eq!(next_serial("/test/clipboard/serials/keep"), 2);
+    }
+
+    /// Documents the `forget_session` precondition: a counter is released only
+    /// once the session is finished, so a live session's serials stay unique.
+    /// (A still-live `SetSelection` task after teardown would restart the
+    /// namespace, but its serials can never be claimed: `selection_write`
+    /// requires the session, which teardown already removed.)
+    #[test]
+    fn a_forgotten_session_starts_from_scratch_only_once() {
+        let _guard = SerialTestGuard::new(&["/test/clipboard/serials/restart"]);
+        let s = "/test/clipboard/serials/restart";
+        assert_eq!(next_serial(s), 1);
+        assert_eq!(next_serial(s), 2);
+        assert!(forget_session(s));
+        // Minting again after the namespace was released starts a fresh counter.
+        assert_eq!(next_serial(s), 1);
+        assert!(
+            forget_session(s),
+            "the resurrected counter must be releasable too"
+        );
+    }
+}
+
+#[cfg(test)]
+mod payload_tests {
+    use super::*;
+
+    fn mimes(values: &[&str]) -> gtk_backend::MimeList {
+        values.iter().map(|v| (*v).into()).collect()
+    }
+
+    /// The `SelectionOwnerChanged` payload is what every clipboard client reads,
+    /// and it is now built in one shared place rather than duplicated per caller.
+    #[test]
+    fn owner_changed_payload_shape() {
+        let list = mimes(&["text/plain", "image/png"]);
+        let options = owner_changed_options(&list);
+
+        assert_eq!(options.len(), 2, "exactly the two contract keys");
+        assert_eq!(options.get("session_is_owner"), Some(&Value::from(false)));
+
+        let Some(Value::Array(array)) = options.get("mime_types") else {
+            panic!("mime_types must be an array");
+        };
+        assert_eq!(array.len(), 2);
+        assert_eq!(
+            array.get(0).ok().flatten(),
+            Some(&Value::from("text/plain"))
+        );
+        assert_eq!(array.get(1).ok().flatten(), Some(&Value::from("image/png")));
+    }
+
+    #[test]
+    fn mime_order_is_preserved() {
+        let list = mimes(&["z/last", "a/first"]);
+        let options = owner_changed_options(&list);
+        let Some(Value::Array(array)) = options.get("mime_types") else {
+            panic!("mime_types must be an array");
+        };
+        assert_eq!(array.get(0).ok().flatten(), Some(&Value::from("z/last")));
+        assert_eq!(array.get(1).ok().flatten(), Some(&Value::from("a/first")));
+    }
+
+    #[test]
+    fn empty_mime_list_still_produces_an_array() {
+        let list = gtk_backend::MimeList::new();
+        let options = owner_changed_options(&list);
+        assert!(matches!(options.get("mime_types"), Some(Value::Array(a)) if a.is_empty()));
+    }
+
+    #[test]
+    fn mime_types_round_trip_through_the_wire_value() {
+        let original = mimes(&["text/plain", "text/html", "image/png"]);
+        let options = owner_changed_options(&original);
+        assert_eq!(parse_mime_types(&options), original);
+    }
+
+    #[test]
+    fn parsing_a_missing_or_wrongly_typed_key_yields_an_empty_list() {
+        let empty: HashMap<&str, Value<'_>> = HashMap::new();
+        assert!(parse_mime_types(&empty).is_empty());
+
+        let wrong_type: HashMap<&str, Value<'_>> =
+            HashMap::from([("mime_types", Value::from("text/plain"))]);
+        assert!(parse_mime_types(&wrong_type).is_empty());
+    }
+
+    #[test]
+    fn parsing_skips_non_string_elements() {
+        let mixed = Value::from(vec![
+            Value::from("text/plain"),
+            Value::from(42u32),
+            Value::from("image/png"),
+        ]);
+        let options: HashMap<&str, Value<'_>> = HashMap::from([("mime_types", mixed)]);
+        let parsed = parse_mime_types(&options);
+        assert_eq!(parsed, mimes(&["text/plain", "image/png"]));
     }
 }
