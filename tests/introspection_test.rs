@@ -390,6 +390,90 @@ async fn property_names_match_upstream_contract() {
     );
 }
 
+/// `org.freedesktop.impl.portal.Session` is a shared interface, not a portal
+/// interface: it is exported at each *session* path rather than at
+/// `/org/freedesktop/portal/desktop`, so `EXPECTED` cannot cover it — that table
+/// is also cross-checked against `data/gtk4.portal`, which must not advertise
+/// `Session`.
+///
+/// That leaves it easy to break silently, and the way it breaks is a wire-name
+/// drift: `#[zbus(property)]` capitalises the Rust fn name, so a getter written
+/// `fn version()` is exported as `Version`, which the frontend's generated proxy
+/// will never read. `Clipboard` and `Settings` both shipped that defect, which
+/// is why this file exists. A unit test on the Rust getter cannot catch it — it
+/// passes either way — so the only real guard is introspection.
+#[tokio::test]
+async fn session_interface_matches_upstream_contract() {
+    use zbus::fdo::IntrospectableProxy;
+
+    const SESSION_PATH: &str = "/org/freedesktop/portal/desktop/session/1/1";
+
+    let Ok(b) = zbus::connection::Builder::session() else {
+        eprintln!("no private session bus; skipping");
+        return;
+    };
+    let Ok(server_conn) = b.build().await else {
+        eprintln!("no private session bus; skipping");
+        return;
+    };
+    let Ok(cb) = zbus::connection::Builder::session() else {
+        return;
+    };
+    let Ok(client) = cb.build().await else {
+        return;
+    };
+
+    server_conn
+        .object_server()
+        .at(
+            SESSION_PATH,
+            xdg_desktop_portal_gtk4::core::session::Session::new(SESSION_PATH.into(), None),
+        )
+        .await
+        .expect("register session object");
+
+    let ip = IntrospectableProxy::builder(&client)
+        .destination(server_conn.unique_name().unwrap().clone())
+        .map_err(|_| ())
+        .expect("destination")
+        .path(SESSION_PATH)
+        .map_err(|_| ())
+        .expect("path")
+        .build()
+        .await
+        .expect("build introspectable proxy");
+
+    let xml = tokio::time::timeout(std::time::Duration::from_secs(30), ip.introspect())
+        .await
+        .expect("Introspect timed out")
+        .expect("introspect");
+
+    let full = format!("{IMPL_PREFIX}Session");
+    let scan = scan_interface(&xml, &full).unwrap_or_else(|| {
+        panic!("{full} is not exported at {SESSION_PATH}");
+    });
+
+    // The contract declares Close() and a read-only `version`; nothing else.
+    let actual: std::collections::BTreeMap<_, _> = scan.methods.into_iter().collect();
+    assert_eq!(
+        actual.keys().collect::<Vec<_>>(),
+        vec!["Close"],
+        "{full} must export exactly the contract's methods, got {actual:?}"
+    );
+    assert_eq!(
+        actual["Close"],
+        Vec::<String>::new(),
+        "Close takes no arguments"
+    );
+
+    assert_eq!(
+        scan.properties.iter().collect::<Vec<_>>(),
+        vec!["version"],
+        "{full} must export exactly `version`; `Version` is the capitalisation \
+         drift this test exists to catch, and the frontend reads `version`"
+    );
+}
+
 /// `data/gtk4.portal` advertises the interface set. If it names an interface
 /// the binary does not export, `xdg-desktop-portal` will call it and get
 /// `UnknownMethod`; if it omits one, the backend is silently unusable for it.
