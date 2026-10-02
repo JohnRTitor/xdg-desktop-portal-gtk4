@@ -4,7 +4,11 @@
 //! typically used when the application needs continuous access to a resource (e.g.,
 //! screen casting, remote desktop).
 
-use {std::sync::Arc, tokio::sync::Notify, zbus::interface};
+use {
+    std::sync::Arc,
+    tokio::sync::Notify,
+    zbus::{ObjectServer, interface, object_server::SignalEmitter},
+};
 
 /// Represents a portal session on D-Bus.
 ///
@@ -37,15 +41,24 @@ impl Session {
 #[interface(name = "org.freedesktop.impl.portal.Session")]
 impl Session {
     /// Called by the portal frontend to close the session.
-    async fn close(&self) {
-        // Currently, we only log the closure. Real implementations (if added later)
-        // would need to clean up resources, close GTK dialogs, or stop screen recording.
+    async fn close(
+        &self,
+        #[zbus(object_server)] server: &ObjectServer,
+        #[zbus(signal_emitter)] signal_emitter: SignalEmitter<'_>,
+    ) {
         tracing::info!("Session {} closed", self.id);
-        // We just notify that the session has been closed.
+
+        let _ = Self::closed(&signal_emitter).await;
+
         if let Some(notify) = &self.on_close {
             notify.notify_one();
         }
+
+        let _ = server.remove::<Session, _>(self.id.as_ref()).await;
     }
+
+    #[zbus(signal)]
+    async fn closed(ctxt: &SignalEmitter<'_>) -> zbus::Result<()>;
 }
 
 #[cfg(test)]
@@ -60,19 +73,42 @@ mod tests {
 
     #[tokio::test]
     async fn test_session_close() {
+        let Ok(conn) = zbus::Connection::session().await else {
+            return;
+        };
+        let server = conn.object_server();
+        let path = zbus::zvariant::ObjectPath::try_from("/test/session/1").unwrap();
+
         let notify = Arc::new(Notify::new());
-        let session = Session::new("test_session_id".into(), Some(notify.clone()));
+        let session = Session::new("/test/session/1".into(), Some(notify.clone()));
 
-        assert_eq!(&*session.id, "test_session_id");
+        server.at(&path, session).await.unwrap();
 
-        session.close().await;
+        let iface_ref = server.interface::<_, Session>(&path).await.unwrap();
+        let emitter = iface_ref.signal_emitter();
+        let session_ref = iface_ref.get().await;
+
+        Session::close(&session_ref, server, emitter.clone()).await;
 
         notify.notified().await;
     }
 
     #[tokio::test]
     async fn test_session_close_no_channel() {
-        let session = Session::new("test_session_id".into(), None);
-        session.close().await; // Should not panic
+        let Ok(conn) = zbus::Connection::session().await else {
+            return;
+        };
+        let server = conn.object_server();
+        let path = zbus::zvariant::ObjectPath::try_from("/test/session/2").unwrap();
+
+        let session = Session::new("/test/session/2".into(), None);
+
+        server.at(&path, session).await.unwrap();
+
+        let iface_ref = server.interface::<_, Session>(&path).await.unwrap();
+        let emitter = iface_ref.signal_emitter();
+        let session_ref = iface_ref.get().await;
+
+        Session::close(&session_ref, server, emitter.clone()).await;
     }
 }
