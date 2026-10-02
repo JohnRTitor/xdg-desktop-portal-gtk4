@@ -12,12 +12,21 @@ use {
 ///
 /// This function sets up a race between the actual portal work (`f`) and the
 /// cancellation listener on the Request D-Bus object. Whichever finishes first
-/// determines the outcome. If cancellation wins, we return `Response::cancelled()`.
+/// determines the outcome. If cancellation wins, we return `Response::other()`.
 ///
-/// The Request object is exported *before* registering with the SessionManager.
-/// This closes the race where a cancellation arrives after `register()` but
-/// before `at()`: the `notify` is already listening, so the cancellation is
-/// caught. If registration fails, the export is cleaned up.
+/// The Request object is exported before registering with the [`SessionManager`]
+/// so that it exists on the bus for the whole life of the request. A `Close`
+/// that arrives in the first moments of a request then reaches a real object
+/// and cancels it, rather than arriving while the path is still unexported and
+/// coming back as `UnknownObject`.
+///
+/// Note that the order is *not* what keeps a cancellation from being lost.
+/// `Notify` latches a permit when `notify_one` runs with no waiter, so a
+/// notification delivered before the `select!` below is armed is held until
+/// something awaits it — see
+/// `a_cancellation_before_the_select_is_still_observed` for that pinned
+/// behaviour. Both the frontend's `Close` and the [`SessionManager`]'s
+/// disconnect sweep notify this way.
 pub async fn run_request<T, F>(
     server: &ObjectServer,
     session_manager: crate::core::session_manager::SessionManager,
@@ -109,6 +118,37 @@ mod tests {
         req.close().await;
 
         notify.notified().await; // Should complete immediately
+    }
+
+    /// A cancellation delivered before anyone starts listening is still seen.
+    ///
+    /// This is the property that makes the export/register order in
+    /// [`run_request`] a robustness question rather than a lost-wakeup bug:
+    /// `Notify` stores a permit when `notify_one` runs with no waiter, so a
+    /// `Close` that lands in the window before the `select!` is armed is
+    /// latched rather than dropped. It also covers the disconnect path, where
+    /// `SessionManager` notifies from its own task.
+    ///
+    /// Pinned because the guarantee is a property of `Notify` rather than of
+    /// this code: if a future refactor swapped `Notify` for a plain `AtomicBool`
+    /// or an mpsc without a buffered permit, a cancellation could be lost and
+    /// this test would be the thing that notices.
+    #[tokio::test]
+    async fn a_cancellation_before_the_select_is_still_observed() {
+        let notify = Arc::new(Notify::new());
+        notify.notify_one();
+        // Let the notification happen strictly before the listener exists.
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+
+        let seen = tokio::time::timeout(
+            std::time::Duration::from_millis(500),
+            notify.notified(),
+        )
+        .await;
+        assert!(
+            seen.is_ok(),
+            "a notification sent before the listener existed must be latched"
+        );
     }
 
     #[tokio::test]
