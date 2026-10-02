@@ -108,7 +108,16 @@ impl Portal {
             }
         });
 
-        let system_conn = Connection::system().await.ok();
+        let system_conn = match Connection::system().await {
+            Ok(conn) => Some(conn),
+            Err(e) => {
+                tracing::warn!(
+                    "Could not connect to system bus: {}. Inhibit portal will not use logind.",
+                    e
+                );
+                None
+            }
+        };
 
         macro_rules! add {
             ($interface:expr) => {
