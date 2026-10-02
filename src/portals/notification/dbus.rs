@@ -13,6 +13,9 @@ use {
     },
 };
 
+/// Subdirectory of `$XDG_RUNTIME_DIR` that staged notification sounds live in.
+const TEMP_SOUND_SUBDIR: &str = "xdg-desktop-portal-gtk4-sounds";
+
 pub struct TempSoundFile {
     pub path: std::path::PathBuf,
 }
@@ -24,6 +27,86 @@ impl Drop for TempSoundFile {
             let _ = std::fs::remove_file(&path);
         });
     }
+}
+
+/// The directory staged notification sounds are written into.
+///
+/// Returns `None` when `$XDG_RUNTIME_DIR` is unset or empty. Unlike
+/// `std::env::temp_dir()`, that directory is guaranteed to be private to the
+/// user (mode `0700`), so it is the only place this daemon may create files on
+/// an unprivileged caller's behalf. `std::env::temp_dir()` is world-writable and
+/// shared with every other process on the machine.
+fn temp_sound_dir() -> Option<std::path::PathBuf> {
+    sound_dir_under(std::env::var_os("XDG_RUNTIME_DIR").as_deref())
+}
+
+/// [`temp_sound_dir`] with the runtime directory supplied explicitly.
+///
+/// Split out so the rule can be tested without mutating process-global
+/// environment state, which is `unsafe` on this Rust edition.
+fn sound_dir_under(runtime_dir: Option<&std::ffi::OsStr>) -> Option<std::path::PathBuf> {
+    let runtime_dir = runtime_dir?;
+    if runtime_dir.is_empty() {
+        return None;
+    }
+    let mut path = std::path::PathBuf::from(runtime_dir);
+    path.push(TEMP_SOUND_SUBDIR);
+    Some(path)
+}
+
+/// Create `dir` with mode `0700`, tolerating an existing directory.
+///
+/// A plain `create_dir_all` applies the process umask to a `0777` request, which
+/// under a permissive umask yields a group- or world-accessible directory. The
+/// mode is requested explicitly so the result is `0700` regardless of umask.
+/// An existing path is accepted: `EEXIST` on a directory is the normal case
+/// after the first sound in a session, and the parent is already private.
+fn ensure_private_dir(dir: &std::path::Path) -> std::io::Result<()> {
+    match rustix::fs::mkdir(dir, rustix::fs::Mode::RUSR | rustix::fs::Mode::WUSR) {
+        Ok(()) => Ok(()),
+        Err(rustix::io::Errno::EXIST) => Ok(()),
+        Err(e) => Err(std::io::Error::from_raw_os_error(e.raw_os_error())),
+    }
+}
+
+/// Write `data` to `path`, failing if `path` already exists.
+///
+/// `O_EXCL` is the whole point: it makes `open` fail with `EEXIST` when the
+/// target already exists, *including when it is a symlink*, so the caller can
+/// never be tricked into writing through a link planted by another process. The
+/// file is created `0600` because the sound is derived from a sandboxed
+/// caller's data and is passed to the notification daemon.
+async fn write_exclusive(path: &std::path::Path, data: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+
+    let parent = path
+        .parent()
+        .map(std::path::Path::to_path_buf)
+        .ok_or(std::io::Error::from(std::io::ErrorKind::InvalidInput))?;
+    let bytes = data.to_vec();
+    let path_buf = path.to_path_buf();
+
+    // Both the `open` and the write are syscalls. Keep them off the runtime
+    // thread so a stalled filesystem cannot stall the single-threaded D-Bus
+    // reactor.
+    tokio::task::spawn_blocking(move || -> std::io::Result<()> {
+        ensure_private_dir(&parent)?;
+
+        let file = rustix::fs::open(
+            &path_buf,
+            rustix::fs::OFlags::WRONLY
+                | rustix::fs::OFlags::CREATE
+                | rustix::fs::OFlags::EXCL
+                | rustix::fs::OFlags::CLOEXEC
+                | rustix::fs::OFlags::NOCTTY,
+            rustix::fs::Mode::RUSR | rustix::fs::Mode::WUSR,
+        )
+        .map_err(|e| std::io::Error::from_raw_os_error(e.raw_os_error()))?;
+
+        std::fs::File::from(file).write_all(&bytes)
+    })
+    .await
+    .map_err(|e| std::io::Error::other(e.to_string()))?
 }
 
 #[zbus::proxy(
@@ -324,12 +407,28 @@ impl Notification {
                 use std::{io::Read, os::fd::AsFd};
                 if let Ok(owned_fd) = fd.as_fd().try_clone_to_owned() {
                     let mut file = std::fs::File::from(owned_fd);
-                    let mut path = std::env::temp_dir();
-                    if let Ok(runtime_dir) = std::env::var("XDG_RUNTIME_DIR") {
-                        path = std::path::PathBuf::from(runtime_dir);
-                    }
-                    path.push("xdg-desktop-portal-gtk4-sounds");
-                    let _ = tokio::fs::create_dir_all(&path).await;
+
+                    // Only ever write below a directory we own, with `0700`, and
+                    // create the file with `O_EXCL`.
+                    //
+                    // The previous code fell back to `std::env::temp_dir()`
+                    // (`/tmp`) whenever `XDG_RUNTIME_DIR` was unset, created the
+                    // directory with `create_dir_all` at the default umask, and
+                    // wrote with a plain truncate-create at the predictable name
+                    // `{app_id}_{micros}.snd`. In a shared `/tmp` that is a
+                    // symlink attack: a local attacker pre-creates the directory
+                    // (or the file, as a symlink to something the user owns) and
+                    // the portal -- running as the user -- truncates and
+                    // overwrites the target. `$XDG_RUNTIME_DIR` is 0700 by
+                    // definition, so requiring it removes the shared-directory
+                    // case entirely; `O_EXCL` removes the pre-created-file case
+                    // even inside a correctly-permissioned directory.
+                    let Some(mut path) = temp_sound_dir() else {
+                        tracing::warn!(
+                            "XDG_RUNTIME_DIR is unset; refusing to stage a notification sound file"
+                        );
+                        return;
+                    };
 
                     let timestamp = std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
@@ -352,7 +451,7 @@ impl Notification {
                     .unwrap_or(None);
 
                     if let Some(data) = bytes
-                        && tokio::fs::write(&path, data).await.is_ok()
+                        && write_exclusive(&path, &data).await.is_ok()
                     {
                         sound_file = Some(Arc::new(TempSoundFile { path }));
                     }
@@ -800,6 +899,98 @@ async fn listen_for_notification_closed(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The staged-sound directory must live under `$XDG_RUNTIME_DIR`, never in
+    /// the world-writable system temp directory.
+    ///
+    /// Regression: the previous code used `std::env::temp_dir()` as the base and
+    /// only preferred `$XDG_RUNTIME_DIR` when it happened to be set. When it was
+    /// not, sounds landed in `/tmp` at a semi-predictable name, writable by any
+    /// local user.
+    #[test]
+    fn there_is_no_sound_directory_without_a_runtime_dir() {
+        assert_eq!(
+            sound_dir_under(None),
+            None,
+            "without XDG_RUNTIME_DIR there is no private directory to write into"
+        );
+    }
+
+    #[test]
+    fn an_empty_runtime_dir_is_treated_as_unset() {
+        assert_eq!(sound_dir_under(Some(std::ffi::OsStr::new(""))), None);
+    }
+
+    #[test]
+    fn the_sound_directory_is_created_under_the_runtime_dir() {
+        assert_eq!(
+            sound_dir_under(Some(std::ffi::OsStr::new("/run/user/1000"))),
+            Some(std::path::PathBuf::from("/run/user/1000").join(TEMP_SOUND_SUBDIR))
+        );
+    }
+
+    /// The create must be exclusive.
+    ///
+    /// Regression: `tokio::fs::write` opens `O_WRONLY|O_CREAT|O_TRUNC` with no
+    /// `O_EXCL` and no `O_NOFOLLOW`, so a pre-existing symlink at the target
+    /// path was followed and truncated. This asserts the `O_EXCL` behaviour that
+    /// replaces it.
+    #[tokio::test]
+    async fn write_exclusive_refuses_an_existing_target() {
+        let dir = std::env::temp_dir().join(format!("xdp-sound-test-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let target = dir.join("taken.snd");
+
+        write_exclusive(&target, b"first")
+            .await
+            .expect("the first create must succeed");
+
+        let err = write_exclusive(&target, b"second")
+            .await
+            .expect_err("an existing target must not be overwritten");
+        assert_eq!(
+            err.kind(),
+            std::io::ErrorKind::AlreadyExists,
+            "O_EXCL must surface as EEXIST, got {err:?}"
+        );
+        assert_eq!(
+            std::fs::read(&target).unwrap(),
+            b"first",
+            "the original contents must survive the refused write"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A symlink at the target must not be followed.
+    ///
+    /// This is the attack the `O_EXCL` flag exists to stop: a local attacker
+    /// plants `attack.snd -> ~/.bashrc` in the sound directory and waits for the
+    /// portal to write through it.
+    #[tokio::test]
+    async fn write_exclusive_does_not_follow_a_symlink() {
+        let dir = std::env::temp_dir().join(format!("xdp-sound-link-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let victim = dir.join("victim");
+        std::fs::write(&victim, b"intact").unwrap();
+        let link = dir.join("attack.snd");
+        let _ = std::fs::remove_file(&link);
+        std::os::unix::fs::symlink(&victim, &link).unwrap();
+
+        let result = write_exclusive(&link, b"overwritten").await;
+
+        assert!(
+            result.is_err(),
+            "O_EXCL must refuse to open through an existing symlink"
+        );
+        assert_eq!(
+            std::fs::read(&victim).unwrap(),
+            b"intact",
+            "the symlink target must be untouched"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[tokio::test]
     async fn test_notification_properties() {
