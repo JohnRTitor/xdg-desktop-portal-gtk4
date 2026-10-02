@@ -391,12 +391,25 @@ impl ClipboardPortal {
         let pending_transfers_clone = self.pending_transfers.clone();
         let conn_clone = self.connection.clone();
         let session_handle_owned = session_handle.into_owned();
+        let active_sessions_clone = self.active_sessions.clone();
 
         tokio::spawn(async move {
             // This task handles the host requesting data *from* the sandbox.
             // It dies when `request_rx` is dropped, which happens when the host copies
             // something else and our ContentProvider is destroyed.
             while let Some((mime, fd_sender)) = request_rx.recv().await {
+                if !active_sessions_clone
+                    .lock()
+                    .iter()
+                    .any(|s| s.as_str() == session_handle_owned.as_str())
+                {
+                    tracing::debug!(
+                        "Session {} is no longer active, stopping SelectionTransfer",
+                        session_handle_owned
+                    );
+                    return;
+                }
+
                 let Ok(emitter) = SignalEmitter::new(&conn_clone, crate::core::DBUS_PATH) else {
                     return;
                 };
