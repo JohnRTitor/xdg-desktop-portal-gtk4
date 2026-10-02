@@ -62,7 +62,12 @@ impl Email {
             Ok(_) => Response::success(EmailResults::default()),
             Err(e) => {
                 tracing::error!(error = %e, "ComposeEmail failed");
-                Response::cancelled()
+                // Launching the mail client is not a dialog, so there is no user refusal
+                // to report. The contract reserves 1 for "the user cancelled the
+                // interaction" (`org.freedesktop.portal.Request.xml`, the
+                // `Response` signal); nobody was shown anything here, so a failed
+                // launch is the "some other way" case.
+                Response::other()
             }
         }
     }

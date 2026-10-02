@@ -111,7 +111,7 @@ impl Access {
             }),
             Err(e) => {
                 tracing::error!(error = %e, "AccessDialog failed");
-                Response::cancelled()
+                Response::from_ui_error(e)
             }
         }
     }
@@ -143,7 +143,7 @@ impl Access {
             .ok_or_else(|| fdo::Error::Failed("Missing sender".into()))?;
         // Run the request concurrently with a cancellation listener.
         // If the frontend calls `Close()` on the request object path, `run_request`
-        // will return `Response::cancelled()` and drop the future.
+        // will return `Response::other()` and drop the future.
         Ok(run_request(
             server,
             self.session_manager.clone(),

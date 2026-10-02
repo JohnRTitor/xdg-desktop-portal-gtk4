@@ -2,7 +2,7 @@ use {
     super::gui::AppChooserUi,
     crate::{
         core::{request::run_request, response::Response},
-        gui::{UiError, UiProxy},
+        gui::UiProxy,
     },
     parking_lot::Mutex,
     std::{collections::HashMap, sync::Arc},
@@ -128,7 +128,7 @@ impl AppChooser {
                 };
                 Response::success(res)
             }
-            Err(UiError::Closed) | Err(UiError::Rejected) => Response::cancelled(),
+            Err(e) => Response::from_ui_error(e),
         }
     }
 }

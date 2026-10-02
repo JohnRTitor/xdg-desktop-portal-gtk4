@@ -180,7 +180,7 @@ impl FileChooser {
             }),
             Err(e) => {
                 tracing::error!(error = %e, "OpenFile failed");
-                Response::cancelled()
+                Response::from_ui_error(e)
             }
         }
     }
@@ -219,7 +219,7 @@ impl FileChooser {
             }),
             Err(e) => {
                 tracing::error!(error = %e, "SaveFile failed");
-                Response::cancelled()
+                Response::from_ui_error(e)
             }
         }
     }
@@ -329,7 +329,10 @@ impl FileChooser {
             Ok(res) => Response::success(res),
             Err(e) => {
                 tracing::error!(error = %e, "SaveFiles failed");
-                Response::cancelled()
+                // A rejected request never reached a dialog the user answered --
+                // the validation ran first -- so this is a backend failure and
+                // not a cancellation.
+                Response::other()
             }
         }
     }

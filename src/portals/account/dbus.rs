@@ -99,7 +99,7 @@ impl Account {
             }
             Err(e) => {
                 tracing::error!(error = %e, "GetUserInformation failed");
-                Response::cancelled()
+                Response::from_ui_error(e)
             }
         }
     }

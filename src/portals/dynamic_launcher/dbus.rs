@@ -112,7 +112,7 @@ impl DynamicLauncher {
             }
             Err(e) => {
                 tracing::error!(error = %e, "PrepareInstall failed");
-                Response::cancelled()
+                Response::from_ui_error(e)
             }
         }
     }
@@ -145,7 +145,9 @@ impl DynamicLauncher {
             Ok(v) => v,
             Err(e) => {
                 tracing::error!("Failed to allocate OwnedValue: {}", e);
-                return Ok(Response::cancelled());
+                // A malformed icon is a backend failure, not something the user
+                // declined, so this is "other" rather than "cancelled".
+                return Ok(Response::other());
             }
         };
         Ok(run_request(

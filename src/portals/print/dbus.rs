@@ -114,7 +114,7 @@ impl Print {
             }),
             Err(e) => {
                 tracing::error!(error = %e, "PreparePrint failed");
-                Response::cancelled()
+                Response::from_ui_error(e)
             }
         }
     }
@@ -151,7 +151,7 @@ impl Print {
             Ok(_) => Response::success(PrintResults::default()),
             Err(e) => {
                 tracing::error!(error = %e, "Print dispatch failed");
-                Response::cancelled()
+                Response::from_ui_error(e)
             }
         }
     }
