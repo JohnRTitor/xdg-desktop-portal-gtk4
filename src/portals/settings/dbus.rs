@@ -11,54 +11,46 @@ use {
 
 use crate::{
     gui::UiProxy,
-    portals::settings::aggregator::{SettingsAggregator, SettingsState},
+    portals::settings::aggregator::{
+        NS_GNOME_DESKTOP_INTERFACE, SettingsAggregator, SettingsState,
+    },
 };
 
-const NS_FREEDESKTOP_APPEARANCE: &str = "org.freedesktop.appearance";
-const NS_GNOME_DESKTOP_INTERFACE: &str = "org.gnome.desktop.interface";
+#[cfg(test)]
+use crate::portals::settings::aggregator::NS_FREEDESKTOP_APPEARANCE;
 
-/// The namespaces this portal can serve, in the order the contract expects them.
-const SUPPORTED_NAMESPACES: [&str; 3] = [
-    NS_FREEDESKTOP_APPEARANCE,
-    NS_GNOME_DESKTOP_INTERFACE,
-    crate::portals::settings::aggregator::NS_KDE_KDEGLOBALS,
-];
-
-/// Resolves the caller's requested namespace list against the supported set.
+/// Does `namespace` satisfy any of the caller's `patterns`?
 ///
-/// A request for an empty list, or one containing `""`, means "everything".
-/// Otherwise each entry is either an exact namespace or a `prefix*` wildcard.
-/// Duplicates are dropped, and a wildcard may not re-add a namespace that was
-/// already matched exactly.
+/// This is the namespace matcher the portal contract describes, applied to each
+/// namespace the backend actually has data for rather than to a hardcoded
+/// support list. A pattern matches when it is the empty string (meaning "all"),
+/// an exact match, or a prefix when it ends in `*`.
 ///
-/// Returns borrowed slices out of [`SUPPORTED_NAMESPACES`] — the returned
-/// `Vec` borrows from `SUPPORTED_NAMESPACES`, never from `requested`, so an
-/// unsupported namespace contributes no allocation at all.
-fn select_namespaces(requested: &[String]) -> Vec<&'static str> {
-    if requested.is_empty() || requested.iter().any(|ns| ns.is_empty()) {
-        return SUPPORTED_NAMESPACES.to_vec();
+/// Matching against the live state rather than a fixed list is what makes
+/// `Read` and `ReadAll` agree. `read_kdeglobals` publishes one namespace per
+/// INI group, `org.kde.kdeglobals.<Group>`, so a support list containing only the
+/// bare `org.kde.kdeglobals` could never select any of them and `ReadAll` would
+/// silently omit data that a direct `Read` of the same namespace returned. An
+/// exact-match lookup against the real keys closes that gap without needing to
+/// enumerate group names up front.
+fn namespace_matches(namespace: &str, patterns: &[String]) -> bool {
+    if patterns.is_empty() {
+        return true;
     }
-
-    let mut active: Vec<&'static str> = Vec::with_capacity(SUPPORTED_NAMESPACES.len());
-    for requested_ns in requested {
-        // `trim_end_matches`, not `strip_suffix`: the previous implementation
-        // trimmed every trailing `*`, so `"org.*.*"` and `"**"` keep matching the
-        // same prefixes they always did.
-        if requested_ns.ends_with('*') {
-            let prefix = requested_ns.trim_end_matches('*');
-            for available_ns in SUPPORTED_NAMESPACES {
-                if available_ns.starts_with(prefix) && !active.contains(&available_ns) {
-                    active.push(available_ns);
-                }
-            }
-        } else if let Some(available_ns) =
-            SUPPORTED_NAMESPACES.iter().find(|ns| **ns == requested_ns)
-            && !active.contains(available_ns)
-        {
-            active.push(available_ns);
+    patterns.iter().any(|pattern| {
+        if pattern.is_empty() {
+            return true;
         }
-    }
-    active
+        if pattern == namespace {
+            return true;
+        }
+        // Strip exactly one trailing `*`, matching the reference: a pattern of
+        // `org.*` is a prefix match, while `org.*.*` is not a valid pattern and
+        // must not degenerate into "everything".
+        pattern
+            .strip_suffix('*')
+            .is_some_and(|prefix| namespace.starts_with(prefix))
+    })
 }
 
 /// Builds the `ReadAll` reply for the caller's requested namespaces.
@@ -67,17 +59,20 @@ fn select_namespaces(requested: &[String]) -> Vec<&'static str> {
 /// accompanied by a copy of its key/value map: the reply type is an owned
 /// `HashMap<String, HashMap<String, OwnedValue>>`, so the inner copy is required
 /// by the D-Bus contract rather than by the lookup.
+///
+/// A namespace that is supported but has no data is omitted rather than sent as
+/// an empty map. That matches every reference backend, and it keeps `ReadAll`
+/// consistent with `Read`, which reports "not found" for such a namespace.
 fn read_all_from_state(
     state: &SettingsState,
     requested: &[String],
 ) -> HashMap<String, HashMap<String, OwnedValue>> {
-    let mut result = HashMap::new();
-    for ns in select_namespaces(requested) {
-        if let Some(ns_map) = state.namespaces.get(ns) {
-            result.insert(ns.to_owned(), ns_map.clone());
-        }
-    }
-    result
+    state
+        .namespaces
+        .iter()
+        .filter(|(ns, _)| namespace_matches(ns, requested))
+        .map(|(ns, keys)| (ns.clone(), keys.clone()))
+        .collect()
 }
 
 /// D-Bus interface wrapper for the Settings portal.
@@ -221,7 +216,7 @@ impl SettingsPortal {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use {super::*, crate::portals::settings::aggregator::NS_KDE_KDEGLOBALS};
 
     fn ns(names: &[&str]) -> Vec<String> {
         names.iter().map(|s| (*s).to_owned()).collect()
@@ -247,118 +242,137 @@ mod tests {
         assert_eq!(map_color_scheme("foobar"), 0);
     }
 
-    #[test]
-    fn select_empty_request_returns_everything() {
-        assert_eq!(select_namespaces(&[]), SUPPORTED_NAMESPACES);
-    }
+    // --- namespace matching -------------------------------------------------
+    //
+    // These pin the matching rules the contract states for `ReadAll`
+    // (`org.freedesktop.impl.portal.Settings.xml`): an empty array or an empty
+    // string matches everything, and globbing applies "only for trailing
+    // sections", e.g. `org.example.*`.
 
     #[test]
-    fn select_empty_string_means_everything() {
-        // The contract treats an empty namespace entry as "all namespaces".
-        assert_eq!(select_namespaces(&ns(&[""])), SUPPORTED_NAMESPACES);
-    }
-
-    #[test]
-    fn select_exact_namespaces_in_requested_order() {
-        assert_eq!(
-            select_namespaces(&ns(&[
-                NS_GNOME_DESKTOP_INTERFACE,
-                NS_FREEDESKTOP_APPEARANCE
-            ])),
-            vec![NS_GNOME_DESKTOP_INTERFACE, NS_FREEDESKTOP_APPEARANCE],
-        );
-    }
-
-    #[test]
-    fn select_drops_duplicates() {
-        assert_eq!(
-            select_namespaces(&ns(&[NS_FREEDESKTOP_APPEARANCE, NS_FREEDESKTOP_APPEARANCE])),
-            vec![NS_FREEDESKTOP_APPEARANCE],
-        );
-    }
-
-    #[test]
-    fn select_wildcard_expands_to_matching_namespaces() {
-        // `org.freedesktop.*` matches only the appearance namespace.
-        assert_eq!(
-            select_namespaces(&ns(&["org.freedesktop.*"])),
-            vec![NS_FREEDESKTOP_APPEARANCE],
-        );
-        assert_eq!(
-            select_namespaces(&ns(&["org.gnome.desktop.*"])),
-            vec![NS_GNOME_DESKTOP_INTERFACE],
-        );
-        assert_eq!(
-            select_namespaces(&ns(&["org.*"])),
-            vec![
-                NS_FREEDESKTOP_APPEARANCE,
-                NS_GNOME_DESKTOP_INTERFACE,
-                crate::portals::settings::aggregator::NS_KDE_KDEGLOBALS
-            ],
-        );
-    }
-
-    #[test]
-    fn select_wildcard_does_not_duplicate_an_exact_match() {
-        // The wildcard branch must not re-add a namespace already matched.
-        assert_eq!(
-            select_namespaces(&ns(&[NS_FREEDESKTOP_APPEARANCE, "org.freedesktop.*",])),
-            vec![NS_FREEDESKTOP_APPEARANCE],
-        );
-    }
-
-    #[test]
-    fn select_unknown_namespaces_are_dropped() {
-        assert!(select_namespaces(&ns(&["com.example.Nope"])).is_empty());
-        assert!(select_namespaces(&ns(&["com.example.*"])).is_empty());
-    }
-
-    #[test]
-    fn select_lone_star_matches_everything() {
-        assert_eq!(select_namespaces(&ns(&["*"])), SUPPORTED_NAMESPACES);
-    }
-
-    #[test]
-    fn select_trims_every_trailing_star() {
-        // `trim_end_matches` strips every *consecutive* trailing `*`, which is
-        // what the previous implementation did. `"**"` therefore means "no
-        // prefix" and matches everything.
-        assert_eq!(select_namespaces(&ns(&["**"])), SUPPORTED_NAMESPACES);
-        assert_eq!(
-            select_namespaces(&ns(&["org.freedesktop.**"])),
-            vec![NS_FREEDESKTOP_APPEARANCE],
-        );
-        assert_eq!(
-            select_namespaces(&ns(&["org.gnome.desktop.**"])),
-            vec![NS_GNOME_DESKTOP_INTERFACE],
-        );
-        // A `.` before the stars stops the trim, so this is a literal prefix and
-        // matches nothing -- preserved from the previous behaviour.
-        assert!(select_namespaces(&ns(&["org.gnome.desktop.*.*"])).is_empty());
-    }
-
-    #[test]
-    fn select_namespaces_allocates_only_the_result_vec() {
-        // The resolved list borrows from `SUPPORTED_NAMESPACES`, so it costs
-        // exactly one `Vec` allocation regardless of how many entries are
-        // requested. Previously every request allocated a `String` per
-        // supported namespace, plus a clone per match.
-        for requested in [
-            vec![],
-            ns(&[""]),
-            ns(&["*"]),
-            ns(&["org.*"]),
-            ns(&[NS_FREEDESKTOP_APPEARANCE, "org.*"]),
+    fn an_empty_pattern_list_matches_every_namespace() {
+        for ns_name in [
+            NS_FREEDESKTOP_APPEARANCE,
+            NS_GNOME_DESKTOP_INTERFACE,
+            NS_KDE_KDEGLOBALS,
+            "com.example.Anything",
         ] {
-            let scope = crate::alloc_probe::AllocScope::start();
-            let selected = select_namespaces(&requested);
-            let snap = scope.finish();
-            std::hint::black_box(&selected);
-            assert_eq!(
-                snap.count, 1,
-                "expected only the result Vec to allocate, got {snap:?} for {requested:?}",
+            assert!(
+                namespace_matches(ns_name, &[]),
+                "an empty request must mean everything, but {ns_name} was excluded"
             );
         }
+    }
+
+    #[test]
+    fn an_empty_string_pattern_means_everything() {
+        assert!(namespace_matches(NS_FREEDESKTOP_APPEARANCE, &ns(&[""])));
+        assert!(namespace_matches("com.example.Anything", &ns(&[""])));
+    }
+
+    #[test]
+    fn an_exact_pattern_matches_only_itself() {
+        let patterns = ns(&[NS_GNOME_DESKTOP_INTERFACE]);
+        assert!(namespace_matches(NS_GNOME_DESKTOP_INTERFACE, &patterns));
+        assert!(!namespace_matches(NS_FREEDESKTOP_APPEARANCE, &patterns));
+    }
+
+    #[test]
+    fn a_trailing_star_is_a_prefix_match() {
+        assert!(namespace_matches(
+            NS_FREEDESKTOP_APPEARANCE,
+            &ns(&["org.freedesktop.*"])
+        ));
+        assert!(namespace_matches(
+            NS_GNOME_DESKTOP_INTERFACE,
+            &ns(&["org.gnome.desktop.*"])
+        ));
+        for ns_name in [
+            NS_FREEDESKTOP_APPEARANCE,
+            NS_GNOME_DESKTOP_INTERFACE,
+            NS_KDE_KDEGLOBALS,
+        ] {
+            assert!(
+                namespace_matches(ns_name, &ns(&["org.*"])),
+                "org.* must select {ns_name}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_bare_star_matches_everything() {
+        for ns_name in [
+            NS_FREEDESKTOP_APPEARANCE,
+            NS_GNOME_DESKTOP_INTERFACE,
+            "com.example.Anything",
+        ] {
+            assert!(
+                namespace_matches(ns_name, &ns(&["*"])),
+                "* missed {ns_name}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_unrelated_namespace_does_not_match() {
+        let patterns = ns(&["com.example.Nope"]);
+        assert!(!namespace_matches(NS_FREEDESKTOP_APPEARANCE, &patterns));
+        assert!(!namespace_matches(NS_GNOME_DESKTOP_INTERFACE, &patterns));
+    }
+
+    /// Regression: the previous matcher used `trim_end_matches('*')`, which
+    /// stripped *every* trailing star. `org.freedesktop.**` therefore collapsed
+    /// to the prefix `org.freedesktop.` and matched, though it is not a valid
+    /// pattern. The reference strips exactly one.
+    #[test]
+    fn only_one_trailing_star_is_consumed() {
+        assert!(namespace_matches(
+            NS_FREEDESKTOP_APPEARANCE,
+            &ns(&["org.freedesktop.*"])
+        ));
+        assert!(
+            !namespace_matches(NS_FREEDESKTOP_APPEARANCE, &ns(&["org.freedesktop.**"])),
+            "a doubled star must not be treated as a prefix wildcard"
+        );
+        assert!(
+            !namespace_matches(NS_FREEDESKTOP_APPEARANCE, &ns(&["**"])),
+            "a bare doubled star must not match everything"
+        );
+    }
+
+    /// Regression: a doubled star mid-pattern used to reduce the prefix to
+    /// `org.gnome.desktop.` and match. One star is stripped, leaving a literal
+    /// `*` at the front of the prefix, which no namespace can start with.
+    #[test]
+    fn a_star_in_the_middle_does_not_match() {
+        assert!(!namespace_matches(
+            NS_GNOME_DESKTOP_INTERFACE,
+            &ns(&["org.gnome.desktop.*.*"])
+        ));
+    }
+
+    /// Regression: `read_kdeglobals` publishes `org.kde.kdeglobals.<Group>`, so a
+    /// bare `org.kde.kdeglobals` prefix must select those group namespaces. They
+    /// were previously unreachable through `ReadAll`, because the matcher only
+    /// knew the bare `org.kde.kdeglobals` name and never the group-suffixed ones.
+    #[test]
+    fn the_kde_prefix_selects_group_namespaces() {
+        let group_ns = "org.kde.kdeglobals.KDE";
+        assert!(namespace_matches(group_ns, &ns(&["org.kde.*"])));
+        assert!(namespace_matches(group_ns, &ns(&["org.kde.kdeglobals.*"])));
+        assert!(namespace_matches(group_ns, &ns(&[group_ns])));
+        assert!(
+            !namespace_matches(NS_GNOME_DESKTOP_INTERFACE, &ns(&["org.kde.*"])),
+            "the KDE prefix must not leak neighbouring namespaces"
+        );
+    }
+
+    #[test]
+    fn matching_an_exact_group_name_needs_no_trailing_star() {
+        assert!(namespace_matches(
+            "org.kde.kdeglobals.KDE",
+            &ns(&["org.kde.kdeglobals.KDE"])
+        ));
     }
 }
 
@@ -371,16 +385,21 @@ mod read_all_tests {
         },
     };
 
+    /// A namespace name with an INI group suffix, which is the exact shape
+    /// `read_kdeglobals` writes: `format!("{}.{}", NS_KDE_KDEGLOBALS, group)`.
+    const KDE_GROUP: &str = "org.kde.kdeglobals.KDE";
+
     fn value(s: &str) -> OwnedValue {
         OwnedValue::try_from(Value::from(s)).expect("str to OwnedValue is infallible")
     }
 
-    /// Populates all three namespaces the aggregator can produce.
+    /// Populates the namespaces the aggregator can produce, including the
+    /// group-suffixed form `read_kdeglobals` actually publishes.
     fn populated() -> SettingsState {
         let mut state = SettingsState::default();
         state.insert(NS_FREEDESKTOP_APPEARANCE, "color-scheme", value("1"));
         state.insert(GNOME, "gtk-theme-name", value("Adwaita"));
-        state.insert(KDE, "widgetStyle", value("Breeze"));
+        state.insert(KDE_GROUP, "widgetStyle", value("Breeze"));
         state
     }
 
@@ -414,7 +433,7 @@ mod read_all_tests {
 
     #[test]
     fn an_empty_request_returns_every_populated_namespace() {
-        let mut expected = vec![GNOME, KDE, NS_FREEDESKTOP_APPEARANCE];
+        let mut expected = vec![GNOME, KDE_GROUP, NS_FREEDESKTOP_APPEARANCE];
         expected.sort_unstable();
         assert_eq!(keys(&read_all_from_state(&populated(), &[])), expected);
     }
@@ -428,13 +447,49 @@ mod read_all_tests {
     }
 
     #[test]
-    fn a_requested_but_unpopulated_namespace_is_omitted() {
-        // `select_namespaces` resolves against the *supported* list, not what
-        // happens to be loaded.
+    fn a_requested_but_unloaded_namespace_is_omitted() {
+        // Matching runs over the namespaces actually loaded, so a namespace the
+        // backend knows about but has no data for simply does not appear. This
+        // keeps `ReadAll` consistent with `Read`, which reports "not found" for
+        // it rather than an empty map.
         let mut state = SettingsState::default();
         state.insert(GNOME, "gtk-theme-name", value("Adwaita"));
         let result = read_all_from_state(&state, &[]);
         assert_eq!(keys(&result), vec![GNOME]);
+    }
+
+    /// Regression: `read_kdeglobals` stores one namespace per INI group, as
+    /// `org.kde.kdeglobals.<Group>`. The previous implementation resolved
+    /// requests against a fixed list holding only the bare `org.kde.kdeglobals`,
+    /// so none of the group namespaces it had written could ever be selected
+    /// and every one of them was invisible to `ReadAll` -- while a direct `Read`
+    /// of the same namespace returned data. These two calls must agree.
+    #[test]
+    fn group_suffixed_kde_namespaces_are_reachable() {
+        let state = populated();
+
+        // ReadAll with the exact name, and with the parent prefix.
+        assert_eq!(
+            keys(&read_all_from_state(&state, &[KDE_GROUP.to_owned()])),
+            vec![KDE_GROUP]
+        );
+        assert_eq!(
+            keys(&read_all_from_state(&state, &["org.kde.*".to_owned()])),
+            vec![KDE_GROUP]
+        );
+        // The bare parent name is itself a prefix of the group name, and the
+        // reference matcher treats a name without `*` as an exact comparison,
+        // so it must NOT select the group.
+        assert!(
+            read_all_from_state(&state, &[KDE.to_owned()]).is_empty(),
+            "the bare parent namespace is not a wildcard for its groups"
+        );
+
+        // The whole point: ReadAll must now find what Read finds.
+        assert!(
+            state.get(KDE_GROUP, "widgetStyle").is_some(),
+            "test fixture is wrong: Read would have nothing to find"
+        );
     }
 
     #[test]
@@ -445,7 +500,7 @@ mod read_all_tests {
 
     #[test]
     fn values_survive_the_round_trip() {
-        let result = read_all_from_state(&populated(), &[KDE.to_owned()]);
-        assert_eq!(result[KDE]["widgetStyle"], value("Breeze"));
+        let result = read_all_from_state(&populated(), &[KDE_GROUP.to_owned()]);
+        assert_eq!(result[KDE_GROUP]["widgetStyle"], value("Breeze"));
     }
 }
