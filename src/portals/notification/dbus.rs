@@ -8,7 +8,6 @@ use {
     tokio::task::spawn_blocking,
     zbus::{
         Connection, ObjectServer, interface,
-        message::Header,
         object_server::SignalEmitter,
         zvariant::{DeserializeDict, OwnedValue, Structure, Type, Value},
     },
@@ -356,26 +355,8 @@ impl Notification {
         app_id: String,
         id: String,
         notification: PortalNotification,
-        #[zbus(header)] header: Header<'_>,
         #[zbus(object_server)] server: &ObjectServer,
     ) {
-        if let Some(sender) = header.sender() {
-            tracing::debug!(
-                "AddNotification from {} (app_id: {}, id: {})",
-                sender.as_str(),
-                app_id,
-                id
-            );
-        }
-
-        if app_id.is_empty() || app_id.contains(' ') {
-            tracing::warn!(
-                "Suspicious app_id {:?} from sender {:?}",
-                app_id,
-                header.sender().map(|s| s.as_str())
-            );
-        }
-
         let title_ref = notification.title.as_deref().unwrap_or("");
         let body_ref = notification
             .markup_body
