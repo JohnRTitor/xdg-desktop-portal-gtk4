@@ -271,57 +271,61 @@ impl ClipboardPortal {
             }
         }
 
+        // Budget this clipboard session against the *caller's bus name*, not a
+        // shared pseudo-app-id. The Clipboard portal has no `app_id` argument on
+        // `RequestClipboard`, so the previous code registered every client under
+        // the literal `"clipboard"`. That made the `max_sessions_per_app` counter
+        // a process-wide total: any one unprivileged app calling
+        // `RequestClipboard` ten times drove it to the limit, after which every
+        // later call from *any* app took the failure branch and no cleanup task
+        // was spawned -- permanently wedging clipboard access for the whole
+        // session and leaking both the `active_sessions` entry and that
+        // session's serial counter.
+        //
+        // Keying on the unique bus name restores the intended semantics: the
+        // limit throttles one misbehaving connection, not the whole session. It
+        // also matches how the `sender_objects` half of the same map is already
+        // keyed, so budget and disconnect tracking agree.
+        let budget_key = sender.clone();
         let cancel_notify = Arc::new(Notify::new());
-        if let Err(e) = self.session_manager.register(
-            "clipboard", // app_id isn't directly available, but we can use "clipboard" or just skip rate limiting
+        let registered = self.session_manager.register(
+            &budget_key,
             &sender,
             session_handle_owned.as_str(),
             cancel_notify.clone(),
-        ) {
+        );
+        if let Err(e) = &registered {
+            // Not fatal: the session still works, it is just not tracked for
+            // disconnect through the session manager. The cleanup task below
+            // still runs, so nothing is retained until process exit.
             tracing::warn!("Session limit exceeded for clipboard: {}", e);
-            // Even if it fails, we continue, but we won't clean up automatically.
-            //
-            // Both the `active_sessions` entry pushed above and any serial
-            // counter this session later creates are therefore retained until
-            // the process exits. This is pre-existing for `active_sessions`, and
-            // it is trivially reachable: the clipboard portal registers every
-            // client under the shared pseudo-app-id `"clipboard"`, so any one
-            // unprivileged app calling `RequestClipboard` ten times drives the
-            // counter to the limit and every later call from *any* app takes this
-            // branch, permanently.
-            //
-            // Not fixed here because closing it means changing session-limit
-            // semantics (reject the request, or give the clipboard portal a
-            // per-sender budget) rather than optimising a data structure. The
-            // serial counter is retained along with it, so `SERIALS` grows
-            // without bound on this path too.
-        } else {
-            let active_sessions_clone = self.active_sessions.clone();
-            let session_handle_clone = session_handle_owned.clone();
-            let session_manager_clone = self.session_manager.clone();
-            tokio::spawn(async move {
-                cancel_notify.notified().await;
+        }
+
+        // The cleanup task is spawned unconditionally, whether or not the budget
+        // slot was granted. On the failure path `unregister` finds no held entry
+        // and returns without decrementing, so calling it either way cannot
+        // double-release a slot.
+        let active_sessions_clone = self.active_sessions.clone();
+        let session_handle_clone = session_handle_owned.clone();
+        let session_manager_clone = self.session_manager.clone();
+        tokio::spawn(async move {
+            cancel_notify.notified().await;
+            tracing::debug!(
+                "App {} disconnected, cleaning up clipboard session {:?}",
+                sender,
+                session_handle_clone
+            );
+            active_sessions_clone
+                .lock()
+                .retain(|s| s != &session_handle_clone);
+            session_manager_clone.unregister(&budget_key, &sender, session_handle_clone.as_str());
+            if forget_session(session_handle_clone.as_str()) {
                 tracing::debug!(
-                    "App {} disconnected, cleaning up clipboard session {:?}",
-                    sender,
+                    "Released clipboard serial counter for {:?}",
                     session_handle_clone
                 );
-                active_sessions_clone
-                    .lock()
-                    .retain(|s| s != &session_handle_clone);
-                session_manager_clone.unregister(
-                    "clipboard",
-                    &sender,
-                    session_handle_clone.as_str(),
-                );
-                if forget_session(session_handle_clone.as_str()) {
-                    tracing::debug!(
-                        "Released clipboard serial counter for {:?}",
-                        session_handle_clone
-                    );
-                }
-            });
-        }
+            }
+        });
 
         let conn_clone = self.connection.clone();
         let mimes = crate::gui::run_ui_task(
@@ -585,8 +589,8 @@ mod tests {
     /// portal contract is explicit: "May only be called if clipboard access was
     /// given after starting the session."
     #[tokio::test]
-    async fn an_unregistered_session_is_refused_by_every_session_method(
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    async fn an_unregistered_session_is_refused_by_every_session_method()
+    -> Result<(), Box<dyn std::error::Error>> {
         if std::env::var("RUN_DBUS_TESTS").is_err() {
             return Ok(());
         }
@@ -596,9 +600,7 @@ mod tests {
 
         let foreign = ObjectPath::try_from("/org/freedesktop/portal/desktop/session/9/9")?;
 
-        let set = portal
-            .set_selection(foreign.clone(), HashMap::new())
-            .await;
+        let set = portal.set_selection(foreign.clone(), HashMap::new()).await;
         assert!(
             matches!(set, Err(fdo::Error::InvalidArgs(_))),
             "SetSelection accepted a session that never requested clipboard access: {set:?}"
