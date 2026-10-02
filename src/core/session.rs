@@ -46,6 +46,23 @@ impl Session {
             notify.notify_one();
         }
     }
+
+    /// Interface version, declared by
+    /// `data/org.freedesktop.impl.portal.Session.xml`.
+    ///
+    /// The `Closed` signal declared by the same interface is deliberately not
+    /// emitted from [`Self::close`]. It reports a session the *backend* aborted
+    /// on its own initiative: the frontend subscribes to it in `on_closed()`
+    /// (`xdp-session.c`) and re-emits `Closed` to the application from there.
+    /// An application-initiated `Close` never travels that way — the frontend
+    /// handles it in `handle_close()` and only then calls the backend's
+    /// `Close` — so signalling from this handler would be redundant. This
+    /// backend has no autonomous abort path to report, which is why
+    /// `xdg-desktop-portal-gtk` emits no signal here either.
+    #[zbus(property, name = "version")]
+    fn version(&self) -> u32 {
+        1
+    }
 }
 
 #[cfg(test)]
@@ -74,5 +91,12 @@ mod tests {
     async fn test_session_close_no_channel() {
         let session = Session::new("test_session_id".into(), None);
         session.close().await; // Should not panic
+    }
+
+    /// The interface declares `version` as a read-only `u`. A pure getter, so
+    /// this needs no bus and cannot pass vacuously.
+    #[test]
+    fn version_is_one() {
+        assert_eq!(Session::new("s".into(), None).version(), 1);
     }
 }
