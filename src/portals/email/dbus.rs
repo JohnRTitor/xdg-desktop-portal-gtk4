@@ -73,6 +73,38 @@ impl Email {
     }
 }
 
+/// Appends one `key=` parameter holding a comma-separated recipient list.
+///
+/// RFC 6068 gives `cc` and `bcc` exactly one parameter whose value is
+/// `addr-spec *("," addr-spec)`. Emitting `cc=a&cc=b` instead is a repeated
+/// query key, which is not what the grammar describes, and mail clients differ
+/// on what they do with it — commonly honouring one occurrence and silently
+/// dropping the other. So a caller CC'ing two people reached the user's mail
+/// client with one of them missing.
+///
+/// This is why every pre-existing test here passed a single address: with one
+/// recipient a repeated key and a comma-joined value are the same string, so
+/// the shape of the bug is invisible until a second address is present.
+///
+/// The addresses are still percent-escaped, which the reference does not do.
+/// That is deliberate: a raw `&` in an address would otherwise terminate the
+/// parameter and let the address inject query fields of its own.
+fn append_recipients(url: &mut String, key: &str, addrs: &[String]) {
+    use std::fmt::Write;
+
+    if addrs.is_empty() {
+        return;
+    }
+    let _ = write!(url, "{key}=");
+    for (i, addr) in addrs.iter().enumerate() {
+        if i > 0 {
+            url.push(',');
+        }
+        let _ = write!(url, "{}", glib::uri_escape_string(addr, None::<&str>, true));
+    }
+    url.push('&');
+}
+
 fn build_mailto_url(options: &ComposeEmailOptions) -> String {
     let mut url = String::from("mailto:");
     let all_addresses: Vec<&str> = options
@@ -91,22 +123,10 @@ fn build_mailto_url(options: &ComposeEmailOptions) -> String {
     use std::fmt::Write;
 
     if let Some(cc) = &options.cc {
-        for addr in cc {
-            let _ = write!(
-                &mut url,
-                "cc={}&",
-                glib::uri_escape_string(addr, None::<&str>, true)
-            );
-        }
+        append_recipients(&mut url, "cc", cc);
     }
     if let Some(bcc) = &options.bcc {
-        for addr in bcc {
-            let _ = write!(
-                &mut url,
-                "bcc={}&",
-                glib::uri_escape_string(addr, None::<&str>, true)
-            );
-        }
+        append_recipients(&mut url, "bcc", bcc);
     }
     if let Some(subject) = &options.subject {
         let _ = write!(
@@ -253,8 +273,101 @@ mod tests {
     }
 
     #[test]
-    fn test_email_results_signature() {
+    fn test_compose_email_results_signature() {
         assert_eq!(EmailResults::SIGNATURE, "a{sv}");
+    }
+
+    /// The regression: `cc` and `bcc` are one parameter each, not one per
+    /// recipient. Every test above passes a single address, where a repeated
+    /// key and a comma-joined value are indistinguishable -- which is exactly
+    /// why this went unnoticed.
+    #[test]
+    fn test_compose_url_multiple_cc_recipients_share_one_key() {
+        let options = ComposeEmailOptions {
+            cc: Some(vec!["one@example.com".into(), "two@example.com".into()]),
+            ..Default::default()
+        };
+        let url = build_mailto_url(&options);
+        assert_eq!(
+            url, "mailto:?cc=one%40example.com,two%40example.com",
+            "cc must be a single comma-joined parameter"
+        );
+        assert_eq!(
+            url.matches("cc=").count(),
+            1,
+            "a repeated cc= key makes clients drop recipients: {url}"
+        );
+    }
+
+    #[test]
+    fn test_compose_url_multiple_bcc_recipients_share_one_key() {
+        let options = ComposeEmailOptions {
+            bcc: Some(vec!["one@example.com".into(), "two@example.com".into()]),
+            ..Default::default()
+        };
+        let url = build_mailto_url(&options);
+        assert_eq!(url, "mailto:?bcc=one%40example.com,two%40example.com");
+        assert_eq!(url.matches("bcc=").count(), 1, "{url}");
+    }
+
+    /// Both fields together must not bleed into one another, and the ordering
+    /// has to stay cc, bcc, subject, body.
+    #[test]
+    fn test_compose_url_cc_and_bcc_stay_separate() {
+        let options = ComposeEmailOptions {
+            cc: Some(vec!["a@example.com".into(), "b@example.com".into()]),
+            bcc: Some(vec!["c@example.com".into(), "d@example.com".into()]),
+            subject: Some("Hi".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            build_mailto_url(&options),
+            "mailto:?cc=a%40example.com,b%40example.com&bcc=c%40example.com,d%40example.com&subject=Hi"
+        );
+    }
+
+    /// An empty list must not emit a bare `cc=` with no value, which some
+    /// clients read as an empty recipient.
+    #[test]
+    fn test_compose_url_empty_recipient_lists_are_omitted() {
+        let options = ComposeEmailOptions {
+            cc: Some(vec![]),
+            bcc: Some(vec![]),
+            subject: Some("Hi".into()),
+            ..Default::default()
+        };
+        assert_eq!(build_mailto_url(&options), "mailto:?subject=Hi");
+    }
+
+    /// A comma inside a single address must stay escaped rather than being
+    /// read as a separator, so one recipient cannot split into two.
+    #[test]
+    fn test_compose_url_comma_in_address_is_escaped() {
+        let options = ComposeEmailOptions {
+            cc: Some(vec!["weird,name@example.com".into()]),
+            ..Default::default()
+        };
+        let url = build_mailto_url(&options);
+        assert_eq!(url, "mailto:?cc=weird%2Cname%40example.com");
+        assert_eq!(
+            url.matches("cc=").count(),
+            1,
+            "an unescaped comma would let one address become two: {url}"
+        );
+    }
+
+    /// `attachment` is a repeatable field and stays one key per file, matching
+    /// the reference implementation.
+    #[test]
+    fn test_compose_url_attachments_repeat_the_key() {
+        let options = ComposeEmailOptions {
+            attachments: Some(vec!["file:///a.txt".into(), "file:///b.txt".into()]),
+            ..Default::default()
+        };
+        assert_eq!(
+            build_mailto_url(&options),
+            "mailto:?attachment=file%3A%2F%2F%2Fa.txt&attachment=file%3A%2F%2F%2Fb.txt"
+        );
     }
 
     #[test]
