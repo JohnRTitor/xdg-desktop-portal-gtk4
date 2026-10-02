@@ -2,7 +2,13 @@ use {
     crate::core::session::Session,
     futures_util::stream::StreamExt,
     parking_lot::Mutex,
-    std::{collections::HashMap, sync::Arc},
+    std::{
+        collections::HashMap,
+        sync::{
+            Arc,
+            atomic::{AtomicBool, Ordering},
+        },
+    },
     tokio::sync::Notify,
     zbus::{
         Connection, ObjectServer, fdo, interface,
@@ -72,6 +78,13 @@ pub struct Inhibit {
     /// buffer and refcount, where an `Arc` element is a single pointer. Measured
     /// at 1536 bytes versus 512 for a 64-monitor fan-out.
     active_monitors: Arc<Mutex<HashMap<OwnedObjectPath, Arc<OwnedObjectPath>>>>,
+    /// Last observed `screensaver-active` value, used to seed a new monitor.
+    ///
+    /// `CreateMonitor` emits `StateChanged` once so the caller learns the current
+    /// state without waiting for the next transition, which may never arrive if
+    /// the screensaver state is steady. Before any `ActiveChanged` has arrived
+    /// this holds `false`, the natural initial value for a boolean state.
+    screensaver_active: Arc<AtomicBool>,
     init_once: std::sync::Once,
     session_manager: crate::core::session_manager::SessionManager,
     logind_proxy: Option<Arc<Login1ManagerProxy<'static>>>,
@@ -101,12 +114,54 @@ impl Inhibit {
 
         Self {
             active_monitors: Arc::new(Mutex::new(HashMap::new())),
+            screensaver_active: Arc::new(AtomicBool::new(false)),
             init_once: std::sync::Once::new(),
             session_manager,
             logind_proxy,
             screensaver_proxy,
         }
     }
+}
+
+/// The only `session-state` value this backend ever reports.
+///
+/// The portal contract defines 1 = Running, 2 = Query End, 3 = Ending. This
+/// daemon subscribes to `org.freedesktop.ScreenSaver.ActiveChanged` and has no
+/// session-manager client, so it observes no end-of-session transitions and
+/// always reports Running. See the `state.insert("session-state", ...)` call in
+/// the `ActiveChanged` listener.
+const SESSION_STATE_RUNNING: u32 = 1;
+
+/// Builds the `StateChanged` payload for a monitor session.
+///
+/// Both keys are always present. The contract documents both
+/// (`org.freedesktop.impl.portal.Inhibit.xml`, the `StateChanged` signal:
+/// `screensaver-active` as `b`, `session-state` as `u` with 1 = Running,
+/// 2 = Query End, 3 = Ending), and both are emitted on every transition and once
+/// when a monitor is created, so a new monitor learns the current state without
+/// waiting for the next change.
+fn monitor_state<'a>(screensaver_active: bool) -> HashMap<&'a str, Value<'a>> {
+    let mut state: HashMap<&'a str, Value<'a>> = HashMap::with_capacity(2);
+    state.insert("screensaver-active", Value::Bool(screensaver_active));
+    // Always publish `session-state` alongside `screensaver-active`, with the
+    // one value this backend can actually be in.
+    //
+    // This daemon tracks the screensaver through
+    // `org.freedesktop.ScreenSaver.ActiveChanged` only; it has no
+    // session-manager client, so it can never observe the "Query End" or
+    // "Ending" transitions and must not claim to. Reporting Running
+    // unconditionally is the honest answer.
+    //
+    // It is also what the frontend expects: `on_state_changed` in the core
+    // frontend reads `session-state` out of this dict
+    // (`xdg-desktop-portal/desktop-portal/inhibit.c`, the
+    // `g_variant_lookup (state, "session-state", "u", ...)` line) and re-emits
+    // the dict verbatim to the sandboxed application. Omitting the key made
+    // every consumer see `session_state == 0`, a value outside the documented
+    // 1/2/3 range, so an app that switched on it fell through to undefined
+    // behaviour.
+    state.insert("session-state", Value::U32(SESSION_STATE_RUNNING));
+    state
 }
 
 /// Translates the caller's `reason` bitmask into the `what` string logind wants.
@@ -342,6 +397,7 @@ impl Inhibit {
 
         self.init_once.call_once(move || {
             let active_monitors_clone = active_monitors_clone2;
+            let screensaver_active_clone = self.screensaver_active.clone();
 
             tokio::spawn(async move {
                 let Some(proxy) = ss_proxy_opt else {
@@ -356,6 +412,10 @@ impl Inhibit {
                         continue;
                     };
                     let active = args.active;
+                    // Record the value before emitting, so a `CreateMonitor`
+                    // racing this iteration seeds the new session with the state
+                    // the fan-out below is about to report.
+                    screensaver_active_clone.store(active, Ordering::Relaxed);
                     let Ok(iface_ref) = server_clone
                         .interface::<_, Inhibit>(crate::core::DBUS_PATH)
                         .await
@@ -363,8 +423,7 @@ impl Inhibit {
                         continue;
                     };
 
-                    let mut state: HashMap<&str, Value<'_>> = HashMap::new();
-                    state.insert("screensaver-active", Value::Bool(active));
+                    let state = monitor_state(active);
 
                     // Collected under the lock but iterated after it is released: the
                     // signal emission below is awaited, and holding a guard
@@ -381,11 +440,44 @@ impl Inhibit {
             });
         });
 
+        // Seed the new monitor with the current state, so the caller does not
+        // have to wait for the next `ActiveChanged` -- which may never come if
+        // the screensaver state is steady. Without this, a monitor created while
+        // the state is stable sits with no state at all until something changes.
+        if let Ok(iface_ref) = server.interface::<_, Inhibit>(crate::core::DBUS_PATH).await {
+            let state = monitor_state(self.screensaver_active.load(Ordering::Relaxed));
+            let _ = Self::state_changed(iface_ref.signal_emitter(), &session_handle, &state).await;
+        }
+
         Ok(0) // 0 == success
     }
 
-    async fn query_end_response(&self, _session_handle: OwnedObjectPath) {
-        tracing::debug!("query_end_response called");
+    /// Acknowledge a `Query End` `StateChanged` notification.
+    ///
+    /// Because [`SESSION_STATE_RUNNING`] is the only state this backend ever
+    /// reports, no `Query End` signal is ever emitted and there is nothing to
+    /// acknowledge. The method still validates the session handle rather than
+    /// silently accepting anything, so that an app probing for session existence
+    /// gets a truthful answer instead of a false success. It is part of the
+    /// version-3 interface, so it must remain present.
+    async fn query_end_response(&self, session_handle: OwnedObjectPath) -> fdo::Result<()> {
+        let known = self
+            .active_monitors
+            .lock()
+            .values()
+            .any(|s| s.as_str() == session_handle.as_str());
+        if known {
+            tracing::debug!(
+                "Ignoring QueryEndResponse for {}: this backend never reports Query End",
+                session_handle.as_str()
+            );
+            Ok(())
+        } else {
+            Err(fdo::Error::InvalidArgs(format!(
+                "No monitor session {}",
+                session_handle.as_str()
+            )))
+        }
     }
 
     #[zbus(signal)]
@@ -637,9 +729,51 @@ mod monitor_tests {
             Arc::ptr_eq(&original, &copy),
             "the same handle must come back"
         );
-        assert_eq!(
-            snap.count, 0,
+        assert!(
+            snap.count == 0,
             "cloning the handle must not copy the path, got {snap:?}"
         );
+    }
+
+    // --- StateChanged payload -----------------------------------------------
+
+    /// The frontend reads both keys out of this dict, so both must be present.
+    ///
+    /// Regression: `session-state` was never inserted, so the frontend's
+    /// `g_variant_lookup (state, "session-state", "u", &session_state)` left the
+    /// variable at its initialiser of `0` -- a value the contract does not
+    /// define (the range is 1/2/3). Any application that switched on it had
+    /// undefined behaviour.
+    #[test]
+    fn the_state_dict_always_carries_both_documented_keys() {
+        for active in [true, false] {
+            let state = monitor_state(active);
+            assert_eq!(state.len(), 2, "exactly the two contract keys");
+            assert_eq!(state.get("screensaver-active"), Some(&Value::Bool(active)));
+            assert_eq!(
+                state.get("session-state"),
+                Some(&Value::U32(SESSION_STATE_RUNNING)),
+                "session-state must never be absent"
+            );
+            assert_eq!(
+                state.get("session-state").unwrap().value_signature(),
+                "u",
+                "the contract types session-state as uint32"
+            );
+        }
+    }
+
+    /// This backend has no session-manager client, so it must not claim the
+    /// "Query End" state it would then have to honour via `QueryEndResponse`.
+    #[test]
+    fn session_state_is_always_running() {
+        assert_eq!(SESSION_STATE_RUNNING, 1, "1 is Running in the contract");
+        for active in [true, false] {
+            assert_eq!(
+                monitor_state(active).get("session-state"),
+                Some(&Value::U32(1)),
+                "the reported state must not depend on the screensaver"
+            );
+        }
     }
 }
