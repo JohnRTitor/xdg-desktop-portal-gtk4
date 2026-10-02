@@ -362,6 +362,14 @@ impl ClipboardPortal {
         session_handle: ObjectPath<'_>,
         options: HashMap<&str, Value<'_>>,
     ) -> fdo::Result<()> {
+        // Same session check as the three read-side methods above, and for the
+        // same reason: without it, any app that holds *any* clipboard session
+        // could name an arbitrary foreign `session_handle` and take over the
+        // host clipboard on another app's behalf, emitting `SelectionTransfer`
+        // under a session it does not own. A session handle is not a capability,
+        // so accepting an un-registered one grants nothing that the caller did
+        // not already have. See [`Self::require_clipboard_session`].
+        self.require_clipboard_session(&session_handle)?;
         tracing::debug!("SetSelection called for session: {:?}", session_handle);
         let mimes = parse_mime_types(&options);
 
@@ -548,6 +556,81 @@ mod tests {
 
         assert!(res.is_err());
         assert!(matches!(res.unwrap_err(), fdo::Error::InvalidArgs(_)));
+        Ok(())
+    }
+
+    /// Builds a portal with `sessions` pre-registered, without going through the
+    /// bus or GTK.
+    fn portal_with_sessions(conn: &Connection, sessions: &[&'static str]) -> ClipboardPortal {
+        let portal = ClipboardPortal::new(
+            conn.clone(),
+            dummy_proxy(),
+            SessionManager::new(conn.clone(), 10),
+        );
+        portal
+            .active_sessions
+            .lock()
+            .extend(sessions.iter().map(|s| ObjectPath::try_from(*s).unwrap()));
+        portal
+    }
+
+    /// The four session-scoped methods must all reject a handle that never went
+    /// through `RequestClipboard`.
+    ///
+    /// Regression: `SetSelection` was the only one that did not check. The other
+    /// three already rejected a foreign handle, but `SetSelection` accepted any
+    /// `ObjectPath` at all, so an app holding one clipboard session could name
+    /// another app's session and take the host clipboard on its behalf, getting
+    /// `SelectionTransfer` signals emitted under a session it does not own. The
+    /// portal contract is explicit: "May only be called if clipboard access was
+    /// given after starting the session."
+    #[tokio::test]
+    async fn an_unregistered_session_is_refused_by_every_session_method(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        if std::env::var("RUN_DBUS_TESTS").is_err() {
+            return Ok(());
+        }
+        let conn = Connection::session().await?;
+        let mine = "/org/freedesktop/portal/desktop/session/1/1";
+        let portal = portal_with_sessions(&conn, &[mine]);
+
+        let foreign = ObjectPath::try_from("/org/freedesktop/portal/desktop/session/9/9")?;
+
+        let set = portal
+            .set_selection(foreign.clone(), HashMap::new())
+            .await;
+        assert!(
+            matches!(set, Err(fdo::Error::InvalidArgs(_))),
+            "SetSelection accepted a session that never requested clipboard access: {set:?}"
+        );
+
+        let write = portal.selection_write(foreign.clone(), 1).await;
+        assert!(matches!(write, Err(fdo::Error::InvalidArgs(_))));
+
+        let read = portal
+            .selection_read(foreign.clone(), "text/plain".into())
+            .await;
+        assert!(matches!(read, Err(fdo::Error::InvalidArgs(_))));
+
+        let done = portal.selection_write_done(foreign, 1, true).await;
+        assert!(matches!(done, Err(fdo::Error::InvalidArgs(_))));
+
+        Ok(())
+    }
+
+    /// The check must not break the ordinary flow: a registered handle still
+    /// passes.
+    #[tokio::test]
+    async fn a_registered_session_is_accepted() -> Result<(), Box<dyn std::error::Error>> {
+        if std::env::var("RUN_DBUS_TESTS").is_err() {
+            return Ok(());
+        }
+        let conn = Connection::session().await?;
+        const MINE: &str = "/org/freedesktop/portal/desktop/session/1/1";
+        let mine = ObjectPath::try_from(MINE)?;
+        let portal = portal_with_sessions(&conn, &[MINE]);
+
+        assert!(portal.require_clipboard_session(&mine).is_ok());
         Ok(())
     }
 }
