@@ -103,9 +103,13 @@ trait AppChooser {
 }
 
 /// `UpdateChoices` for a handle with no live dialog must fail, so that
-/// frontend/backend desynchronisation is visible. `xdg-desktop-portal-gtk`
-/// answers `org.freedesktop.portal.Error.NotFound` ("Request not found",
-/// `appchooser.c:243-247`); KDE answers the standard `InvalidArgs`.
+/// frontend/backend desynchronisation is visible.
+///
+/// The contract does not say which error an unknown handle gets, so `InvalidArgs`
+/// is a judgement call: the handle the caller passed is not usable, and there is
+/// nothing left to update. A false success instead leaves the frontend waiting on
+/// a dialog that will never receive the new choices, with no indication that
+/// anything went wrong.
 ///
 /// This previously returned `Ok(())` unconditionally, and the existing
 /// `tests/app_chooser_test.rs` asserted that silent success as if it were
@@ -157,8 +161,10 @@ async fn app_chooser_update_choices_unknown_handle() {
 /// list is nonempty, it should match a filter in the list ... Alternatively, it
 /// may be specified when the list is empty to apply the filter unconditionally."
 ///
-/// xdg-desktop-portal-gtk implements both halves (`filechooser.c:554-595`) and
-/// matches within a list by *name* rather than by value.
+/// Both halves are implemented, and matching within a list is by *name* rather
+/// than by value: two filters sharing a name are the same filter, so an
+/// application that sends a slightly different `current_filter` still gets its
+/// intent honoured.
 ///
 /// This exercises the real decision function, which previously could not be
 /// reached from a test.
@@ -222,9 +228,11 @@ fn file_chooser_current_filter_applies_without_filters_list() {
 /// being undone by an `into_owned()` there.
 #[test]
 fn file_chooser_offered_filters_are_borrowed_when_a_list_is_given() {
-    use std::borrow::Cow;
-    use xdg_desktop_portal_gtk4::portals::file_chooser::gui::{
-        Filter, FilterKind, effective_filters,
+    use {
+        std::borrow::Cow,
+        xdg_desktop_portal_gtk4::portals::file_chooser::gui::{
+            Filter, FilterKind, effective_filters,
+        },
     };
 
     let list = vec![
@@ -275,10 +283,11 @@ trait Account {
 /// `Request.Close()` must be answered with a *non-cancellation* response code.
 /// The frontend (`xdp-request.c:xdp_request_handle_close`) unexports the
 /// Request object right after the backend's `Close` returns, so the value is
-/// mostly cosmetic — but `xdg-desktop-portal-gtk` uses `2` ("other") for every
-/// portal, and a backend that reports `1` ("user cancelled") makes a cancelled
-/// request indistinguishable from a user rejection in logs and in
-/// `xdg-desktop-portal`'s own bookkeeping.
+/// mostly cosmetic — but the contract reserves `1` for "the user cancelled the
+/// interaction" (`org.freedesktop.portal.Request.xml`, the `Response` signal),
+/// and nobody was asked here. Reporting `2` ("the user interaction was ended in
+/// some other way") keeps a frontend-initiated close distinguishable from a user
+/// rejection in logs and in `xdg-desktop-portal`'s own bookkeeping.
 #[tokio::test]
 async fn request_close_reports_other_not_cancelled() {
     use xdg_desktop_portal_gtk4::core::request::run_request;
@@ -331,12 +340,14 @@ async fn request_close_reports_other_not_cancelled() {
 ///
 /// Tokens used to be looked up by value alone, so any sandboxed application
 /// could consume another application's cached printer, page setup and settings
-/// by guessing a token. `xdg-desktop-portal-gtk` rejects a mismatched `app_id`
-/// and leaves the entry in place for its rightful owner (`print.c:124-141`).
+/// by guessing a token. A mismatched `app_id` is rejected and the entry is left
+/// in place for its rightful owner.
 #[test]
 fn print_token_is_bound_to_app_id() {
-    use std::sync::Arc;
-    use xdg_desktop_portal_gtk4::portals::print::gui::{TokenClaim, claim_token};
+    use {
+        std::sync::Arc,
+        xdg_desktop_portal_gtk4::portals::print::gui::{TokenClaim, claim_token},
+    };
 
     let mut jobs: HashMap<u32, (Arc<str>, &'static str)> =
         HashMap::from([(7, (Arc::from("org.example.Owner"), "job"))]);

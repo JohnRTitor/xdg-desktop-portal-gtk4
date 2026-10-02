@@ -56,7 +56,7 @@ pub enum TokenClaim<T> {
 /// A token is only valid for the application that obtained it from
 /// `PreparePrint`. Without this check any sandboxed application could consume
 /// another application's cached printer, page setup and settings by guessing a
-/// token. `xdg-desktop-portal-gtk` performs the same owner check.
+/// token, so ownership is part of what makes the token safe to hand out.
 pub fn claim_token<T>(
     jobs: &mut HashMap<u32, (Arc<str>, T)>,
     token: u32,

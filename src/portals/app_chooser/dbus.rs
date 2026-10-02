@@ -176,11 +176,14 @@ impl AppChooser {
         tracing::info!("UpdateChoices called for handle: {}", handle.as_str());
         // A handle with no live dialog means the frontend and the backend have
         // lost track of each other. Say so instead of reporting success, which
-        // hid exactly this desynchronisation. xdg-desktop-portal-gtk answers
-        // org.freedesktop.portal.Error.NotFound here; KDE answers the standard
-        // InvalidArgs for a handle it does not recognise. We use InvalidArgs,
-        // which is meaningful and does not require synthesising a custom error
-        // name, rather than continuing to report a false success.
+        // hid exactly this desynchronisation.
+        //
+        // The contract does not say which error an unknown handle gets, so this
+        // is a judgement call: `InvalidArgs` is the honest one, because the
+        // handle the caller passed is not usable and there is nothing to update.
+        // Reporting a false success instead leaves the frontend waiting on a
+        // dialog that will never receive the new choices, with no indication
+        // that anything went wrong.
         //
         // The sender is cloned out under the lock rather than held across the
         // send, and `send` is awaited rather than `try_send` so a slow GTK
