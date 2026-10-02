@@ -140,11 +140,8 @@ mod tests {
         // Let the notification happen strictly before the listener exists.
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
 
-        let seen = tokio::time::timeout(
-            std::time::Duration::from_millis(500),
-            notify.notified(),
-        )
-        .await;
+        let seen =
+            tokio::time::timeout(std::time::Duration::from_millis(500), notify.notified()).await;
         assert!(
             seen.is_ok(),
             "a notification sent before the listener existed must be latched"
