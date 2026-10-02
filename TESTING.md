@@ -42,19 +42,21 @@ cargo test
 
 ### D-Bus Integration Tests
 
-Some tests interact directly with the D-Bus daemon to verify correct portal exporting and signal emission. Because these tests require a live session bus and can be sensitive to the environment, they are disabled by default.
+Some tests interact directly with the D-Bus daemon to verify correct portal exporting and signal emission. Because these tests require a live session bus and can be sensitive to the environment, they skip themselves when no session bus is reachable, printing a `SKIPPED ...: no session bus` notice. No environment variable is needed to enable them.
 
-To run the D-Bus integration tests, you must explicitly enable them using the `RUN_DBUS_TESTS` environment variable:
+To guarantee a bus is present, run the suite under a throwaway session bus:
 
 ```bash
-RUN_DBUS_TESTS=1 cargo test --test dbus_portals_test
+dbus-run-session -- cargo test
 ```
+
+This is what CI does (see `.github/workflows/ci.yml`).
 
 > **Note:** Tests executing on the dbus daemon execute in multiple concurrent Tokio worker threads by default. However, some portals (like `SettingsPortal`) leverage GTK's glib main loop via `spawn_local`, which assumes thread exclusivity. This occasionally triggers a panic (`Failed to acquire ownership of main context, already acquired by another thread`).
 > 
 > To circumvent this, the dbus tests have to run sequentially:
 > ```bash
-> RUN_DBUS_TESTS=1 cargo test --test dbus_portals_test -- --test-threads=1
+> dbus-run-session -- cargo test -- --test-threads=1
 > ```
 
 ## Debugging

@@ -560,12 +560,26 @@ mod tests {
         }
     }
 
+    /// The session bus, or `None` when there is none.
+    ///
+    /// These tests only need a connection to construct the portal; they never
+    /// talk to a peer. Mirrors `try_dbus_session!` in `tests/common/mod.rs`,
+    /// which integration tests use but which is not reachable from here.
+    async fn session_or_skip(test: &str) -> Option<Connection> {
+        match Connection::session().await {
+            Ok(conn) => Some(conn),
+            Err(_) => {
+                println!("SKIPPED {test}: no session bus");
+                None
+            }
+        }
+    }
+
     #[tokio::test]
     async fn test_clipboard_version() -> Result<(), Box<dyn std::error::Error>> {
-        if std::env::var("RUN_DBUS_TESTS").is_err() {
+        let Some(conn) = session_or_skip("test_clipboard_version").await else {
             return Ok(());
-        }
-        let conn = Connection::session().await?;
+        };
         let sm = SessionManager::new(conn.clone(), 10);
         let portal = ClipboardPortal::new(conn, dummy_proxy(), sm);
         assert_eq!(portal.version(), 2);
@@ -574,10 +588,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_selection_write_invalid_serial() -> Result<(), Box<dyn std::error::Error>> {
-        if std::env::var("RUN_DBUS_TESTS").is_err() {
+        let Some(conn) = session_or_skip("test_selection_write_invalid_serial").await else {
             return Ok(());
-        }
-        let conn = Connection::session().await?;
+        };
         let sm = SessionManager::new(conn.clone(), 10);
         let portal = ClipboardPortal::new(conn, dummy_proxy(), sm);
 
@@ -617,10 +630,11 @@ mod tests {
     #[tokio::test]
     async fn an_unregistered_session_is_refused_by_every_session_method()
     -> Result<(), Box<dyn std::error::Error>> {
-        if std::env::var("RUN_DBUS_TESTS").is_err() {
+        let Some(conn) =
+            session_or_skip("an_unregistered_session_is_refused_by_every_session_method").await
+        else {
             return Ok(());
-        }
-        let conn = Connection::session().await?;
+        };
         let mine = "/org/freedesktop/portal/desktop/session/1/1";
         let portal = portal_with_sessions(&conn, &[mine]);
 
@@ -650,10 +664,9 @@ mod tests {
     /// passes.
     #[tokio::test]
     async fn a_registered_session_is_accepted() -> Result<(), Box<dyn std::error::Error>> {
-        if std::env::var("RUN_DBUS_TESTS").is_err() {
+        let Some(conn) = session_or_skip("a_registered_session_is_accepted").await else {
             return Ok(());
-        }
-        let conn = Connection::session().await?;
+        };
         const MINE: &str = "/org/freedesktop/portal/desktop/session/1/1";
         let mine = ObjectPath::try_from(MINE)?;
         let portal = portal_with_sessions(&conn, &[MINE]);
