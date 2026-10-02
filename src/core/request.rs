@@ -14,18 +14,19 @@ use {
 /// cancellation listener on the Request D-Bus object. Whichever finishes first
 /// determines the outcome. If cancellation wins, we return `Response::other()`.
 ///
-/// The Request object is exported before registering with the [`SessionManager`]
-/// so that it exists on the bus for the whole life of the request. A `Close`
-/// that arrives in the first moments of a request then reaches a real object
-/// and cancels it, rather than arriving while the path is still unexported and
-/// coming back as `UnknownObject`.
+/// The Request object is exported before registering with the
+/// [`SessionManager`](crate::core::session_manager::SessionManager) so that it
+/// exists on the bus for the whole life of the request. A `Close` that arrives
+/// in the first moments of a request then reaches a real object and cancels it,
+/// rather than arriving while the path is still unexported and coming back as
+/// `UnknownObject`.
 ///
 /// Note that the order is *not* what keeps a cancellation from being lost.
 /// `Notify` latches a permit when `notify_one` runs with no waiter, so a
 /// notification delivered before the `select!` below is armed is held until
 /// something awaits it — see
 /// `a_cancellation_before_the_select_is_still_observed` for that pinned
-/// behaviour. Both the frontend's `Close` and the [`SessionManager`]'s
+/// behaviour. Both the frontend's `Close` and the `SessionManager`'s
 /// disconnect sweep notify this way.
 pub async fn run_request<T, F>(
     server: &ObjectServer,
