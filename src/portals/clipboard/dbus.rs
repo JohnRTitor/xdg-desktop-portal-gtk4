@@ -249,6 +249,23 @@ impl ClipboardPortal {
     }
 }
 
+/// Whether `session` is still a live clipboard session.
+///
+/// Shared by the method that validates incoming calls and by the `SetSelection`
+/// transfer loop. The loop outlives the call that started it: it lives as long
+/// as the `ContentProvider` holds the clipboard, which can be indefinitely,
+/// while the session leaves `active_sessions` as soon as its client
+/// disconnects. Without the check the loop keeps minting serials and
+/// broadcasting `SelectionTransfer` for a session nobody is left to answer,
+/// disclosing the dead session's advertised mime types to every other clipboard
+/// client on the bus.
+///
+/// A free function rather than a method because the transfer loop is `'static`
+/// and holds only the shared session list, not `&self`.
+fn session_is_active(sessions: &[ObjectPath<'_>], session: &str) -> bool {
+    sessions.iter().any(|s| s.as_str() == session)
+}
+
 #[interface(name = "org.freedesktop.impl.portal.Clipboard")]
 impl ClipboardPortal {
     async fn request_clipboard(
@@ -398,13 +415,9 @@ impl ClipboardPortal {
             // It dies when `request_rx` is dropped, which happens when the host copies
             // something else and our ContentProvider is destroyed.
             while let Some((mime, fd_sender)) = request_rx.recv().await {
-                if !active_sessions_clone
-                    .lock()
-                    .iter()
-                    .any(|s| s.as_str() == session_handle_owned.as_str())
-                {
+                if !session_is_active(&active_sessions_clone.lock(), &session_handle_owned) {
                     tracing::debug!(
-                        "Session {} is no longer active, stopping SelectionTransfer",
+                        "Session {} is gone, stopping its SelectionTransfer loop",
                         session_handle_owned
                     );
                     return;
@@ -822,6 +835,80 @@ mod serial_tests {
             forget_session(s),
             "the resurrected counter must be releasable too"
         );
+    }
+}
+
+#[cfg(test)]
+mod liveness_tests {
+    use super::*;
+
+    fn sessions(paths: &[&'static str]) -> Vec<ObjectPath<'static>> {
+        paths
+            .iter()
+            .map(|p| ObjectPath::try_from(*p).expect("test fixture must be a valid object path"))
+            .collect()
+    }
+
+    const MINE: &str = "/org/freedesktop/portal/desktop/session/1/1";
+
+    #[test]
+    fn a_registered_session_is_active() {
+        let live = sessions(&[MINE]);
+        assert!(session_is_active(&live, MINE));
+    }
+
+    /// The regression this guards: the `SetSelection` transfer loop outlives
+    /// the call that created it, and a client disconnect removes the session
+    /// from `active_sessions`. Without this check the loop kept broadcasting
+    /// `SelectionTransfer` for a session nobody could answer, disclosing its
+    /// advertised mime types to every other clipboard client on the bus.
+    #[test]
+    fn a_session_removed_by_disconnect_is_not_active() {
+        let mut live = sessions(&[MINE]);
+        assert!(session_is_active(&live, MINE));
+        // The cleanup task in `request_clipboard` drops it on disconnect.
+        live.clear();
+        assert!(
+            !session_is_active(&live, MINE),
+            "a disconnected session must stop the transfer loop"
+        );
+    }
+
+    /// One session going away must not disturb the others still live.
+    #[test]
+    fn other_sessions_survive_one_going_away() {
+        const OTHER: &str = "/org/freedesktop/portal/desktop/session/2/2";
+        let live = sessions(&[MINE, OTHER]);
+        assert!(session_is_active(&live, MINE));
+        assert!(session_is_active(&live, OTHER));
+    }
+
+    /// A handle that was never registered must not match, so the check cannot
+    /// be satisfied by an empty or unrelated list.
+    #[test]
+    fn an_unregistered_handle_is_never_active() {
+        let live = sessions(&[MINE]);
+        assert!(!session_is_active(
+            &live,
+            "/org/freedesktop/portal/desktop/session/9/9"
+        ));
+        assert!(!session_is_active(&[], MINE));
+    }
+
+    /// Matching is on the exact path, never a prefix: a session path is not a
+    /// capability, and a near-miss must not read as live.
+    #[test]
+    fn matching_is_exact_not_prefix() {
+        let live = sessions(&[MINE]);
+        assert!(!session_is_active(
+            &live,
+            "/org/freedesktop/portal/desktop/session/1"
+        ));
+        assert!(!session_is_active(
+            &live,
+            "/org/freedesktop/portal/desktop/session/1/10"
+        ));
+        assert!(!session_is_active(&live, ""));
     }
 }
 
