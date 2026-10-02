@@ -14,9 +14,10 @@ use {
 /// cancellation listener on the Request D-Bus object. Whichever finishes first
 /// determines the outcome. If cancellation wins, we return `Response::cancelled()`.
 ///
-/// This is inherently racy because the request might get cancelled before we export the
-/// path. However, the portal frontend usually waits for the method reply before considering
-/// the request fully established, so the race window is small.
+/// The Request object is exported *before* registering with the SessionManager.
+/// This closes the race where a cancellation arrives after `register()` but
+/// before `at()`: the `notify` is already listening, so the cancellation is
+/// caught. If registration fails, the export is cleaned up.
 pub async fn run_request<T, F>(
     server: &ObjectServer,
     session_manager: crate::core::session_manager::SessionManager,
@@ -31,8 +32,6 @@ where
 {
     let notify = Arc::new(Notify::new());
     let cancel_notify = Arc::new(Notify::new());
-    let registered =
-        session_manager.register(app_id, sender, handle.as_str(), cancel_notify.clone());
 
     let request_exported = server
         .at(
@@ -43,6 +42,9 @@ where
         )
         .await
         .is_ok();
+
+    let registered =
+        session_manager.register(app_id, sender, handle.as_str(), cancel_notify.clone());
 
     let response = match &registered {
         // The app is already at its concurrent-request limit. Do not run the
