@@ -86,10 +86,17 @@ where
 
     let context = proxy.context.clone();
 
-    let _ = proxy.sender.send(Box::new(move || {
-        let send_rc = std::rc::Rc::new(std::cell::RefCell::new(Some(send)));
-        f(send_rc, context, close_on_close)
-    }));
+    if proxy
+        .sender
+        .send(Box::new(move || {
+            let send_rc = std::rc::Rc::new(std::cell::RefCell::new(Some(send)));
+            f(send_rc, context, close_on_close)
+        }))
+        .is_err()
+    {
+        tracing::warn!("GTK main thread is gone, cannot dispatch UI task");
+        return Err(on_closed());
+    }
 
     recv.await.unwrap_or_else(|_| Err(on_closed()))
 }
