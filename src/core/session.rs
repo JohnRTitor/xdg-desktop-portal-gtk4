@@ -15,9 +15,11 @@ use {std::sync::Arc, tokio::sync::Notify, zbus::interface};
 /// # Ownership & Lifecycle
 ///
 /// The `Session` struct is exported on the D-Bus via `zbus::ObjectServer`. It lives
-/// as long as the D-Bus object is exported. When the session is closed (either by
-/// the client over D-Bus or by the backend internally), the object is removed from
-/// the server, which drops this struct.
+/// as long as the D-Bus object is exported, and is dropped when whoever created it
+/// unexports the object — `close()` itself does not unexport, so a caller that
+/// wants the object gone must remove it. The Inhibit portal does both: it passes
+/// an `on_close` notifier here and unexports the session in the task that notifier
+/// wakes.
 ///
 /// If a session needs to clean up GTK resources when closed, it should use the `on_close`
 /// notifier to signal a Tokio task that manages the GTK counterpart.
@@ -37,11 +39,25 @@ impl Session {
 #[interface(name = "org.freedesktop.impl.portal.Session")]
 impl Session {
     /// Called by the portal frontend to close the session.
+    ///
+    /// The `Closed` signal declared by this interface is deliberately not emitted
+    /// here. Per `data/org.freedesktop.impl.portal.Session.xml` it reports a
+    /// session the *backend* aborted on its own initiative, and the frontend
+    /// subscribes to it in `on_closed()` (`xdp-session.c`), re-emitting `Closed`
+    /// to the application from there. An application-initiated `Close` never
+    /// travels that way: the frontend handles it in `handle_close()`, which calls
+    /// `xdp_session_close(session, FALSE)` — no signal to the app — and only then
+    /// calls this method. Signalling from here would therefore be redundant, and
+    /// would mean something other than what the contract says.
+    ///
+    /// Note that some backends (KDE, COSMIC, Luminous) do emit it here anyway.
+    /// That is tolerated rather than correct: the frontend's `session->closed`
+    /// guard makes the extra signal a no-op. This backend has no autonomous
+    /// abort path to report, so it has nothing to emit.
+    ///
+    /// Unexporting is left to the creator — see the type-level docs.
     async fn close(&self) {
-        // Currently, we only log the closure. Real implementations (if added later)
-        // would need to clean up resources, close GTK dialogs, or stop screen recording.
         tracing::info!("Session {} closed", self.id);
-        // We just notify that the session has been closed.
         if let Some(notify) = &self.on_close {
             notify.notify_one();
         }
@@ -50,15 +66,16 @@ impl Session {
     /// Interface version, declared by
     /// `data/org.freedesktop.impl.portal.Session.xml`.
     ///
-    /// The `Closed` signal declared by the same interface is deliberately not
-    /// emitted from [`Self::close`]. It reports a session the *backend* aborted
-    /// on its own initiative: the frontend subscribes to it in `on_closed()`
-    /// (`xdp-session.c`) and re-emits `Closed` to the application from there.
-    /// An application-initiated `Close` never travels that way — the frontend
-    /// handles it in `handle_close()` and only then calls the backend's
-    /// `Close` — so signalling from this handler would be redundant. This
-    /// backend has no autonomous abort path to report, which is why
-    /// `xdg-desktop-portal-gtk` emits no signal here either.
+    /// 1, because the only method here is `Close`. The contract's version 2
+    /// replaces `Close` with `Close2`, which this backend does not implement, so
+    /// claiming 2 would invite a frontend onto a method that does not exist.
+    ///
+    /// The wire name needs the explicit `name = "version"`: `#[zbus(property)]`
+    /// otherwise derives it from the Rust fn name and capitalises it, exporting
+    /// `Version`. The frontend reads `version`. `Clipboard` and `Settings` both
+    /// shipped that drift before
+    /// `tests/introspection_test.rs::session_interface_matches_upstream_contract`
+    /// was written to catch it.
     #[zbus(property, name = "version")]
     fn version(&self) -> u32 {
         1
@@ -93,8 +110,13 @@ mod tests {
         session.close().await; // Should not panic
     }
 
-    /// The interface declares `version` as a read-only `u`. A pure getter, so
-    /// this needs no bus and cannot pass vacuously.
+    /// Pins the returned value only.
+    ///
+    /// This is *not* a guard on the wire name: drop `name = "version"` and this
+    /// still passes while the property is exported as `Version` and the frontend
+    /// reads nothing. That is the defect `Clipboard` and `Settings` both shipped.
+    /// The guard for it is
+    /// `tests/introspection_test.rs::session_interface_matches_upstream_contract`.
     #[test]
     fn version_is_one() {
         assert_eq!(Session::new("s".into(), None).version(), 1);

@@ -874,13 +874,21 @@ mod liveness_tests {
         );
     }
 
-    /// One session going away must not disturb the others still live.
+    /// One session going away must not disturb another that is still live.
     #[test]
-    fn other_sessions_survive_one_going_away() {
+    fn one_session_going_away_does_not_retire_the_others() {
         const OTHER: &str = "/org/freedesktop/portal/desktop/session/2/2";
-        let live = sessions(&[MINE, OTHER]);
+        let mut live = sessions(&[MINE, OTHER]);
         assert!(session_is_active(&live, MINE));
         assert!(session_is_active(&live, OTHER));
+
+        // Drop only the first, the way the disconnect sweep does.
+        live.retain(|s| s.as_str() != MINE);
+        assert!(!session_is_active(&live, MINE));
+        assert!(
+            session_is_active(&live, OTHER),
+            "an unrelated session must not be retired along with the one that left"
+        );
     }
 
     /// A handle that was never registered must not match, so the check cannot

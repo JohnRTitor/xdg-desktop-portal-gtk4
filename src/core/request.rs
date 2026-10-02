@@ -58,10 +58,10 @@ where
 
     let response = match &registered {
         // The app is already at its concurrent-request limit. Do not run the
-        // portal work: export the Request (so a later Close() still succeeds)
-        // and report the request as "other" immediately. Previously the error
-        // was only logged and the work ran anyway, which made
-        // `max_sessions_per_app` purely advisory.
+        // portal work: report the request as "other" immediately, and let the
+        // cleanup below unexport the Request. Previously the error was only
+        // logged and the work ran anyway, which made `max_sessions_per_app`
+        // purely advisory.
         Err(e) => {
             tracing::warn!(
                 "Rejecting request {} for {}: {}",
