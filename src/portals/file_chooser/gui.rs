@@ -226,6 +226,8 @@ impl FileChooserUi {
         });
         handler_id.set(Some(response_handler));
 
+        super::thumbnailer::setup_dialog_thumbnailer(&dialog, &context);
+
         dialog.show();
         context.spawn_local(async move {
             // Wait for either the dialog response or the D-Bus request cancellation

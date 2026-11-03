@@ -105,3 +105,56 @@ async fn test_file_chooser_save_file_dummy_ui() -> Result<(), Box<dyn std::error
 
     Ok(())
 }
+
+#[gtk4::test]
+fn test_dialog_thumbnailer_e2e() {
+    use gtk4::prelude::*;
+    use std::fs;
+    use xdg_desktop_portal_gtk4::portals::file_chooser::thumbnailer::{self, ThumbnailSize};
+
+    let test_dir = std::env::temp_dir().join("portal_e2e_thumb_test_dir");
+    let _ = fs::create_dir_all(&test_dir);
+    let sample_img = test_dir.join("test_img.png");
+
+    let minimal_png: [u8; 67] = [
+        0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44,
+        0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1f,
+        0x15, 0xc4, 0x89, 0x00, 0x00, 0x00, 0x0a, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9c, 0x63, 0x00,
+        0x01, 0x00, 0x00, 0x05, 0x00, 0x01, 0x0d, 0x0a, 0x2d, 0xb4, 0x00, 0x00, 0x00, 0x00, 0x49,
+        0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
+    ];
+    fs::write(&sample_img, minimal_png).unwrap();
+
+    let uri = thumbnailer::file_to_uri(&sample_img).unwrap();
+    let thumb_path = thumbnailer::get_thumbnail_path(&uri, ThumbnailSize::Normal).unwrap();
+    let _ = fs::remove_file(&thumb_path);
+
+    let dialog = gtk4::FileChooserDialog::new(
+        Some("Test E2E Thumbnailer"),
+        None::<&gtk4::Window>,
+        gtk4::FileChooserAction::Open,
+        &[("Cancel", gtk4::ResponseType::Cancel)],
+    );
+    let _ = dialog.set_current_folder(Some(&gtk4::gio::File::for_path(&test_dir)));
+
+    let ctx = gtk4::glib::MainContext::default();
+    thumbnailer::setup_dialog_thumbnailer(&dialog, &ctx);
+    dialog.show();
+
+    // Pump main loop so GTK processes view models, signals, and thumbnail generation
+    for _ in 0..50 {
+        ctx.iteration(false);
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    }
+
+    assert!(
+        thumb_path.is_file(),
+        "Thumbnail should be generated on disk at {:?}",
+        thumb_path
+    );
+
+    dialog.destroy();
+    let _ = fs::remove_file(&thumb_path);
+    let _ = fs::remove_file(&sample_img);
+    let _ = fs::remove_dir_all(&test_dir);
+}

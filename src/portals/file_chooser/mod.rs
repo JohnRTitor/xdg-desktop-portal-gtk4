@@ -97,3 +97,4 @@
 
 pub mod dbus;
 pub mod gui;
+pub mod thumbnailer;
