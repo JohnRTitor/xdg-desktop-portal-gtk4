@@ -65,7 +65,9 @@ pub fn md5_hex(data: &[u8]) -> String {
 pub fn get_thumbnail_cache_dir(size: ThumbnailSize) -> Option<PathBuf> {
     let base = std::env::var_os("XDG_CACHE_HOME")
         .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".cache")))?;
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".cache")))
+        .and_then(|p| fs::create_dir_all(&p).ok().map(|_| p))
+        .unwrap_or_else(std::env::temp_dir);
     let dir = base.join("thumbnails").join(size.dir_name());
     let _ = fs::create_dir_all(&dir);
     // FreeDesktop thumbnail spec mandates 0700 on the cache directories.
@@ -532,7 +534,9 @@ fn private_runtime_dir() -> Option<PathBuf> {
             std::env::var_os("XDG_CACHE_HOME")
                 .map(PathBuf::from)
                 .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".cache")))
-        })?;
+        })
+        .and_then(|p| fs::create_dir_all(&p).ok().map(|_| p))
+        .unwrap_or_else(std::env::temp_dir);
     let dir = base.join("xdg-desktop-portal-gtk4");
     fs::create_dir_all(&dir).ok()?;
     let _ = fs::set_permissions(&dir, fs::Permissions::from_mode(0o700));
@@ -751,7 +755,9 @@ pub fn generate_thumbnail(file_path: &Path, mime_type: Option<&str>) -> Result<P
         }
     }
 
-    if let Some(tp) = get_thumbnail_path(&uri, ThumbnailSize::Normal) {
+    if let Some(tp) = get_thumbnail_path(&uri, ThumbnailSize::Normal)
+        && is_thumbnail_valid(&tp, file_path)
+    {
         Ok(tp)
     } else {
         Err(format!("No thumbnailer available for {mime}"))
