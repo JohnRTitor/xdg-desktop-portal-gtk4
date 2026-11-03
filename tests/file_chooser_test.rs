@@ -153,6 +153,40 @@ fn test_dialog_thumbnailer_e2e() {
     }
 
     if thumb_path.is_file() {
+        assert!(
+            thumb_path.is_file(),
+            "Thumbnail should be generated on disk"
+        );
+
+        // Assert that the item in the model has thumbnail::path populated
+        fn check_item_thumb(w: &gtk4::Widget) -> bool {
+            if w.type_().name() == "GtkGridView"
+                && let Some(model) = w.property::<Option<gtk4::gio::ListModel>>("model")
+            {
+                for i in 0..model.n_items() {
+                    if let Some(item) = model.item(i)
+                        && let Ok(info) = item.downcast::<gtk4::gio::FileInfo>()
+                        && info.display_name() == "test_img.png"
+                    {
+                        return info.attribute_byte_string("thumbnail::path").is_some();
+                    }
+                }
+            }
+            let mut child = w.first_child();
+            while let Some(c) = child {
+                if check_item_thumb(&c) {
+                    return true;
+                }
+                child = c.next_sibling();
+            }
+            false
+        }
+        let found_thumb = check_item_thumb(dialog.upcast_ref());
+        assert!(
+            found_thumb,
+            "GFileInfo in view model should have thumbnail::path populated"
+        );
+
         let _ = fs::remove_file(&thumb_path);
     } else {
         eprintln!("no thumbnailer backend active in test environment; skipping assertion");

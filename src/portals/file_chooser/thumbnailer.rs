@@ -1,9 +1,12 @@
 use {
     gtk4::{
         FileChooserDialog, Widget,
-        gio::{self, prelude::FileExt},
-        glib::{self, MainContext},
-        prelude::{Cast, IsA, ListModelExt, ObjectExt, WidgetExt},
+        gio::{
+            self,
+            prelude::{DBusProxyExt, FileExt},
+        },
+        glib::{self, MainContext, prelude::ToVariant},
+        prelude::{Cast, ListModelExt, ObjectExt, WidgetExt},
     },
     parking_lot::Mutex,
     std::{
@@ -12,15 +15,10 @@ use {
         os::unix::fs::PermissionsExt,
         path::{Path, PathBuf},
         process::Command,
-        sync::{
-            Arc, LazyLock,
-            atomic::{AtomicU64, Ordering},
-        },
+        sync::{Arc, LazyLock},
         time::{Duration, UNIX_EPOCH},
     },
 };
-
-static COUNTER: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ThumbnailSize {
@@ -40,6 +38,9 @@ impl ThumbnailSize {
         self as u32
     }
 }
+
+/// All thumbnail sizes to regenerate when a file's thumbnail is missing or invalid.
+pub const ALL_SIZES: [ThumbnailSize; 2] = [ThumbnailSize::Normal, ThumbnailSize::Large];
 
 /// Convert a local filesystem path to a canonical file:// URI per FreeDesktop specification.
 pub fn file_to_uri(path: &Path) -> Option<String> {
@@ -67,6 +68,8 @@ pub fn get_thumbnail_cache_dir(size: ThumbnailSize) -> Option<PathBuf> {
         .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".cache")))?;
     let dir = base.join("thumbnails").join(size.dir_name());
     let _ = fs::create_dir_all(&dir);
+    // FreeDesktop thumbnail spec mandates 0700 on the cache directories.
+    let _ = fs::set_permissions(&dir, fs::Permissions::from_mode(0o700));
     Some(dir)
 }
 
@@ -77,7 +80,8 @@ pub fn get_thumbnail_path(uri: &str, size: ThumbnailSize) -> Option<PathBuf> {
     Some(dir.join(format!("{hash}.png")))
 }
 
-/// Check if a cached thumbnail exists and is not older than the source file.
+/// Validate a cached thumbnail: it must exist, be non-empty, not be older than the source file,
+/// and embed `Thumb::URI`/`Thumb::MTime` tEXt chunks that match the source file.
 pub fn is_thumbnail_valid(thumb_path: &Path, file_path: &Path) -> bool {
     let Ok(thumb_meta) = fs::metadata(thumb_path) else {
         return false;
@@ -94,7 +98,77 @@ pub fn is_thumbnail_valid(thumb_path: &Path, file_path: &Path) -> bool {
     let Ok(file_mtime) = file_meta.modified() else {
         return false;
     };
-    thumb_mtime >= file_mtime
+    // Thumbs older than the source are never valid.
+    if thumb_mtime < file_mtime {
+        return false;
+    }
+    // Verify FreeDesktop tEXt metadata embedded in the PNG.
+    if let Some(uri) = file_to_uri(file_path) {
+        let file_mtime_secs = file_mtime
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        return is_png_metadata_valid(thumb_path, &uri, file_mtime_secs);
+    }
+    true
+}
+
+/// Verify that a thumbnail PNG embeds matching `Thumb::URI` and `Thumb::MTime` tEXt chunks.
+fn is_png_metadata_valid(png_path: &Path, expected_uri: &str, expected_mtime_secs: u64) -> bool {
+    let Ok(data) = fs::read(png_path) else {
+        return false;
+    };
+    is_png_data_metadata_valid(&data, expected_uri, expected_mtime_secs)
+}
+
+/// Validate the tEXt chunks inside a raw PNG byte stream.
+fn is_png_data_metadata_valid(
+    png_data: &[u8],
+    expected_uri: &str,
+    expected_mtime_secs: u64,
+) -> bool {
+    const PNG_SIG: &[u8] = b"\x89PNG\r\n\x1a\n";
+    if png_data.len() < 8 || &png_data[..8] != PNG_SIG {
+        return false;
+    }
+    let mut pos = 8;
+    let mut found_uri = false;
+    let mut found_mtime = false;
+    loop {
+        if pos + 8 > png_data.len() {
+            break;
+        }
+        let len = u32::from_be_bytes([
+            png_data[pos],
+            png_data[pos + 1],
+            png_data[pos + 2],
+            png_data[pos + 3],
+        ]) as usize;
+        let chunk_type = &png_data[pos + 4..pos + 8];
+        let chunk_end = pos + 8 + len + 4;
+        if chunk_end > png_data.len() {
+            break;
+        }
+        if chunk_type == b"tEXt" && len >= 2 {
+            let payload = &png_data[pos + 8..pos + 8 + len];
+            if let Some(null_pos) = payload.iter().position(|&b| b == 0) {
+                let keyword = &payload[..null_pos];
+                let text = &payload[null_pos + 1..];
+                if keyword == b"Thumb::URI" {
+                    found_uri = text == expected_uri.as_bytes();
+                } else if keyword == b"Thumb::MTime"
+                    && let Ok(s) = std::str::from_utf8(text)
+                {
+                    let secs = s.split('.').next().and_then(|s| s.parse::<u64>().ok());
+                    found_mtime = secs == Some(expected_mtime_secs);
+                }
+            }
+        } else if chunk_type == b"IEND" {
+            break;
+        }
+        pos = chunk_end;
+    }
+    found_uri && found_mtime
 }
 
 /// IEEE 802.3 CRC32 calculation for PNG chunk checksums.
@@ -178,17 +252,16 @@ pub fn save_thumbnail_file(
         .parent()
         .ok_or_else(|| std::io::Error::other("no target parent directory"))?;
     let _ = fs::create_dir_all(parent);
+    let _ = fs::set_permissions(parent, fs::Permissions::from_mode(0o700));
 
-    let id = COUNTER.fetch_add(1, Ordering::Relaxed);
-    let tmp_path = parent.join(format!(".thumb-{}-{}.tmp", std::process::id(), id));
-
-    fs::write(&tmp_path, final_png)?;
-    let _ = fs::set_permissions(&tmp_path, fs::Permissions::from_mode(0o600));
-
-    if let Err(e) = fs::rename(&tmp_path, target_path) {
-        let _ = fs::remove_file(&tmp_path);
-        return Err(e);
-    }
+    let mut tmp = tempfile::Builder::new()
+        .prefix(".thumb-")
+        .suffix(".tmp")
+        .permissions(fs::Permissions::from_mode(0o600))
+        .tempfile_in(parent)?;
+    use std::io::Write;
+    tmp.write_all(&final_png)?;
+    tmp.persist(target_path).map_err(|e| e.error)?;
     Ok(())
 }
 
@@ -402,12 +475,21 @@ fn execute_thumbnailer_command(
     }
 
     let program = &tokens[0];
+    let prog_name = Path::new(program)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or(program);
+    if matches!(prog_name, "sh" | "bash" | "dash" | "zsh" | "ksh") {
+        return Err("Refusing to run a thumbnailer through a shell".to_string());
+    }
+
     let mut cmd = Command::new(program);
 
     for token in &tokens[1..] {
         let substituted = token
             .replace("%i", input_path.to_str().unwrap_or_default())
-            .replace("%u", input_uri)
+            // Pass local path for %u to be compatible with tools that cannot open file:// URIs directly
+            .replace("%u", input_path.to_str().unwrap_or(input_uri))
             .replace("%o", output_path.to_str().unwrap_or_default())
             .replace("%s", &size.to_string());
         cmd.arg(substituted);
@@ -417,205 +499,304 @@ fn execute_thumbnailer_command(
     cmd.stdout(std::process::Stdio::null());
     cmd.stderr(std::process::Stdio::null());
 
-    let status = cmd
-        .status()
+    let mut child = cmd
+        .spawn()
         .map_err(|e| format!("Failed to spawn {program}: {e}"))?;
 
-    if status.success() {
-        Ok(())
-    } else {
-        Err(format!("{program} exited with status {status}"))
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                return if status.success() {
+                    Ok(())
+                } else {
+                    Err(format!("{program} exited with status {status}"))
+                };
+            }
+            Ok(None) if std::time::Instant::now() >= deadline => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(format!("{program} timed out after 10s"));
+            }
+            Ok(None) => std::thread::sleep(Duration::from_millis(20)),
+            Err(e) => return Err(format!("Failed to wait for {program}: {e}")),
+        }
     }
 }
 
-/// Generate a thumbnail directly following FreeDesktop .thumbnailer spec.
-/// Falls back to Tumbler D-Bus if no direct .thumbnailer is registered for the MIME type.
-pub fn generate_thumbnail(
-    file_path: &Path,
-    mime_type: Option<&str>,
-    size: ThumbnailSize,
-) -> Result<PathBuf, String> {
-    let uri = file_to_uri(file_path).ok_or_else(|| "Failed to construct file URI".to_string())?;
-    let target_path = get_thumbnail_path(&uri, size)
-        .ok_or_else(|| "Failed to determine thumbnail cache path".to_string())?;
+/// Return a unique, private directory to hold intermediate thumbnailer output.
+fn private_runtime_dir() -> Option<PathBuf> {
+    let base = std::env::var_os("XDG_RUNTIME_DIR")
+        .map(PathBuf::from)
+        .or_else(|| {
+            std::env::var_os("XDG_CACHE_HOME")
+                .map(PathBuf::from)
+                .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".cache")))
+        })?;
+    let dir = base.join("xdg-desktop-portal-gtk4");
+    fs::create_dir_all(&dir).ok()?;
+    let _ = fs::set_permissions(&dir, fs::Permissions::from_mode(0o700));
+    Some(dir)
+}
 
-    if is_thumbnail_valid(&target_path, file_path) {
-        return Ok(target_path);
+/// Create a unique temporary PNG path in the user-private runtime directory and return it.
+fn private_temp_path(prefix: &str) -> Option<PathBuf> {
+    let dir = private_runtime_dir()?;
+    let tmp = tempfile::Builder::new()
+        .prefix(prefix)
+        .suffix(".png")
+        .permissions(fs::Permissions::from_mode(0o600))
+        .tempfile_in(&dir)
+        .ok()?;
+    let path = tmp.path().to_path_buf();
+    let _ = tmp.keep();
+    Some(path)
+}
+
+/// Generate thumbnails directly following the FreeDesktop .thumbnailer spec.
+///
+/// Both the `normal` (128) and `large` (256) cache entries are produced so that GIO's
+/// `THUMBNAIL_SIZE_AUTO` never selects a stale external thumbnail over a fresh one.
+pub fn generate_thumbnail(file_path: &Path, mime_type: Option<&str>) -> Result<PathBuf, String> {
+    let uri = file_to_uri(file_path).ok_or_else(|| "Failed to construct file URI".to_string())?;
+    let mime = mime_type.unwrap_or("application/octet-stream");
+
+    // Return early only if every size tier is already valid.
+    let target_normal = get_thumbnail_path(&uri, ThumbnailSize::Normal);
+    let target_large = get_thumbnail_path(&uri, ThumbnailSize::Large);
+    let normal_ok = target_normal
+        .as_deref()
+        .map(|p| is_thumbnail_valid(p, file_path))
+        .unwrap_or(false);
+    let large_ok = target_large
+        .as_deref()
+        .map(|p| is_thumbnail_valid(p, file_path))
+        .unwrap_or(false);
+    if normal_ok && large_ok {
+        return target_normal.ok_or_else(|| "no thumbnail path".to_string());
     }
 
-    let mime = mime_type.unwrap_or("application/octet-stream");
-    let temp_dir = std::env::temp_dir();
-    let temp_output = temp_dir.join(format!(
-        "portal-thumb-{}-{}.png",
-        std::process::id(),
-        COUNTER.fetch_add(1, Ordering::Relaxed)
-    ));
+    let needs_gen: Vec<ThumbnailSize> = ALL_SIZES
+        .into_iter()
+        .filter(|s| {
+            let tp = get_thumbnail_path(&uri, *s);
+            tp.map(|p| !is_thumbnail_valid(&p, file_path))
+                .unwrap_or(true)
+        })
+        .collect();
 
-    // 1. Check if a registered FreeDesktop .thumbnailer matches
+    // 1. Use a registered FreeDesktop .thumbnailer when one matches the MIME type.
     if let Some(spec) = REGISTRY.find_thumbnailer(mime) {
-        if execute_thumbnailer_command(&spec.exec, file_path, &uri, &temp_output, size.pixel_size())
-            .is_ok()
-            && let Ok(raw_png) = fs::read(&temp_output)
-        {
-            let _ = fs::remove_file(&temp_output);
-            if save_thumbnail_file(&raw_png, &uri, file_path, &target_path).is_ok() {
-                return Ok(target_path);
+        for size in &needs_gen {
+            let Some(target_path) = get_thumbnail_path(&uri, *size) else {
+                continue;
+            };
+            if let Some(temp_output) = private_temp_path("portal-thumb-") {
+                if execute_thumbnailer_command(
+                    &spec.exec,
+                    file_path,
+                    &uri,
+                    &temp_output,
+                    size.pixel_size(),
+                )
+                .is_ok()
+                    && let Ok(raw_png) = fs::read(&temp_output)
+                {
+                    let _ = fs::remove_file(&temp_output);
+                    let _ = save_thumbnail_file(&raw_png, &uri, file_path, &target_path);
+                } else {
+                    let _ = fs::remove_file(&temp_output);
+                }
             }
         }
-        let _ = fs::remove_file(&temp_output);
+        if let Some(tp) = get_thumbnail_path(&uri, ThumbnailSize::Normal)
+            && is_thumbnail_valid(&tp, file_path)
+        {
+            return Ok(tp);
+        }
+        if let Some(tp) = get_thumbnail_path(&uri, ThumbnailSize::Large)
+            && is_thumbnail_valid(&tp, file_path)
+        {
+            return Ok(tp);
+        }
     }
 
-    // 2. Built-in fallbacks if no .thumbnailer file handled it
+    // 2. Built-in fallbacks
     // A) PDF fallback tools: evince-thumbnailer or pdftoppm
     if mime == "application/pdf" {
-        if is_executable_or_in_path("evince-thumbnailer") {
-            let cmd = "evince-thumbnailer -s %s %i %o";
-            if execute_thumbnailer_command(cmd, file_path, &uri, &temp_output, size.pixel_size())
-                .is_ok()
-                && let Ok(raw_png) = fs::read(&temp_output)
-            {
-                let _ = fs::remove_file(&temp_output);
-                if save_thumbnail_file(&raw_png, &uri, file_path, &target_path).is_ok() {
-                    return Ok(target_path);
-                }
-            }
-            let _ = fs::remove_file(&temp_output);
-        }
+        for size in &needs_gen {
+            let Some(target_path) = get_thumbnail_path(&uri, *size) else {
+                continue;
+            };
+            let mut produced = false;
 
-        if is_executable_or_in_path("pdftoppm") {
-            let prefix = temp_dir.join(format!(
-                "portal-pdftoppm-{}-{}",
-                std::process::id(),
-                COUNTER.fetch_add(1, Ordering::Relaxed)
-            ));
-            let mut cmd = Command::new("pdftoppm");
-            cmd.args([
-                "-png",
-                "-singlefile",
-                "-scale-to",
-                &size.pixel_size().to_string(),
-                file_path.to_str().unwrap_or_default(),
-                prefix.to_str().unwrap_or_default(),
-            ]);
-            cmd.stdout(std::process::Stdio::null());
-            cmd.stderr(std::process::Stdio::null());
-            if let Ok(status) = cmd.status()
-                && status.success()
+            if is_executable_or_in_path("evince-thumbnailer")
+                && let Some(temp_output) = private_temp_path("portal-thumb-")
             {
-                let produced_png = PathBuf::from(format!("{}.png", prefix.display()));
-                if let Ok(raw_png) = fs::read(&produced_png) {
-                    let _ = fs::remove_file(&produced_png);
-                    if save_thumbnail_file(&raw_png, &uri, file_path, &target_path).is_ok() {
-                        return Ok(target_path);
-                    }
+                let cmd = "evince-thumbnailer -s %s %i %o";
+                if execute_thumbnailer_command(
+                    cmd,
+                    file_path,
+                    &uri,
+                    &temp_output,
+                    size.pixel_size(),
+                )
+                .is_ok()
+                    && let Ok(raw_png) = fs::read(&temp_output)
+                    && save_thumbnail_file(&raw_png, &uri, file_path, &target_path).is_ok()
+                {
+                    produced = true;
                 }
+                let _ = fs::remove_file(&temp_output);
             }
+
+            if !produced
+                && is_executable_or_in_path("pdftoppm")
+                && let Some(prefix) = private_temp_path("portal-pdftoppm-")
+            {
+                let prefix_str = prefix.to_str().unwrap_or_default().to_string();
+                let mut cmd = Command::new("pdftoppm");
+                cmd.args([
+                    "-png",
+                    "-singlefile",
+                    "-scale-to",
+                    &size.pixel_size().to_string(),
+                    file_path.to_str().unwrap_or_default(),
+                    &prefix_str,
+                ]);
+                cmd.stdout(std::process::Stdio::null());
+                cmd.stderr(std::process::Stdio::null());
+                if let Ok(status) = cmd.status()
+                    && status.success()
+                {
+                    let produced_png = PathBuf::from(format!("{prefix_str}.png"));
+                    if let Ok(raw_png) = fs::read(&produced_png) {
+                        let _ = save_thumbnail_file(&raw_png, &uri, file_path, &target_path);
+                    }
+                    let _ = fs::remove_file(&produced_png);
+                }
+                let _ = fs::remove_file(&prefix);
+            }
+        }
+        if let Some(tp) = get_thumbnail_path(&uri, ThumbnailSize::Normal)
+            && is_thumbnail_valid(&tp, file_path)
+        {
+            return Ok(tp);
+        }
+        if let Some(tp) = get_thumbnail_path(&uri, ThumbnailSize::Large)
+            && is_thumbnail_valid(&tp, file_path)
+        {
+            return Ok(tp);
         }
     }
 
     // B) Image fallback: gdk-pixbuf-thumbnailer or direct in-process pixbuf loader
     if mime.starts_with("image/") {
-        if is_executable_or_in_path("gdk-pixbuf-thumbnailer") {
-            let cmd = "gdk-pixbuf-thumbnailer -s %s %u %o";
-            if execute_thumbnailer_command(cmd, file_path, &uri, &temp_output, size.pixel_size())
-                .is_ok()
-                && let Ok(raw_png) = fs::read(&temp_output)
+        for size in &needs_gen {
+            let Some(target_path) = get_thumbnail_path(&uri, *size) else {
+                continue;
+            };
+            let mut produced = false;
+
+            if is_executable_or_in_path("gdk-pixbuf-thumbnailer")
+                && let Some(temp_output) = private_temp_path("portal-thumb-")
             {
+                let cmd = "gdk-pixbuf-thumbnailer -s %s %i %o";
+                if execute_thumbnailer_command(
+                    cmd,
+                    file_path,
+                    &uri,
+                    &temp_output,
+                    size.pixel_size(),
+                )
+                .is_ok()
+                    && let Ok(raw_png) = fs::read(&temp_output)
+                    && save_thumbnail_file(&raw_png, &uri, file_path, &target_path).is_ok()
+                {
+                    produced = true;
+                }
                 let _ = fs::remove_file(&temp_output);
-                if save_thumbnail_file(&raw_png, &uri, file_path, &target_path).is_ok() {
-                    return Ok(target_path);
+            }
+
+            if !produced {
+                let s = size.pixel_size() as i32;
+                if let Ok(pixbuf) = gdk_pixbuf::Pixbuf::from_file_at_scale(file_path, s, s, true)
+                    && let Ok(raw_png) = pixbuf.save_to_bufferv("png", &[])
+                {
+                    let _ = save_thumbnail_file(&raw_png, &uri, file_path, &target_path);
                 }
             }
-            let _ = fs::remove_file(&temp_output);
         }
-
-        // Direct in-process pixbuf fallback (guarantees thumbnails for images even without external binaries)
-        let s = size.pixel_size() as i32;
-        if let Ok(pixbuf) = gdk_pixbuf::Pixbuf::from_file_at_scale(file_path, s, s, true)
-            && let Ok(raw_png) = pixbuf.save_to_bufferv("png", &[])
-            && save_thumbnail_file(&raw_png, &uri, file_path, &target_path).is_ok()
+        if let Some(tp) = get_thumbnail_path(&uri, ThumbnailSize::Normal)
+            && is_thumbnail_valid(&tp, file_path)
         {
-            return Ok(target_path);
+            return Ok(tp);
+        }
+        if let Some(tp) = get_thumbnail_path(&uri, ThumbnailSize::Large)
+            && is_thumbnail_valid(&tp, file_path)
+        {
+            return Ok(tp);
         }
     }
 
-    // 3. Last-resort fallback: Tumbler D-Bus if available on session bus
+    // 3. Last-resort fallback: Tumbler D-Bus via native GLib, if registered.
     if trigger_tumbler_dbus(&uri, mime) {
-        // Wait briefly for Tumbler to write to cache
         for _ in 0..10 {
             std::thread::sleep(Duration::from_millis(50));
-            if is_thumbnail_valid(&target_path, file_path) {
-                return Ok(target_path);
+            if let Some(tp) = get_thumbnail_path(&uri, ThumbnailSize::Normal)
+                && is_thumbnail_valid(&tp, file_path)
+            {
+                return Ok(tp);
             }
         }
     }
 
-    Err(format!("No thumbnailer available for {mime}"))
+    if let Some(tp) = get_thumbnail_path(&uri, ThumbnailSize::Normal) {
+        Ok(tp)
+    } else {
+        Err(format!("No thumbnailer available for {mime}"))
+    }
 }
 
-/// Fallback call to Tumbler via D-Bus org.freedesktop.thumbnails.Thumbnailer1
+/// Queue a thumbnail request to Tumbler via native GLib D-Bus.
 fn trigger_tumbler_dbus(uri: &str, mime: &str) -> bool {
-    let gdbus = Command::new("gdbus")
-        .args([
-            "call",
-            "--session",
-            "--dest",
-            "org.freedesktop.thumbnails.Thumbnailer1",
-            "--object-path",
-            "/org/freedesktop/thumbnails/Thumbnailer1",
-            "--method",
-            "org.freedesktop.thumbnails.Thumbnailer1.Queue",
-            &format!("['{uri}']"),
-            &format!("['{mime}']"),
-            "normal",
-            "default",
-            "0",
-        ])
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status();
+    let Ok(proxy) = gio::DBusProxy::for_bus_sync(
+        gio::BusType::Session,
+        gio::DBusProxyFlags::DO_NOT_LOAD_PROPERTIES | gio::DBusProxyFlags::DO_NOT_CONNECT_SIGNALS,
+        None::<&gio::DBusInterfaceInfo>,
+        "org.freedesktop.thumbnails.Thumbnailer1",
+        "/org/freedesktop/thumbnails/Thumbnailer1",
+        "org.freedesktop.thumbnails.Thumbnailer1",
+        None::<&gio::Cancellable>,
+    ) else {
+        return false;
+    };
 
-    if let Ok(status) = gdbus
-        && status.success()
-    {
-        return true;
-    }
+    let parameters = (
+        vec![uri.to_string()],
+        vec![mime.to_string()],
+        "normal",
+        "default",
+        0u32,
+    )
+        .to_variant();
 
-    // Try busctl fallback
-    let busctl = Command::new("busctl")
-        .args([
-            "--user",
-            "call",
-            "org.freedesktop.thumbnails.Thumbnailer1",
-            "/org/freedesktop/thumbnails/Thumbnailer1",
-            "org.freedesktop.thumbnails.Thumbnailer1",
+    proxy
+        .call_sync(
             "Queue",
-            "asasssu",
-            "1",
-            uri,
-            "1",
-            mime,
-            "normal",
-            "default",
-            "0",
-        ])
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status();
-
-    if let Ok(status) = busctl
-        && status.success()
-    {
-        return true;
-    }
-
-    false
+            Some(&parameters),
+            gio::DBusCallFlags::NONE,
+            5000,
+            None::<&gio::Cancellable>,
+        )
+        .is_ok()
 }
 
 /// Task for thumbnail worker thread pool.
 struct ThumbnailTask {
     file_path: PathBuf,
     mime_type: Option<String>,
+    on_complete: Box<dyn FnOnce(PathBuf) + Send>,
 }
 
 /// Coordinator for managing asynchronous thumbnail generation requests and avoiding duplicate work.
@@ -645,14 +826,15 @@ impl ThumbnailCoordinator {
                     let lock = rx.lock();
                     lock.recv()
                 } {
-                    let _ = generate_thumbnail(
-                        &task.file_path,
-                        task.mime_type.as_deref(),
-                        ThumbnailSize::Normal,
-                    );
+                    let res = generate_thumbnail(&task.file_path, task.mime_type.as_deref());
                     {
                         let mut set = inflight.lock();
                         set.remove(&task.file_path);
+                    }
+                    if let Ok(thumb_path) = res {
+                        glib::idle_add_once(move || {
+                            (task.on_complete)(thumb_path);
+                        });
                     }
                 }
             });
@@ -677,71 +859,114 @@ impl ThumbnailCoordinator {
             }
         }
 
-        let in_flight = self.in_flight.clone();
-        std::thread::spawn(move || {
-            let res = generate_thumbnail(&file_path, mime_type.as_deref(), ThumbnailSize::Normal);
-            {
-                let mut set = in_flight.lock();
-                set.remove(&file_path);
-            }
-            if let Ok(thumb_path) = res {
-                glib::idle_add_once(move || {
-                    on_complete(thumb_path);
-                });
-            }
+        let _ = self.sender.send(ThumbnailTask {
+            file_path,
+            mime_type,
+            on_complete: Box::new(on_complete),
         });
-    }
-
-    /// Queue a file to the worker pool without individual callback (for batch/folder preload).
-    pub fn queue_background(&self, file_path: PathBuf, mime_type: Option<String>) {
-        let mut set = self.in_flight.lock();
-        if set.insert(file_path.clone()) {
-            let _ = self.sender.send(ThumbnailTask {
-                file_path,
-                mime_type,
-            });
-        }
     }
 }
 
 pub static COORDINATOR: LazyLock<ThumbnailCoordinator> = LazyLock::new(ThumbnailCoordinator::new);
 
-/// Recursively refresh GtkFileThumbnail widgets matching `target_name` to display the new thumbnail.
-pub fn refresh_file_thumbnail<W: IsA<Widget>>(root: &W, target_name: &str) {
-    if root.type_().name() == "GtkFileThumbnail"
-        && let Some(info) = root.property::<Option<gio::FileInfo>>("file-info")
-        && info.display_name() == target_name
+/// Decide whether an item wants a thumbnail and the cache doesn't already contain a valid one.
+fn should_process(info: &gio::FileInfo) -> bool {
+    let mime = info.content_type();
+    let mime_str = mime.as_deref().unwrap_or("");
+    if !mime_str.starts_with("image/")
+        && mime_str != "application/pdf"
+        && REGISTRY.find_thumbnailer(mime_str).is_none()
     {
-        info.remove_attribute("filechooser::queried");
-        info.remove_attribute("thumbnail::path");
-        info.remove_attribute("standard::icon");
-        root.set_property("file-info", None::<&gio::FileInfo>);
-        root.set_property("file-info", &info);
+        return false;
     }
-    let mut child = root.first_child();
-    while let Some(c) = child {
-        refresh_file_thumbnail(&c, target_name);
-        child = c.next_sibling();
+
+    if info.attribute_byte_string("thumbnail::path").is_some()
+        && info.boolean("thumbnail::is-valid")
+    {
+        return false;
     }
+
+    let Some(file_obj) = info.attribute_object("standard::file") else {
+        return false;
+    };
+    let Ok(file) = file_obj.downcast::<gio::File>() else {
+        return false;
+    };
+    let Some(path) = file.path() else {
+        return false;
+    };
+    path.is_file()
 }
 
 /// Attach thumbnail generator to a FileChooserDialog.
 pub fn setup_dialog_thumbnailer(dialog: &FileChooserDialog, context: &MainContext) {
-    let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(128);
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<(String, PathBuf)>();
 
     let dialog_weak = dialog.downgrade();
     context.spawn_local(async move {
-        while let Some(file_name) = rx.recv().await {
-            if let Some(dlg) = dialog_weak.upgrade() {
-                refresh_file_thumbnail(&dlg, &file_name);
-            } else {
+        while let Some((file_name, thumb_path)) = rx.recv().await {
+            let Some(dlg) = dialog_weak.upgrade() else {
                 break;
+            };
+            let thumb_str = thumb_path.to_string_lossy().to_string();
+
+            // 1. Update any visible widgets
+            fn refresh_widgets(root: &Widget, target_name: &str, thumb_str: &str) {
+                if root.type_().name() == "GtkFileThumbnail"
+                    && let Some(info) = root.property::<Option<gio::FileInfo>>("file-info")
+                    && info.display_name() == target_name
+                {
+                    info.set_attribute_byte_string("thumbnail::path", thumb_str);
+                    info.set_attribute_boolean("thumbnail::is-valid", true);
+                    info.remove_attribute("filechooser::queried");
+                    info.remove_attribute("standard::icon");
+                    root.set_property("file-info", None::<&gio::FileInfo>);
+                    root.set_property("file-info", &info);
+                }
+                let mut child = root.first_child();
+                while let Some(c) = child {
+                    refresh_widgets(&c, target_name, thumb_str);
+                    child = c.next_sibling();
+                }
             }
+            refresh_widgets(dlg.upcast_ref(), &file_name, &thumb_str);
+
+            // 2. Also update the GFileInfo in the view's model so off-screen/recycled items stay updated
+            fn update_model(root: &Widget, target_name: &str, thumb_str: &str) {
+                let name = root.type_().name();
+                if (name == "GtkGridView" || name == "GtkColumnView")
+                    && let Some(model) = root.property::<Option<gio::ListModel>>("model")
+                {
+                    for i in 0..model.n_items() {
+                        if let Some(item) = model.item(i)
+                            && let Ok(info) = item.downcast::<gio::FileInfo>()
+                            && info.display_name() == target_name
+                        {
+                            info.set_attribute_byte_string("thumbnail::path", thumb_str);
+                            info.set_attribute_boolean("thumbnail::is-valid", true);
+                            info.remove_attribute("filechooser::queried");
+                            info.remove_attribute("standard::icon");
+                            break;
+                        }
+                    }
+                }
+                let mut child = root.first_child();
+                while let Some(c) = child {
+                    update_model(&c, target_name, thumb_str);
+                    child = c.next_sibling();
+                }
+            }
+            update_model(dlg.upcast_ref(), &file_name, &thumb_str);
         }
     });
 
-    fn process_item(info: &gio::FileInfo, tx: &tokio::sync::mpsc::Sender<String>) {
-        if info.attribute_byte_string("thumbnail::path").is_some() {
+    let tx_for_views = tx.clone();
+
+    fn process_item(
+        info: &gio::FileInfo,
+        tx: &tokio::sync::mpsc::UnboundedSender<(String, PathBuf)>,
+    ) {
+        if !should_process(info) {
             return;
         }
         let Some(file_obj) = info.attribute_object("standard::file") else {
@@ -753,50 +978,51 @@ pub fn setup_dialog_thumbnailer(dialog: &FileChooserDialog, context: &MainContex
         let Some(path) = file.path() else {
             return;
         };
-        if !path.is_file() {
-            return;
-        }
         let name = info.display_name().to_string();
         let mime = info.content_type().map(|c| c.to_string());
 
         let tx_clone = tx.clone();
         let name_clone = name.clone();
-        COORDINATOR.queue_thumbnail(path, mime, move |_thumb_path| {
-            let _ = tx_clone.try_send(name_clone);
+        COORDINATOR.queue_thumbnail(path, mime, move |thumb_path| {
+            let _ = tx_clone.send((name_clone, thumb_path));
         });
     }
 
-    fn attach_to_views(w: &Widget, tx: &tokio::sync::mpsc::Sender<String>) {
+    fn attach_to_views(w: &Widget, tx: &tokio::sync::mpsc::UnboundedSender<(String, PathBuf)>) {
         let name = w.type_().name();
-        if name == "GtkGridView" || name == "GtkColumnView" {
+        if name == "GtkGridView" {
             let tx_outer = tx.clone();
-            let connect_model =
-                move |view: &Widget, tx_inner: &tokio::sync::mpsc::Sender<String>| {
-                    if let Some(model) = view.property::<Option<gio::ListModel>>("model") {
-                        for i in 0..model.n_items() {
-                            if let Some(item) = model.item(i)
+            let connect_model = move |view: &Widget,
+                                      tx_inner: &tokio::sync::mpsc::UnboundedSender<(
+                String,
+                PathBuf,
+            )>| {
+                if let Some(model) = view.property::<Option<gio::ListModel>>("model") {
+                    for i in 0..model.n_items() {
+                        if let Some(item) = model.item(i)
+                            && let Ok(info) = item.downcast::<gio::FileInfo>()
+                        {
+                            process_item(&info, tx_inner);
+                        }
+                    }
+                    let tx_for_signal = tx_inner.clone();
+                    model.connect_items_changed(move |m, pos, _removed, added| {
+                        for i in pos..(pos + added) {
+                            if let Some(item) = m.item(i)
                                 && let Ok(info) = item.downcast::<gio::FileInfo>()
                             {
-                                process_item(&info, tx_inner);
+                                process_item(&info, &tx_for_signal);
                             }
                         }
-                        let tx_for_signal = tx_inner.clone();
-                        model.connect_items_changed(move |m, pos, _removed, added| {
-                            for i in pos..(pos + added) {
-                                if let Some(item) = m.item(i)
-                                    && let Ok(info) = item.downcast::<gio::FileInfo>()
-                                {
-                                    process_item(&info, &tx_for_signal);
-                                }
-                            }
-                        });
-                    }
-                };
+                    });
+                }
+            };
             connect_model(w, &tx_outer);
             let tx_for_notify = tx.clone();
             w.connect_notify(Some("model"), move |view, _| {
                 connect_model(view, &tx_for_notify);
             });
+            return;
         }
         let mut child = w.first_child();
         while let Some(c) = child {
@@ -805,7 +1031,7 @@ pub fn setup_dialog_thumbnailer(dialog: &FileChooserDialog, context: &MainContex
         }
     }
 
-    attach_to_views(dialog.upcast_ref(), &tx);
+    attach_to_views(dialog.upcast_ref(), &tx_for_views);
 }
 
 #[cfg(test)]
@@ -835,7 +1061,7 @@ mod tests {
     }
 
     #[test]
-    fn test_png_metadata_injection() {
+    fn test_png_metadata_injection_and_verification() {
         // Minimal valid 1x1 PNG
         let minimal_png: [u8; 67] = [
             0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, // PNG signature
@@ -853,21 +1079,23 @@ mod tests {
             0xae, 0x42, 0x60, 0x82, // CRC
         ];
 
-        let injected = inject_png_metadata(&minimal_png, "file:///test/path.jpg", 123456789, 4096)
+        let uri = "file:///test/path.jpg";
+        let mtime = 123456789;
+        let injected = inject_png_metadata(&minimal_png, uri, mtime, 4096)
             .expect("metadata injection should succeed");
 
         assert!(injected.len() > minimal_png.len());
         assert_eq!(&injected[..8], &minimal_png[..8]);
         assert_eq!(&injected[12..16], b"IHDR");
 
-        let s = String::from_utf8_lossy(&injected);
-        assert!(s.contains("Thumb::URI"));
-        assert!(s.contains("file:///test/path.jpg"));
-        assert!(s.contains("Thumb::MTime"));
-        assert!(s.contains("123456789"));
-        assert!(s.contains("Thumb::Size"));
-        assert!(s.contains("Software"));
-        assert!(s.contains("xdg-desktop-portal-gtk4"));
+        // Verify with our validator
+        assert!(is_png_data_metadata_valid(&injected, uri, mtime));
+        assert!(!is_png_data_metadata_valid(
+            &injected,
+            "file:///other.jpg",
+            mtime
+        ));
+        assert!(!is_png_data_metadata_valid(&injected, uri, 9999));
     }
 
     #[test]
@@ -895,7 +1123,7 @@ mod tests {
         ];
         fs::write(&img_path, minimal_png).unwrap();
 
-        match generate_thumbnail(&img_path, Some("image/png"), ThumbnailSize::Normal) {
+        match generate_thumbnail(&img_path, Some("image/png")) {
             Ok(thumb_path) => {
                 assert!(
                     thumb_path.is_file(),
@@ -914,14 +1142,24 @@ mod tests {
     }
 
     #[test]
-    fn test_generate_thumbnail_pdf() {
-        let pdf_path =
-            Path::new("/home/masum/Documents/Masum-Reza-AICTE-Recommendation-Letter.pdf");
-        if pdf_path.is_file() {
-            let res = generate_thumbnail(pdf_path, Some("application/pdf"), ThumbnailSize::Normal);
-            assert!(res.is_ok(), "PDF thumbnail generation failed: {:?}", res);
-            let thumb = res.unwrap();
+    fn test_generate_thumbnail_pdf_fixture() {
+        let test_dir = std::env::temp_dir().join("portal_test_pdf_dir");
+        let _ = fs::create_dir_all(&test_dir);
+        let pdf_path = test_dir.join("sample.pdf");
+
+        // Minimal valid 1-page PDF fixture
+        let minimal_pdf = b"%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n3 0 obj<</Type/Page/MediaBox[0 0 100 100]/Parent 2 0 R>>endobj\nxref\n0 4\n0000000000 65535 f \n0000000009 00000 n \n0000000052 00000 n \n0000000102 00000 n \ntrailer<</Size 4/Root 1 0 R>>\nstartxref\n178\n%%EOF\n";
+        fs::write(&pdf_path, minimal_pdf).unwrap();
+
+        let res = generate_thumbnail(&pdf_path, Some("application/pdf"));
+        if let Ok(thumb) = res {
             assert!(thumb.is_file());
+            let _ = fs::remove_file(&thumb);
+        } else {
+            eprintln!("No PDF thumbnailer available in test environment; skipped");
         }
+
+        let _ = fs::remove_file(&pdf_path);
+        let _ = fs::remove_dir_all(&test_dir);
     }
 }

@@ -2019,6 +2019,7 @@ dependencies = [
  "rust-i18n",
  "rustix",
  "serde",
+ "tempfile",
  "thiserror",
  "tokio",
  "tracing",
