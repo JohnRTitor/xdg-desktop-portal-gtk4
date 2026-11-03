@@ -513,19 +513,30 @@ pub fn generate_thumbnail(
         }
     }
 
-    // B) Image fallback: gdk-pixbuf-thumbnailer if not in .thumbnailer registry
-    if mime.starts_with("image/") && is_executable_or_in_path("gdk-pixbuf-thumbnailer") {
-        let cmd = "gdk-pixbuf-thumbnailer -s %s %u %o";
-        if execute_thumbnailer_command(cmd, file_path, &uri, &temp_output, size.pixel_size())
-            .is_ok()
-            && let Ok(raw_png) = fs::read(&temp_output)
-        {
-            let _ = fs::remove_file(&temp_output);
-            if save_thumbnail_file(&raw_png, &uri, file_path, &target_path).is_ok() {
-                return Ok(target_path);
+    // B) Image fallback: gdk-pixbuf-thumbnailer or direct in-process pixbuf loader
+    if mime.starts_with("image/") {
+        if is_executable_or_in_path("gdk-pixbuf-thumbnailer") {
+            let cmd = "gdk-pixbuf-thumbnailer -s %s %u %o";
+            if execute_thumbnailer_command(cmd, file_path, &uri, &temp_output, size.pixel_size())
+                .is_ok()
+                && let Ok(raw_png) = fs::read(&temp_output)
+            {
+                let _ = fs::remove_file(&temp_output);
+                if save_thumbnail_file(&raw_png, &uri, file_path, &target_path).is_ok() {
+                    return Ok(target_path);
+                }
             }
+            let _ = fs::remove_file(&temp_output);
         }
-        let _ = fs::remove_file(&temp_output);
+
+        // Direct in-process pixbuf fallback (guarantees thumbnails for images even without external binaries)
+        let s = size.pixel_size() as i32;
+        if let Ok(pixbuf) = gdk_pixbuf::Pixbuf::from_file_at_scale(file_path, s, s, true)
+            && let Ok(raw_png) = pixbuf.save_to_bufferv("png", &[])
+            && save_thumbnail_file(&raw_png, &uri, file_path, &target_path).is_ok()
+        {
+            return Ok(target_path);
+        }
     }
 
     // 3. Last-resort fallback: Tumbler D-Bus if available on session bus
