@@ -159,13 +159,27 @@ pub struct PortalNotification {
     default_action: Option<String>,
     #[zvariant(rename = "default-action-target")]
     default_action_target: Option<OwnedValue>,
-    buttons: Option<Vec<(String, HashMap<String, OwnedValue>)>>,
+    buttons: Option<Vec<PortalButton>>,
     #[zvariant(rename = "markup-body")]
     markup_body: Option<String>,
     category: Option<String>,
     #[zvariant(rename = "display-hint")]
     display_hint: Option<Vec<String>>,
     sound: Option<OwnedValue>,
+}
+
+/// One entry of the `buttons` option.
+///
+/// The portal specification serializes buttons as `aa{sv}`: an array of
+/// vardicts with `label`, `action`, `target` and `purpose` keys. `purpose` is a
+/// hint for the notification server's own UI and has no fdo equivalent, so it
+/// is not read.
+#[derive(DeserializeDict, Type, Default, Debug, Clone)]
+#[zvariant(signature = "dict")]
+pub struct PortalButton {
+    label: Option<String>,
+    action: Option<String>,
+    target: Option<OwnedValue>,
 }
 
 /// Identifies one notification as the calling app knows it.
@@ -190,6 +204,8 @@ pub struct NotificationTarget {
     /// Back-reference to the same `NotifKey` used as the forward map's key.
     pub key: Arc<NotifKey>,
     pub action_targets: HashMap<String, OwnedValue>,
+    /// The portal action behind the fdo `default` action key, if one was set.
+    pub default_action: Option<String>,
     pub sound_file: Option<Arc<TempSoundFile>>,
 }
 
@@ -246,6 +262,7 @@ fn register_notification(
     portal_id: &str,
     fdo_id: u32,
     action_targets: HashMap<String, OwnedValue>,
+    default_action: Option<String>,
     sound_file: Option<Arc<TempSoundFile>>,
 ) -> Arc<NotifKey> {
     let key = Arc::new(NotifKey::new(app_id, portal_id));
@@ -259,6 +276,7 @@ fn register_notification(
         Arc::new(NotificationTarget {
             key: key.clone(),
             action_targets,
+            default_action,
             sound_file,
         }),
     );
@@ -310,8 +328,8 @@ pub struct Notification {
     /// # Threading & Invariants
     ///
     /// This map is populated when a notification is added, and it is consulted
-    /// asynchronously by the background tasks listening to `ActionInvoked` and
-    /// `NotificationClosed` signals from the host's notification daemon.
+    /// asynchronously by the background task listening to `ActivationToken`,
+    /// `ActionInvoked` and `NotificationClosed` signals from the host's notification daemon.
     /// When `NotificationClosed` is received, the entry is removed, which also
     /// drops the `TempSoundFile` (deleting the temporary file).
     reverse_map: ReverseMapType,
@@ -608,6 +626,7 @@ impl Notification {
                     &id,
                     new_id,
                     action_targets,
+                    notification.default_action.clone(),
                     sound_file,
                 );
             }
@@ -623,29 +642,17 @@ impl Notification {
             if let Some(proxy) = proxy_opt
                 && let Some(session_bus) = conn_opt
             {
-                let rm = reverse_map_clone.clone();
-                let server_clone2 = server_clone.clone();
-                let proxy_clone1 = proxy.clone();
-                let session_bus_clone = session_bus.clone();
                 tokio::spawn(async move {
-                    if let Err(e) = listen_for_action_invoked(
-                        rm,
-                        server_clone2,
-                        proxy_clone1,
-                        session_bus_clone,
+                    if let Err(e) = listen_for_server_signals(
+                        reverse_map_clone,
+                        active_notifications_clone,
+                        server_clone,
+                        proxy,
+                        session_bus,
                     )
                     .await
                     {
-                        tracing::error!("Action invoked stream failed: {}", e);
-                    }
-                });
-
-                let rm2 = reverse_map_clone.clone();
-                let an = active_notifications_clone.clone();
-                let proxy_clone2 = proxy.clone();
-                tokio::spawn(async move {
-                    if let Err(e) = listen_for_notification_closed(rm2, an, proxy_clone2).await {
-                        tracing::error!("Notification closed stream failed: {}", e);
+                        tracing::error!("Notification server signal stream failed: {}", e);
                     }
                 });
             }
@@ -707,6 +714,13 @@ fn actions_capacity(notification: &PortalNotification) -> usize {
 /// `Notify` takes the actions as a flat alternating list of `(id, label)` pairs,
 /// and the reply needs each action's target keyed by its id.
 ///
+/// The default action is reported under fdo's reserved `default` id with an
+/// empty label, as the reference implementation does: servers activate it on a
+/// click on the notification body rather than drawing it as a button, and its
+/// portal action name is recorded separately in [`NotificationTarget`]. Buttons
+/// are reported under their portal action name, so the id routes straight back
+/// to the action. A button without an `action` cannot be routed and is skipped.
+///
 /// The labels are borrowed straight out of `notification` rather than collected
 /// into an owned `Vec<String>` first. The previous code built one `String` per
 /// id and per label -- including for a label, which was already a `&str` borrowed
@@ -722,26 +736,27 @@ fn build_actions(notification: &PortalNotification) -> (Vec<&str>, HashMap<Strin
     let mut actions = Vec::with_capacity(actions_capacity(notification));
     let mut targets = HashMap::new();
 
-    if let Some(default_action) = notification.default_action.as_deref() {
+    if notification.default_action.is_some() {
         actions.push("default");
-        actions.push(default_action);
+        actions.push("");
         if let Some(target) = notification.default_action_target.as_ref() {
             targets.insert("default".to_owned(), target.clone());
         }
     }
 
     if let Some(buttons) = notification.buttons.as_deref() {
-        for (action, options) in buttons {
+        for button in buttons {
+            let Some(action) = button.action.as_deref() else {
+                tracing::debug!("Skipping a notification button with no action");
+                continue;
+            };
             // An explicit label wins; otherwise the action id doubles as the
-            // label, matching what the reference implementations send.
-            let label = options
-                .get("label")
-                .and_then(|v| <&str>::try_from(std::ops::Deref::deref(v)).ok())
-                .unwrap_or(action.as_str());
-            actions.push(action.as_str());
+            // label, so the list stays correctly paired.
+            let label = button.label.as_deref().unwrap_or(action);
+            actions.push(action);
             actions.push(label);
-            if let Some(target) = options.get("action-target") {
-                targets.insert(action.clone(), target.clone());
+            if let Some(target) = button.target.as_ref() {
+                targets.insert(action.to_owned(), target.clone());
             }
         }
     }
@@ -749,151 +764,189 @@ fn build_actions(notification: &PortalNotification) -> (Vec<&str>, HashMap<Strin
     (actions, targets)
 }
 
-/// Spawns a background task that listens to `ActionInvoked` signals from the system notification daemon.
+/// The portal action behind an fdo action id, and its target.
 ///
-/// When an action is invoked on a notification created through this portal, this function looks up
-/// the original portal `app_id` and notification id in the `reverse_map`. It then emits the portal's
-/// `ActionInvoked` signal back to the sandboxed application over D-Bus, completing the cycle.
-async fn listen_for_action_invoked(
+/// Buttons are reported under their own action name, so the id is the action.
+/// The reserved `default` id stands for the notification's `default-action`; a
+/// notification with no `default-action` only reports `default` when one of its
+/// buttons is literally named that, in which case the id is the action again.
+fn action_route<'a>(
+    target: &'a NotificationTarget,
+    action_key: &'a str,
+) -> (&'a str, Option<&'a OwnedValue>) {
+    let name = if action_key == "default" {
+        target.default_action.as_deref().unwrap_or(action_key)
+    } else {
+        action_key
+    };
+    (name, target.action_targets.get(action_key))
+}
+
+/// The `platform-data` vardict handed to the application on activation.
+///
+/// The token comes from the server's `ActivationToken` signal, which the fdo
+/// specification sends just before `ActionInvoked`. It is passed under both
+/// keys the reference implementation uses: `activation-token` for current GTK
+/// and Qt, `desktop-startup-id` for GTK before 4.10.
+fn platform_data(activation_token: Option<String>) -> HashMap<&'static str, Value<'static>> {
+    let mut data = HashMap::new();
+    if let Some(token) = activation_token {
+        data.insert("desktop-startup-id", Value::from(token.clone()));
+        data.insert("activation-token", Value::from(token));
+    }
+    data
+}
+
+/// Listens to the notification server's `ActivationToken`, `ActionInvoked` and
+/// `NotificationClosed` signals on one stream, in the order the server sent
+/// them.
+///
+/// One stream rather than one per signal is what makes the routing correct:
+/// the server sends `ActivationToken` before the `ActionInvoked` it belongs to,
+/// and usually `NotificationClosed` right after it. With separate streams on
+/// separate tasks, the closed handler could retire the notification before the
+/// action handler looked it up, and the token could arrive after the action
+/// was already dispatched.
+async fn listen_for_server_signals(
     reverse_map: ReverseMapType,
+    active_notifications: ActiveNotifications,
     server: ObjectServer,
     proxy: Arc<NotificationsProxy<'static>>,
     session_bus: Connection,
 ) -> zbus::Result<()> {
-    let mut stream = proxy.receive_action_invoked().await?;
+    let mut stream = proxy.inner().receive_all_signals().await?;
+    // Tokens are single-use, so each is consumed by the action it precedes.
+    let mut activation_tokens: HashMap<u32, String> = HashMap::new();
 
-    while let Some(signal) = stream.next().await {
-        let args = signal.args()?;
-        let id = args.id;
-        let action_key = args.action_key;
-
-        let target_data = reverse_map.lock().get(&id).cloned();
-
-        let Some(target) = target_data.as_deref() else {
-            continue;
-        };
-        let (app_id, portal_id) = (&target.key.app_id, &target.key.portal_id);
-        let action_targets = &target.action_targets;
-
-        let mut params: Vec<Value<'_>> = vec![];
-
-        // XDG Notification spec requires parameter: av
-        // 1. The target for the action, if one was specified.
-        // 2. The platform-data as vardict containing an activation-token (s)
-        if let Some(tv) = action_targets.get(action_key) {
-            params.push(Value::from(tv.clone()));
-        }
-
-        let platform_data: HashMap<&str, Value<'_>> = HashMap::new();
-        let platform_data_val = Value::from(platform_data.clone());
-        params.push(platform_data_val);
-
-        // Build the application object path in one pass. `replace` twice would
-        // allocate an intermediate `String` for the first pass and another for
-        // the second, plus the `String::from("/")` seed that `push_str` then
-        // reallocates as it grows.
-        let mut app_path = String::with_capacity(app_id.len() + 1);
-        app_path.push('/');
-        app_path.extend(app_id.chars().map(|c| match c {
-            '.' => '/',
-            '-' => '_',
-            other => other,
-        }));
-
-        // `app_id` and `portal_id` are borrowed from `target_data`, which dies
-        // at the end of this iteration, so the spawned task needs owned values.
-        // They are `Arc<str>`, so each clone is a refcount bump rather than a
-        // new allocation.
-        let app_id_clone = app_id.clone();
-        let portal_id_clone = portal_id.clone();
-        // `app_path` and `params` are owned locals that are dead after the
-        // spawn, so they are moved rather than cloned. `params` holds only
-        // `Value<'static>` (both entries are built from owned `OwnedValue`s),
-        // so it reaches the task without a deep copy of every element.
-        let action_key_clone = String::from(action_key);
-        let server_clone = server.clone();
-        let session_bus_clone = session_bus.clone();
-
-        tokio::spawn(async move {
-            if let Some(action_name) = action_key_clone.strip_prefix("app.") {
-                // This proxy is used to talk back to the specific client application that triggered the notification
-                // (e.g., when a user clicks a notification action). Because the destination address
-                // (the app_id or unique connection name) changes dynamically on every single request,
-                // we must instantiate it on the fly.
-                let Ok(builder) = ApplicationProxy::builder(&session_bus_clone)
-                    .destination(app_id_clone.as_ref())
-                else {
-                    tracing::error!("Invalid D-Bus destination: {}", app_id_clone);
-                    return;
-                };
-                let Ok(builder) = builder.path(app_path.as_str()) else {
-                    tracing::error!("Invalid D-Bus path: {}", app_path);
-                    return;
-                };
-                let proxy_res = builder
-                    .cache_properties(zbus::proxy::CacheProperties::No)
-                    .build()
-                    .await;
-
-                if let Ok(proxy) = proxy_res {
-                    let _ = proxy
-                        .activate_action(action_name, &params, &platform_data)
-                        .await;
-                }
-            } else {
-                let Ok(builder) = ApplicationProxy::builder(&session_bus_clone)
-                    .destination(app_id_clone.as_ref())
-                else {
-                    tracing::error!("Invalid D-Bus destination: {}", app_id_clone);
-                    return;
-                };
-                let Ok(builder) = builder.path(app_path.as_str()) else {
-                    tracing::error!("Invalid D-Bus path: {}", app_path);
-                    return;
-                };
-                let proxy_res = builder
-                    .cache_properties(zbus::proxy::CacheProperties::No)
-                    .build()
-                    .await;
-
-                if let Ok(proxy) = proxy_res {
-                    let _ = proxy.activate(&platform_data).await;
-                }
-
-                let iface_ref_res = server_clone
-                    .interface::<_, Notification>(crate::core::DBUS_PATH)
-                    .await;
-
-                if let Ok(iface_ref) = iface_ref_res {
-                    let _ = Notification::action_invoked(
-                        iface_ref.signal_emitter(),
-                        &app_id_clone,
-                        &portal_id_clone,
-                        &action_key_clone,
-                        &params,
-                    )
-                    .await;
+    while let Some(message) = stream.next().await {
+        let header = message.header();
+        match header.member().map(|m| m.as_str()) {
+            Some("ActivationToken") => {
+                let (id, token): (u32, String) = message.body().deserialize()?;
+                if reverse_map.lock().contains_key(&id) {
+                    activation_tokens.insert(id, token);
                 }
             }
-        });
+            Some("ActionInvoked") => {
+                let (id, action_key): (u32, String) = message.body().deserialize()?;
+                let token = activation_tokens.remove(&id);
+                let target = reverse_map.lock().get(&id).cloned();
+                if let Some(target) = target {
+                    dispatch_action(&server, &session_bus, &target, &action_key, token);
+                }
+            }
+            Some("NotificationClosed") => {
+                let (id, _reason): (u32, u32) = message.body().deserialize()?;
+                activation_tokens.remove(&id);
+                retire_closed_notification(&reverse_map, &active_notifications, id);
+            }
+            _ => {}
+        }
     }
     Ok(())
 }
 
-async fn listen_for_notification_closed(
-    reverse_map: ReverseMapType,
-    active_notifications: ActiveNotifications,
-    proxy: Arc<NotificationsProxy<'static>>,
-) -> zbus::Result<()> {
-    let mut stream = proxy.receive_notification_closed().await?;
+/// Delivers an invoked fdo action to the application that sent the notification.
+///
+/// This follows the portal specification and the reference implementation:
+///
+/// - An `app.`-prefixed action is exported by the application, so it is called
+///   directly with `org.freedesktop.Application.ActivateAction`. Its parameter
+///   array carries only the action's target; GApplication rejects an
+///   `ActivateAction` whose parameter does not match the action's type.
+/// - Any other action is not exported. The application is activated with
+///   `org.freedesktop.Application.Activate`, and the portal's `ActionInvoked`
+///   signal carries the action name with the target and `platform-data`.
+fn dispatch_action(
+    server: &ObjectServer,
+    session_bus: &Connection,
+    target: &Arc<NotificationTarget>,
+    action_key: &str,
+    activation_token: Option<String>,
+) {
+    let (name, action_target) = action_route(target, action_key);
+    let name = String::from(name);
+    let parameter: Vec<Value<'static>> = action_target
+        .map(|t| Value::from(t.clone()))
+        .into_iter()
+        .collect();
+    let platform_data = platform_data(activation_token);
 
-    while let Some(signal) = stream.next().await {
-        let args = signal.args()?;
-        let id = args.id;
+    // `app_id` and `portal_id` are `Arc<str>`, so the task gets refcount bumps
+    // rather than copies.
+    let app_id = target.key.app_id.clone();
+    let portal_id = target.key.portal_id.clone();
+    let server = server.clone();
+    let session_bus = session_bus.clone();
 
-        retire_closed_notification(&reverse_map, &active_notifications, id);
-    }
-    Ok(())
+    tokio::spawn(async move {
+        let app = application_proxy(&session_bus, &app_id).await;
+
+        if let Some(exported) = name.strip_prefix("app.") {
+            if let Some(app) = app
+                && let Err(e) = app
+                    .activate_action(exported, &parameter, &platform_data)
+                    .await
+            {
+                tracing::warn!("ActivateAction {exported} on {app_id} failed: {e}");
+            }
+            return;
+        }
+
+        if let Some(app) = app
+            && let Err(e) = app.activate(&platform_data).await
+        {
+            tracing::warn!("Activate on {app_id} failed: {e}");
+        }
+
+        let mut signal_parameter = parameter;
+        signal_parameter.push(Value::from(platform_data));
+        if let Ok(iface_ref) = server
+            .interface::<_, Notification>(crate::core::DBUS_PATH)
+            .await
+        {
+            let _ = Notification::action_invoked(
+                iface_ref.signal_emitter(),
+                &app_id,
+                &portal_id,
+                &name,
+                &signal_parameter,
+            )
+            .await;
+        }
+    });
+}
+
+/// A proxy for the application's `org.freedesktop.Application` interface.
+///
+/// The object path follows the D-Bus convention for an app ID (`.` becomes
+/// `/`, `-` becomes `_`). Returns `None` when the app ID is not a valid bus
+/// name, which includes the empty app ID of an unsandboxed caller.
+async fn application_proxy(
+    session_bus: &Connection,
+    app_id: &str,
+) -> Option<ApplicationProxy<'static>> {
+    let mut app_path = String::with_capacity(app_id.len() + 1);
+    app_path.push('/');
+    app_path.extend(app_id.chars().map(|c| match c {
+        '.' => '/',
+        '-' => '_',
+        other => other,
+    }));
+
+    let builder = ApplicationProxy::builder(session_bus)
+        .destination(app_id.to_owned())
+        .inspect_err(|_| tracing::debug!("No application to activate for app id {app_id:?}"))
+        .ok()?
+        .path(app_path)
+        .inspect_err(|e| tracing::error!("Invalid D-Bus path for {app_id:?}: {e}"))
+        .ok()?;
+    builder
+        .cache_properties(zbus::proxy::CacheProperties::No)
+        .build()
+        .await
+        .inspect_err(|e| tracing::error!("Could not build an application proxy: {e}"))
+        .ok()
 }
 
 #[cfg(test)]
@@ -1064,6 +1117,7 @@ mod notification_map_tests {
             42,
             HashMap::new(),
             None,
+            None,
         );
 
         assert_eq!(active_id(&active, &key.app_id, &key.portal_id), Some(42));
@@ -1086,6 +1140,7 @@ mod notification_map_tests {
             42,
             HashMap::new(),
             None,
+            None,
         );
 
         assert!(retire_closed_notification(&reverse, &active, 42));
@@ -1106,6 +1161,7 @@ mod notification_map_tests {
             42,
             HashMap::new(),
             None,
+            None,
         );
         // The host replaced it: same portal key, new host ID.
         register_notification(
@@ -1115,6 +1171,7 @@ mod notification_map_tests {
             "7",
             99,
             HashMap::new(),
+            None,
             None,
         );
 
@@ -1143,6 +1200,7 @@ mod notification_map_tests {
             42,
             HashMap::new(),
             None,
+            None,
         );
         assert!(!retire_closed_notification(&reverse, &active, 1234));
         assert_eq!(active.lock().len(), 1);
@@ -1166,6 +1224,7 @@ mod notification_map_tests {
             "7",
             42,
             HashMap::new(),
+            None,
             Some(sound.clone()),
         );
         assert_eq!(Arc::strong_count(&sound), 2);
@@ -1194,6 +1253,7 @@ mod notification_map_tests {
             42,
             HashMap::new(),
             None,
+            None,
         );
 
         let scope = crate::alloc_probe::AllocScope::start();
@@ -1216,6 +1276,7 @@ mod notification_map_tests {
             "7",
             42,
             HashMap::new(),
+            None,
             None,
         );
 
@@ -1256,6 +1317,7 @@ mod notification_map_tests {
                 i as u32 + 1,
                 HashMap::new(),
                 None,
+                None,
             );
         }
         assert_eq!(
@@ -1281,6 +1343,7 @@ mod notification_map_tests {
             5,
             HashMap::new(),
             None,
+            None,
         );
         register_notification(
             &active,
@@ -1289,6 +1352,7 @@ mod notification_map_tests {
             "1",
             6,
             HashMap::new(),
+            None,
             None,
         );
 
@@ -1312,6 +1376,7 @@ mod notification_map_tests {
             "2",
             7,
             HashMap::new(),
+            None,
             None,
         );
         assert!(remove_active_notification(&active, "org.example.B", "1").is_some());
@@ -1354,11 +1419,29 @@ mod action_list_tests {
         OwnedValue::try_from(Value::from(s)).expect("str to OwnedValue is infallible")
     }
 
+    fn button(action: &str, label: Option<&str>, target: Option<&str>) -> PortalButton {
+        PortalButton {
+            label: label.map(Into::into),
+            action: Some(action.into()),
+            target: target.map(owned),
+        }
+    }
+
     fn notification_with_default_action() -> PortalNotification {
         PortalNotification {
             default_action: Some("open".into()),
             default_action_target: Some(owned("t")),
             ..Default::default()
+        }
+    }
+
+    fn target_for(notification: &PortalNotification) -> NotificationTarget {
+        let (_, action_targets) = build_actions(notification);
+        NotificationTarget {
+            key: Arc::new(NotifKey::new("org.example.App", "1")),
+            action_targets,
+            default_action: notification.default_action.clone(),
+            sound_file: None,
         }
     }
 
@@ -1370,11 +1453,15 @@ mod action_list_tests {
         assert!(targets.is_empty());
     }
 
+    /// The default action is activated by clicking the notification, not drawn
+    /// as a button, so its fdo label is empty, as in the reference backend.
+    /// Sending the action name as the label used to show `app.open` to users of
+    /// servers that list every action.
     #[test]
     fn the_default_action_is_reported_under_the_reserved_id() {
         let n = notification_with_default_action();
         let (actions, targets) = build_actions(&n);
-        assert_eq!(actions, vec!["default", "open"]);
+        assert_eq!(actions, vec!["default", ""]);
         assert_eq!(targets.len(), 1);
         assert_eq!(targets["default"], owned("t"));
     }
@@ -1386,7 +1473,7 @@ mod action_list_tests {
             ..Default::default()
         };
         let (actions, targets) = build_actions(&n);
-        assert_eq!(actions, vec!["default", "open"]);
+        assert_eq!(actions, vec!["default", ""]);
         assert!(
             targets.is_empty(),
             "an action with no target must not get an empty entry"
@@ -1401,11 +1488,8 @@ mod action_list_tests {
             default_action: Some("open".into()),
             default_action_target: Some(owned("t")),
             buttons: Some(vec![
-                ("reply".into(), HashMap::new()),
-                (
-                    "archive".into(),
-                    HashMap::from([("label".into(), owned("Archive"))]),
-                ),
+                button("reply", None, None),
+                button("archive", Some("Archive"), None),
             ]),
             ..Default::default()
         };
@@ -1413,46 +1497,59 @@ mod action_list_tests {
         assert_eq!(actions.len() % 2, 0, "ids and labels must pair up");
         assert_eq!(
             actions,
-            vec!["default", "open", "reply", "reply", "archive", "Archive"]
+            vec!["default", "", "reply", "reply", "archive", "Archive"]
         );
     }
 
     #[test]
     fn an_explicit_label_overrides_the_action_id() {
         let n = PortalNotification {
-            buttons: Some(vec![(
-                "app.reply".into(),
-                HashMap::from([("label".into(), owned("Reply"))]),
-            )]),
+            buttons: Some(vec![button("app.reply", Some("Reply"), None)]),
             ..Default::default()
         };
         let (actions, _) = build_actions(&n);
         assert_eq!(actions, vec!["app.reply", "Reply"]);
     }
 
-    /// An absent label falls back to the id, which is what the reference
-    /// implementations do and what keeps the list correctly paired.
+    /// An absent label falls back to the id, which keeps the list correctly
+    /// paired.
     #[test]
     fn a_missing_label_falls_back_to_the_action_id() {
         let n = PortalNotification {
-            buttons: Some(vec![("app.reply".into(), HashMap::new())]),
+            buttons: Some(vec![button("app.reply", None, None)]),
             ..Default::default()
         };
         let (actions, _) = build_actions(&n);
         assert_eq!(actions, vec!["app.reply", "app.reply"]);
     }
 
+    /// A button the server reports back by id must have an id to report.
+    #[test]
+    fn a_button_without_an_action_is_skipped() {
+        let n = PortalNotification {
+            buttons: Some(vec![
+                PortalButton {
+                    label: Some("Orphan".into()),
+                    ..Default::default()
+                },
+                button("app.reply", Some("Reply"), None),
+            ]),
+            ..Default::default()
+        };
+        let (actions, _) = build_actions(&n);
+        assert_eq!(actions, vec!["app.reply", "Reply"]);
+    }
+
+    /// The specification names the key `target`. The previous code read
+    /// `action-target`, so a button's target was never delivered.
     #[test]
     fn targets_are_kept_per_action() {
         let n = PortalNotification {
             default_action: Some("open".into()),
             default_action_target: Some(owned("default-target")),
             buttons: Some(vec![
-                (
-                    "reply".into(),
-                    HashMap::from([("action-target".into(), owned("reply-target"))]),
-                ),
-                ("archive".into(), HashMap::new()),
+                button("reply", None, Some("reply-target")),
+                button("archive", None, None),
             ]),
             ..Default::default()
         };
@@ -1465,6 +1562,51 @@ mod action_list_tests {
         );
     }
 
+    /// A click on the notification arrives as fdo's `default` id and must be
+    /// delivered as the app's own `default-action`, with its target. The
+    /// previous code delivered the literal name `default`.
+    #[test]
+    fn the_default_id_routes_to_the_default_action() {
+        let target = target_for(&PortalNotification {
+            default_action: Some("app.open".into()),
+            default_action_target: Some(owned("thread-7")),
+            ..Default::default()
+        });
+        let (name, action_target) = action_route(&target, "default");
+        assert_eq!(name, "app.open");
+        assert_eq!(action_target, Some(&owned("thread-7")));
+    }
+
+    #[test]
+    fn a_button_id_routes_to_its_own_action() {
+        let target = target_for(&PortalNotification {
+            default_action: Some("app.open".into()),
+            buttons: Some(vec![button("app.reply", None, Some("thread-7"))]),
+            ..Default::default()
+        });
+        let (name, action_target) = action_route(&target, "app.reply");
+        assert_eq!(name, "app.reply");
+        assert_eq!(action_target, Some(&owned("thread-7")));
+    }
+
+    /// With no `default-action`, `default` can only be a button named that.
+    #[test]
+    fn a_button_named_default_keeps_its_name() {
+        let target = target_for(&PortalNotification {
+            buttons: Some(vec![button("default", Some("OK"), None)]),
+            ..Default::default()
+        });
+        assert_eq!(action_route(&target, "default"), ("default", None));
+    }
+
+    #[test]
+    fn platform_data_carries_the_token_under_both_keys() {
+        let data = platform_data(Some("token-1".into()));
+        assert_eq!(data["activation-token"], Value::from("token-1"));
+        assert_eq!(data["desktop-startup-id"], Value::from("token-1"));
+        assert!(platform_data(None).is_empty());
+    }
+
     /// The regression this guards: the list used to be built as a
     /// `Vec<String>`, allocating one `String` per id and per label -- including
     /// for labels, which were already `&str` -- and the whole vector was then
@@ -1475,8 +1617,8 @@ mod action_list_tests {
         let n = PortalNotification {
             default_action: Some("open".into()),
             buttons: Some(vec![
-                ("reply".into(), HashMap::new()),
-                ("archive".into(), HashMap::new()),
+                button("reply", None, None),
+                button("archive", None, None),
             ]),
             ..Default::default()
         };
