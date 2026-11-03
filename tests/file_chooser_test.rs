@@ -106,8 +106,13 @@ async fn test_file_chooser_save_file_dummy_ui() -> Result<(), Box<dyn std::error
     Ok(())
 }
 
-#[gtk4::test]
+#[test]
 fn test_dialog_thumbnailer_e2e() {
+    if gtk4::init().is_err() {
+        eprintln!("No graphical display available; skipping GTK dialog test");
+        return;
+    }
+
     use gtk4::prelude::*;
     use std::fs;
     use xdg_desktop_portal_gtk4::portals::file_chooser::thumbnailer::{self, ThumbnailSize};
