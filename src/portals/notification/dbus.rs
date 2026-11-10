@@ -822,13 +822,19 @@ async fn listen_for_server_signals(
         let header = message.header();
         match header.member().map(|m| m.as_str()) {
             Some("ActivationToken") => {
-                let (id, token): (u32, String) = message.body().deserialize()?;
+                let Ok((id, token)) = message.body().deserialize::<(u32, String)>() else {
+                    tracing::warn!("Failed to deserialize ActivationToken signal body");
+                    continue;
+                };
                 if reverse_map.lock().contains_key(&id) {
                     activation_tokens.insert(id, token);
                 }
             }
             Some("ActionInvoked") => {
-                let (id, action_key): (u32, String) = message.body().deserialize()?;
+                let Ok((id, action_key)) = message.body().deserialize::<(u32, String)>() else {
+                    tracing::warn!("Failed to deserialize ActionInvoked signal body");
+                    continue;
+                };
                 let token = activation_tokens.remove(&id);
                 let target = reverse_map.lock().get(&id).cloned();
                 if let Some(target) = target {
@@ -836,7 +842,10 @@ async fn listen_for_server_signals(
                 }
             }
             Some("NotificationClosed") => {
-                let (id, _reason): (u32, u32) = message.body().deserialize()?;
+                let Ok((id, _reason)) = message.body().deserialize::<(u32, u32)>() else {
+                    tracing::warn!("Failed to deserialize NotificationClosed signal body");
+                    continue;
+                };
                 activation_tokens.remove(&id);
                 retire_closed_notification(&reverse_map, &active_notifications, id);
             }
