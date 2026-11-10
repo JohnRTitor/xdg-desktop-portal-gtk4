@@ -2,6 +2,8 @@
 !.gitignore
 !.github
 !.agents
+!.devcontainer
+!.devcontainer/**
 /target
 /build
 result
