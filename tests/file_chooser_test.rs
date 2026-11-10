@@ -180,7 +180,7 @@ fn test_dialog_thumbnailer_e2e() {
 
         // Assert that the item in the model has thumbnail::path populated
         fn check_item_thumb(w: &gtk4::Widget) -> bool {
-            if w.type_().name() == "GtkGridView"
+            if (w.type_().name() == "GtkGridView" || w.type_().name() == "GtkColumnView")
                 && let Some(model) = w.property::<Option<gtk4::gio::ListModel>>("model")
             {
                 for i in 0..model.n_items() {
@@ -212,7 +212,27 @@ fn test_dialog_thumbnailer_e2e() {
         eprintln!("no thumbnailer backend active in test environment; skipping assertion");
     }
 
+    // Create a second test folder and second image to test folder navigation
+    let test_dir2 = std::env::temp_dir().join("portal_e2e_thumb_test_dir2");
+    let _ = fs::create_dir_all(&test_dir2);
+    let sample_img2 = test_dir2.join("test_img2.png");
+    fs::write(&sample_img2, minimal_png).unwrap();
+    let uri2 = thumbnailer::file_to_uri(&sample_img2).unwrap();
+    let thumb_path2 = thumbnailer::get_thumbnail_path(&uri2, ThumbnailSize::Normal).unwrap();
+    let _ = fs::remove_file(&thumb_path2);
+
+    let _ = dialog.set_current_folder(Some(&gtk4::gio::File::for_path(&test_dir2)));
+    for _ in 0..50 {
+        ctx.iteration(false);
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    }
+    if thumb_path2.is_file() {
+        let _ = fs::remove_file(&thumb_path2);
+    }
+
     dialog.destroy();
     let _ = fs::remove_file(&sample_img);
     let _ = fs::remove_dir_all(&test_dir);
+    let _ = fs::remove_file(&sample_img2);
+    let _ = fs::remove_dir_all(&test_dir2);
 }

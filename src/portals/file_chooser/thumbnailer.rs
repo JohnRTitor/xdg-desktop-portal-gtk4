@@ -1,11 +1,13 @@
 use {
     gtk4::{
         FileChooserDialog, Widget,
+        ffi::GtkWidget,
         gio::{
             self,
+            ffi::GListModel,
             prelude::{DBusProxyExt, FileExt},
         },
-        glib::{self, MainContext, prelude::ToVariant},
+        glib::{self, MainContext, prelude::ToVariant, translate::ToGlibPtr},
         prelude::{Cast, ListModelExt, ObjectExt, WidgetExt},
     },
     parking_lot::Mutex,
@@ -162,7 +164,9 @@ fn is_png_data_metadata_valid(
                     && let Ok(s) = std::str::from_utf8(text)
                 {
                     let secs = s.split('.').next().and_then(|s| s.parse::<u64>().ok());
-                    found_mtime = secs == Some(expected_mtime_secs);
+                    found_mtime = secs
+                        .map(|s| s.abs_diff(expected_mtime_secs) <= 1)
+                        .unwrap_or(false);
                 }
             }
         } else if chunk_type == b"IEND" {
@@ -877,15 +881,6 @@ pub static COORDINATOR: LazyLock<ThumbnailCoordinator> = LazyLock::new(Thumbnail
 
 /// Decide whether an item wants a thumbnail and the cache doesn't already contain a valid one.
 fn should_process(info: &gio::FileInfo) -> bool {
-    let mime = info.content_type();
-    let mime_str = mime.as_deref().unwrap_or("");
-    if !mime_str.starts_with("image/")
-        && mime_str != "application/pdf"
-        && REGISTRY.find_thumbnailer(mime_str).is_none()
-    {
-        return false;
-    }
-
     if info.attribute_byte_string("thumbnail::path").is_some()
         && info.boolean("thumbnail::is-valid")
     {
@@ -901,77 +896,101 @@ fn should_process(info: &gio::FileInfo) -> bool {
     let Some(path) = file.path() else {
         return false;
     };
-    path.is_file()
+    if !path.is_file() {
+        return false;
+    }
+
+    let mime = info.content_type();
+    let mime_str = mime.as_deref().unwrap_or("");
+    if mime_str.starts_with("image/")
+        || mime_str == "application/pdf"
+        || REGISTRY.find_thumbnailer(mime_str).is_some()
+    {
+        return true;
+    }
+
+    if mime_str.is_empty() || mime_str == "application/octet-stream" {
+        let (guessed, _) = gio::content_type_guess(path.to_str(), None);
+        let guessed_str = guessed.as_str();
+        return guessed_str.starts_with("image/")
+            || guessed_str == "application/pdf"
+            || REGISTRY.find_thumbnailer(guessed_str).is_some();
+    }
+
+    false
 }
 
-/// Attach thumbnail generator to a FileChooserDialog.
-pub fn setup_dialog_thumbnailer(dialog: &FileChooserDialog, context: &MainContext) {
-    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<(String, PathBuf)>();
+struct ViewWatcher {
+    attached_views: Mutex<HashSet<usize>>,
+    attached_models: Mutex<HashSet<usize>>,
+    attached_stacks: Mutex<HashSet<usize>>,
+    tx: tokio::sync::mpsc::UnboundedSender<(PathBuf, String, PathBuf)>,
+}
 
-    let dialog_weak = dialog.downgrade();
-    context.spawn_local(async move {
-        while let Some((file_name, thumb_path)) = rx.recv().await {
-            let Some(dlg) = dialog_weak.upgrade() else {
-                break;
-            };
-            let thumb_str = thumb_path.to_string_lossy().to_string();
+impl ViewWatcher {
+    fn attach(self: &Arc<Self>, root: &Widget) {
+        let name = root.type_().name();
+        if name == "GtkGridView" || name == "GtkColumnView" {
+            let view_ptr = ToGlibPtr::<*mut GtkWidget>::to_glib_none(root).0 as usize;
+            if self.attached_views.lock().insert(view_ptr) {
+                let this = self.clone();
+                this.connect_model(root);
 
-            // 1. Update any visible widgets
-            fn refresh_widgets(root: &Widget, target_name: &str, thumb_str: &str) {
-                if root.type_().name() == "GtkFileThumbnail"
-                    && let Some(info) = root.property::<Option<gio::FileInfo>>("file-info")
-                    && info.display_name() == target_name
-                {
-                    info.set_attribute_byte_string("thumbnail::path", thumb_str);
-                    info.set_attribute_boolean("thumbnail::is-valid", true);
-                    info.remove_attribute("filechooser::queried");
-                    info.remove_attribute("standard::icon");
-                    root.set_property("file-info", None::<&gio::FileInfo>);
-                    root.set_property("file-info", &info);
-                }
-                let mut child = root.first_child();
-                while let Some(c) = child {
-                    refresh_widgets(&c, target_name, thumb_str);
-                    child = c.next_sibling();
-                }
+                let this_notify = self.clone();
+                root.connect_notify(Some("model"), move |view, _| {
+                    this_notify.connect_model(view);
+                });
             }
-            refresh_widgets(dlg.upcast_ref(), &file_name, &thumb_str);
-
-            // 2. Also update the GFileInfo in the view's model so off-screen/recycled items stay updated
-            fn update_model(root: &Widget, target_name: &str, thumb_str: &str) {
-                let name = root.type_().name();
-                if (name == "GtkGridView" || name == "GtkColumnView")
-                    && let Some(model) = root.property::<Option<gio::ListModel>>("model")
-                {
-                    for i in 0..model.n_items() {
-                        if let Some(item) = model.item(i)
-                            && let Ok(info) = item.downcast::<gio::FileInfo>()
-                            && info.display_name() == target_name
-                        {
-                            info.set_attribute_byte_string("thumbnail::path", thumb_str);
-                            info.set_attribute_boolean("thumbnail::is-valid", true);
-                            info.remove_attribute("filechooser::queried");
-                            info.remove_attribute("standard::icon");
-                            break;
-                        }
-                    }
-                }
-                let mut child = root.first_child();
-                while let Some(c) = child {
-                    update_model(&c, target_name, thumb_str);
-                    child = c.next_sibling();
-                }
-            }
-            update_model(dlg.upcast_ref(), &file_name, &thumb_str);
+            return;
         }
-    });
 
-    let tx_for_views = tx.clone();
+        if name == "GtkStack" {
+            let stack_ptr = ToGlibPtr::<*mut GtkWidget>::to_glib_none(root).0 as usize;
+            if self.attached_stacks.lock().insert(stack_ptr) {
+                let this_stack = self.clone();
+                root.connect_notify(Some("visible-child"), move |stack, _| {
+                    this_stack.attach(stack);
+                });
+            }
+        }
 
-    fn process_item(
-        info: &gio::FileInfo,
-        tx: &tokio::sync::mpsc::UnboundedSender<(String, PathBuf)>,
-    ) {
+        let mut child = root.first_child();
+        while let Some(c) = child {
+            self.attach(&c);
+            child = c.next_sibling();
+        }
+    }
+
+    fn connect_model(self: &Arc<Self>, view: &Widget) {
+        let Some(model) = view.property::<Option<gio::ListModel>>("model") else {
+            return;
+        };
+        let model_ptr = ToGlibPtr::<*mut GListModel>::to_glib_none(&model).0 as usize;
+        if !self.attached_models.lock().insert(model_ptr) {
+            return;
+        }
+
+        for i in 0..model.n_items() {
+            if let Some(item) = model.item(i)
+                && let Ok(info) = item.downcast::<gio::FileInfo>()
+            {
+                self.process_item(&info);
+            }
+        }
+
+        let this = self.clone();
+        model.connect_items_changed(move |m, pos, _removed, added| {
+            for i in pos..(pos + added) {
+                if let Some(item) = m.item(i)
+                    && let Ok(info) = item.downcast::<gio::FileInfo>()
+                {
+                    this.process_item(&info);
+                }
+            }
+        });
+    }
+
+    fn process_item(self: &Arc<Self>, info: &gio::FileInfo) {
         if !should_process(info) {
             return;
         }
@@ -987,57 +1006,116 @@ pub fn setup_dialog_thumbnailer(dialog: &FileChooserDialog, context: &MainContex
         let name = info.display_name().to_string();
         let mime = info.content_type().map(|c| c.to_string());
 
-        let tx_clone = tx.clone();
+        let tx = self.tx.clone();
+        let path_clone = path.clone();
         let name_clone = name.clone();
         COORDINATOR.queue_thumbnail(path, mime, move |thumb_path| {
-            let _ = tx_clone.send((name_clone, thumb_path));
+            let _ = tx.send((path_clone, name_clone, thumb_path));
         });
     }
+}
 
-    fn attach_to_views(w: &Widget, tx: &tokio::sync::mpsc::UnboundedSender<(String, PathBuf)>) {
-        let name = w.type_().name();
-        if name == "GtkGridView" {
-            let tx_outer = tx.clone();
-            let connect_model = move |view: &Widget,
-                                      tx_inner: &tokio::sync::mpsc::UnboundedSender<(
-                String,
-                PathBuf,
-            )>| {
-                if let Some(model) = view.property::<Option<gio::ListModel>>("model") {
+/// Attach thumbnail generator to a FileChooserDialog.
+pub fn setup_dialog_thumbnailer(dialog: &FileChooserDialog, context: &MainContext) {
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<(PathBuf, String, PathBuf)>();
+
+    let dialog_weak = dialog.downgrade();
+    context.spawn_local(async move {
+        while let Some((file_path, file_name, thumb_path)) = rx.recv().await {
+            let Some(dlg) = dialog_weak.upgrade() else {
+                break;
+            };
+            let thumb_str = thumb_path.to_string_lossy().to_string();
+
+            // 1. Update any visible widgets
+            fn refresh_widgets(root: &Widget, file_name: &str, thumb_str: &str, file_path: &Path) {
+                if root.type_().name() == "GtkFileThumbnail"
+                    && let Some(info) = root.property::<Option<gio::FileInfo>>("file-info")
+                {
+                    let matches = info.display_name() == file_name
+                        || info
+                            .attribute_object("standard::file")
+                            .and_then(|f| f.downcast::<gio::File>().ok())
+                            .and_then(|f| f.path())
+                            .map(|p| p == file_path)
+                            .unwrap_or(false);
+                    if matches {
+                        info.set_attribute_byte_string("thumbnail::path", thumb_str);
+                        info.set_attribute_boolean("thumbnail::is-valid", true);
+                        info.set_attribute_byte_string("thumbnail::path-large", thumb_str);
+                        info.set_attribute_boolean("thumbnail::is-valid-large", true);
+                        info.remove_attribute("filechooser::queried");
+                        info.remove_attribute("standard::icon");
+                        root.set_property("file-info", None::<&gio::FileInfo>);
+                        root.set_property("file-info", &info);
+                    }
+                }
+                let mut child = root.first_child();
+                while let Some(c) = child {
+                    refresh_widgets(&c, file_name, thumb_str, file_path);
+                    child = c.next_sibling();
+                }
+            }
+            refresh_widgets(dlg.upcast_ref(), &file_name, &thumb_str, &file_path);
+
+            // 2. Also update the GFileInfo in the view's model so off-screen/recycled items stay updated
+            fn update_model(root: &Widget, file_name: &str, thumb_str: &str, file_path: &Path) {
+                let name = root.type_().name();
+                if (name == "GtkGridView" || name == "GtkColumnView")
+                    && let Some(model) = root.property::<Option<gio::ListModel>>("model")
+                {
                     for i in 0..model.n_items() {
                         if let Some(item) = model.item(i)
                             && let Ok(info) = item.downcast::<gio::FileInfo>()
                         {
-                            process_item(&info, tx_inner);
-                        }
-                    }
-                    let tx_for_signal = tx_inner.clone();
-                    model.connect_items_changed(move |m, pos, _removed, added| {
-                        for i in pos..(pos + added) {
-                            if let Some(item) = m.item(i)
-                                && let Ok(info) = item.downcast::<gio::FileInfo>()
-                            {
-                                process_item(&info, &tx_for_signal);
+                            let matches = info.display_name() == file_name
+                                || info
+                                    .attribute_object("standard::file")
+                                    .and_then(|f| f.downcast::<gio::File>().ok())
+                                    .and_then(|f| f.path())
+                                    .map(|p| p == file_path)
+                                    .unwrap_or(false);
+                            if matches {
+                                info.set_attribute_byte_string("thumbnail::path", thumb_str);
+                                info.set_attribute_boolean("thumbnail::is-valid", true);
+                                info.set_attribute_byte_string("thumbnail::path-large", thumb_str);
+                                info.set_attribute_boolean("thumbnail::is-valid-large", true);
+                                info.remove_attribute("filechooser::queried");
+                                info.remove_attribute("standard::icon");
+                                break;
                             }
                         }
-                    });
+                    }
+                    return;
                 }
-            };
-            connect_model(w, &tx_outer);
-            let tx_for_notify = tx.clone();
-            w.connect_notify(Some("model"), move |view, _| {
-                connect_model(view, &tx_for_notify);
-            });
-            return;
+                let mut child = root.first_child();
+                while let Some(c) = child {
+                    update_model(&c, file_name, thumb_str, file_path);
+                    child = c.next_sibling();
+                }
+            }
+            update_model(dlg.upcast_ref(), &file_name, &thumb_str, &file_path);
         }
-        let mut child = w.first_child();
-        while let Some(c) = child {
-            attach_to_views(&c, tx);
-            child = c.next_sibling();
-        }
-    }
+    });
 
-    attach_to_views(dialog.upcast_ref(), &tx_for_views);
+    let watcher = Arc::new(ViewWatcher {
+        attached_views: Mutex::new(HashSet::new()),
+        attached_models: Mutex::new(HashSet::new()),
+        attached_stacks: Mutex::new(HashSet::new()),
+        tx,
+    });
+
+    // 1. Initial attachment pass
+    watcher.attach(dialog.upcast_ref());
+
+    // 2. Attach when the dialog is mapped/shown (template children realized)
+    let watcher_map = watcher.clone();
+    let dialog_weak_map = dialog.downgrade();
+    dialog.connect_map(move |_| {
+        if let Some(dlg) = dialog_weak_map.upgrade() {
+            watcher_map.attach(dlg.upcast_ref());
+        }
+    });
 }
 
 #[cfg(test)]
