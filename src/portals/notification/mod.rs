@@ -52,15 +52,21 @@
 //!
 //! Both maps reference the *same* `Arc<NotifKey>`, so the identity pair is stored once.
 //!
-//! **Action Invoked (User Clicks a Button):**
-//! 1. The background task (`listen_for_action_invoked`) receives `ActionInvoked(u32)` from the host daemon.
-//! 2. It looks up the `u32` in the `reverse_map` to find the original `app_id` and `portal_id`.
-//! 3. It formats the parameters and uses `org.freedesktop.Application.ActivateAction` (or `Activate`)
-//!    on the Session Bus to wake up the sandboxed app.
-//! 4. It also explicitly emits the portal's own `ActionInvoked` D-Bus signal as required by the spec.
+//! **Action Invoked (User Clicks a Button or the Notification):**
+//! 1. One background task (`listen_for_server_signals`) receives the host daemon's
+//!    `ActivationToken`, `ActionInvoked` and `NotificationClosed` signals on a single stream, in the
+//!    order the daemon sent them, so a token is recorded before the action it precedes and a
+//!    notification is not retired before its action is routed.
+//! 2. It looks up the `u32` in the `reverse_map` to find the original `app_id`, `portal_id`, the
+//!    `default-action` behind fdo's reserved `default` id, and the action's target.
+//! 3. An `app.`-prefixed action is called with `org.freedesktop.Application.ActivateAction`, with
+//!    only the action's target as parameter. Any other action activates the app with
+//!    `org.freedesktop.Application.Activate`, and the portal emits its own `ActionInvoked` signal
+//!    with the action name, its target and the `platform-data`.
+//! 4. The `platform-data` carries the activation token, if the daemon sent one.
 //!
 //! **Notification Closed:**
-//! 1. The background task (`listen_for_notification_closed`) receives `NotificationClosed(u32)`.
+//! 1. The same task receives `NotificationClosed(u32)`.
 //! 2. It removes the `u32` from `reverse_map`.
 //! 3. This drops the `TempSoundFile` reference, triggering its `Drop` implementation which deletes
 //!    the temporary sound file from disk.
@@ -106,7 +112,8 @@
 //! ## Cross-Portal Consistency
 //!
 //! - **Background Listeners:** Like the `Inhibit` portal, this portal uses `std::sync::Once` to spawn
-//!   perpetual background Tokio tasks to listen to host daemon signals (`ActionInvoked`, `NotificationClosed`).
+//!   a perpetual background Tokio task to listen to host daemon signals (`ActivationToken`,
+//!   `ActionInvoked`, `NotificationClosed`).
 //!
 //! ## Maintenance Notes
 //!
