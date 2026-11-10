@@ -55,7 +55,7 @@ jobs:
       - name: Install dependencies (Fedora)
         if: contains(matrix.distro, 'fedora')
         run: |
-          dnf install -y gcc gtk4-devel git rust cargo dbus
+          dnf install -y gcc gtk4-devel git rust cargo dbus-broker
       - name: Install dependencies (Arch Linux)
         if: contains(matrix.distro, 'archlinux')
         run: |
