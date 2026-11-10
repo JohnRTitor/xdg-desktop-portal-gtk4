@@ -113,6 +113,24 @@ fn test_dialog_thumbnailer_e2e() {
         return;
     }
 
+    // Creating a GtkFileChooserDialog requires the GTK4 FileChooser settings schema.
+    // In minimal environments (e.g. some CI containers) it may not be installed; skip
+    // rather than aborting with a fatal GLib-GIO error.
+    let Some(schema_source) = gtk4::gio::SettingsSchemaSource::default() else {
+        eprintln!("No GSettings schema source available; skipping GTK dialog test");
+        return;
+    };
+    if schema_source
+        .lookup("org.gtk.gtk4.Settings.FileChooser", true)
+        .is_none()
+    {
+        eprintln!(
+            "Settings schema 'org.gtk.gtk4.Settings.FileChooser' is not installed; \
+             skipping GTK dialog test"
+        );
+        return;
+    }
+
     use {
         gtk4::prelude::*,
         std::fs,
