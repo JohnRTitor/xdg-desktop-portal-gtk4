@@ -10,7 +10,33 @@
   version ? "unstable",
   withDbusTests ? false,
 }:
-
+# GTK 4.22.0 through 4.22.4 broke file-chooser thumbnails: _gtk_file_info_get_icon
+# fed the raster thumbnails of the freedesktop cache into the SVG-only
+# gdk_texture_new_from_filename_at_scale, which parses arbitrary bytes as SVG and
+# therefore returns a fully transparent texture for PNG/JPEG thumbnails. Upstream
+# reverted the change with:
+#   https://gitlab.gnome.org/GNOME/gtk/-/merge_requests/10080
+#   4.22 branch: 89a430be07730ded37fd08321dec6bd960b81a34 (GTK 4.22.5)
+#   main:        b682d926e18fdaa19d05603bf6c1d8717c3724b5 (GTK 4.24.0)
+# Drop this override once nixpkgs ships gtk4 >= 4.22.5.
+let
+  gtk4ForPortal =
+    if lib.versionOlder gtk4.version "4.22.5" then
+      gtk4.overrideAttrs (old: {
+        patches = (old.patches or [ ]) ++ [
+          ../patches/0001-Revert-filechooserutils-Stop-using-pixbufs.patch
+        ];
+      })
+    else
+      gtk4;
+  # wrapGAppsHook4 propagates gtk4 (as `gtk3` arg) into depsTargetTargetPropagated,
+  # which would otherwise leak the stock (unpatched) gtk4 into build inputs and RUNPATH.
+  wrapGAppsHook4ForPortal =
+    if lib.versionOlder gtk4.version "4.22.5" then
+      wrapGAppsHook4.override { gtk3 = gtk4ForPortal; }
+    else
+      wrapGAppsHook4;
+in
 rustPlatform.buildRustPackage {
   pname = "xdg-desktop-portal-gtk4";
   inherit version;
@@ -29,14 +55,13 @@ rustPlatform.buildRustPackage {
 
   nativeBuildInputs = [
     pkg-config
-    wrapGAppsHook4
+    wrapGAppsHook4ForPortal
   ];
 
   buildInputs = [
-    gtk4
+    gtk4ForPortal
     glib
   ];
-
 
   nativeCheckInputs = lib.optionals withDbusTests [ dbus ];
 

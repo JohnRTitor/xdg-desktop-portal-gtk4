@@ -1,0 +1,55 @@
+From 89a430be07730ded37fd08321dec6bd960b81a34 Mon Sep 17 00:00:00 2001
+From: Julian Orth <ju.orth@gmail.com>
+Date: Tue, 23 Jun 2026 17:59:55 +0200
+Subject: [PATCH] Revert "filechooserutils: Stop using pixbufs"
+
+This reverts commit 25db1522c088a8ed4de74f8b630d475c95251039.
+
+gdk_texture_new_from_filename_at_scale only supports SVG and thumbnails
+are all PNG, rendering _gtk_file_info_get_icon ineffective.
+
+Part-of: <https://gitlab.gnome.org/GNOME/gtk/-/merge_requests/10080>
+---
+ gtk/gtkfilechooserutils.c | 15 ++++++---------
+ 1 file changed, 6 insertions(+), 9 deletions(-)
+
+diff --git a/gtk/gtkfilechooserutils.c b/gtk/gtkfilechooserutils.c
+index 4bc4baa853b..6739d3abb52 100644
+--- a/gtk/gtkfilechooserutils.c
++++ b/gtk/gtkfilechooserutils.c
+@@ -22,7 +22,6 @@
+ #include "deprecated/gtkfilechooser.h"
+ #include "gtktypebuiltins.h"
+ #include "gtkprivate.h"
+-#include "gdktextureutilsprivate.h"
+ #include <glib/gi18n-lib.h>
+ 
+ 
+@@ -459,21 +458,19 @@ _gtk_file_info_get_icon (GFileInfo    *info,
+                          GtkIconTheme *icon_theme)
+ {
+   GIcon *icon;
++  GdkPixbuf *pixbuf;
+   const char *thumbnail_path;
+ 
+   thumbnail_path = g_file_info_get_attribute_byte_string (info, G_FILE_ATTRIBUTE_THUMBNAIL_PATH);
+ 
+   if (thumbnail_path)
+     {
+-      GdkTexture *texture;
++      pixbuf = gdk_pixbuf_new_from_file_at_size (thumbnail_path,
++                                                 icon_size*scale, icon_size*scale,
++                                                 NULL);
+ 
+-      texture = gdk_texture_new_from_filename_at_scale (thumbnail_path,
+-                                                        icon_size*scale, icon_size*scale,
+-                                                        NULL,
+-                                                        NULL);
+-
+-      if (texture != NULL)
+-        return G_ICON (texture);
++      if (pixbuf != NULL)
++        return G_ICON (pixbuf);
+     }
+ 
+   icon = g_file_info_get_icon (info);
