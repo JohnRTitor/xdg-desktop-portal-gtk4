@@ -113,9 +113,11 @@ fn test_dialog_thumbnailer_e2e() {
         return;
     }
 
-    use gtk4::prelude::*;
-    use std::fs;
-    use xdg_desktop_portal_gtk4::portals::file_chooser::thumbnailer::{self, ThumbnailSize};
+    use {
+        gtk4::prelude::*,
+        std::fs,
+        xdg_desktop_portal_gtk4::portals::file_chooser::thumbnailer::{self, ThumbnailSize},
+    };
 
     let test_dir = std::env::temp_dir().join("portal_e2e_thumb_test_dir");
     let _ = fs::create_dir_all(&test_dir);
