@@ -49,7 +49,7 @@ async fn test_notification_add_remove() -> Result<(), Box<dyn std::error::Error>
     let _conn = Builder::session()?
         .serve_at(
             "/org/freedesktop/portal/desktop",
-            Notification::new(Some(client_conn.clone())).await,
+            Notification::new(None).await,
         )?
         .build()
         .await?;
@@ -99,7 +99,7 @@ async fn buttons_in_the_specified_format_are_accepted() -> Result<(), Box<dyn st
     let portal_conn = Builder::session()?
         .serve_at(
             "/org/freedesktop/portal/desktop",
-            Notification::new(Some(client_conn.clone())).await,
+            Notification::new(None).await,
         )?
         .build()
         .await?;
@@ -136,7 +136,7 @@ impl FakeServer {
     #[allow(clippy::too_many_arguments)]
     fn notify(
         &self,
-        _app_name: String,
+        app_name: String,
         _replaces_id: u32,
         _app_icon: String,
         _summary: String,
@@ -145,7 +145,9 @@ impl FakeServer {
         _hints: HashMap<String, OwnedValue>,
         _expire_timeout: i32,
     ) -> u32 {
-        self.actions.lock().push(actions);
+        if app_name == APP_ID {
+            self.actions.lock().push(actions);
+        }
         FAKE_ID
     }
 
@@ -217,10 +219,11 @@ async fn claim<I: zbus::object_server::Interface>(
     let conn = Builder::session()?.serve_at(path, object)?.build().await?;
     match conn
         .request_name_with_flags(name, RequestNameFlags::DoNotQueue.into())
-        .await?
+        .await
     {
-        RequestNameReply::PrimaryOwner => Ok(Some(conn)),
-        _ => Ok(None),
+        Ok(RequestNameReply::PrimaryOwner) => Ok(Some(conn)),
+        Ok(_) | Err(zbus::Error::NameTaken) => Ok(None),
+        Err(e) => Err(e.into()),
     }
 }
 
@@ -312,7 +315,7 @@ async fn invoked_actions_reach_the_application() -> Result<(), Box<dyn std::erro
     ]);
     portal.add_notification(APP_ID, "n1", notification).await?;
 
-    let actions = wait_for(|| notified.lock().first().cloned()).await;
+    let actions = wait_for(|| notified.lock().iter().find(|a| !a.is_empty()).cloned()).await;
     assert_eq!(
         actions,
         [
