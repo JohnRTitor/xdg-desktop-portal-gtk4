@@ -156,7 +156,7 @@ impl UsbUi {
             #[weak]
             window,
             move |_| {
-                let mut selected = Vec::new();
+                let mut selected = Vec::with_capacity(checks_weak_ok.len());
                 for (i, check_weak) in checks_weak_ok.iter().enumerate() {
                     if let Some(check) = check_weak.upgrade()
                         && check.is_active()

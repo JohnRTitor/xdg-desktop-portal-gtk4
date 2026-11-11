@@ -130,15 +130,18 @@ fn append_recipients(url: &mut String, key: &str, addrs: &[String]) {
 
 fn build_mailto_url(options: &ComposeEmailOptions) -> String {
     let mut url = String::from("mailto:");
-    let all_addresses: Vec<&str> = options
+    let mut addrs_iter = options
         .address
         .as_deref()
         .into_iter()
-        .chain(options.addresses.iter().flatten().map(|s| s.as_str()))
-        .collect();
+        .chain(options.addresses.iter().flatten().map(|s| s.as_str()));
 
-    if !all_addresses.is_empty() {
-        url.push_str(&all_addresses.join(","));
+    if let Some(first_addr) = addrs_iter.next() {
+        url.push_str(first_addr);
+        for addr in addrs_iter {
+            url.push(',');
+            url.push_str(addr);
+        }
     }
 
     url.push('?');
