@@ -13,28 +13,14 @@ use {
     parking_lot::Mutex,
     std::{
         collections::{HashMap, HashSet},
-        fs, io,
+        fs,
         os::unix::fs::PermissionsExt,
         path::{Path, PathBuf},
         process::Command,
         sync::{Arc, LazyLock},
-        thread,
         time::{Duration, UNIX_EPOCH},
     },
 };
-
-fn spawn_error(name: &str, e: std::io::Error) -> std::io::Error {
-    io::Error::new(e.kind(), format!("failed to spawn {name} thread: {e}"))
-}
-
-macro_rules! spawn_named_thread {
-    ($name:expr, $f:expr) => {
-        thread::Builder::new()
-            .name($name.into())
-            .spawn($f)
-            .map_err(|e| spawn_error($name, e))
-    };
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ThumbnailSize {
@@ -816,17 +802,12 @@ fn trigger_tumbler_dbus(uri: &str, mime: &str) -> bool {
         .is_ok()
 }
 
-/// Task for thumbnail worker thread pool.
-struct ThumbnailTask {
-    file_path: PathBuf,
-    mime_type: Option<String>,
-    on_complete: Box<dyn FnOnce(PathBuf) + Send>,
-}
+const MAX_THUMBNAIL_WORKERS: u32 = 4;
 
 /// Coordinator for managing asynchronous thumbnail generation requests and avoiding duplicate work.
 pub struct ThumbnailCoordinator {
     in_flight: Arc<Mutex<HashSet<PathBuf>>>,
-    sender: std::sync::mpsc::Sender<ThumbnailTask>,
+    pool: glib::ThreadPool,
 }
 
 impl Default for ThumbnailCoordinator {
@@ -837,37 +818,10 @@ impl Default for ThumbnailCoordinator {
 
 impl ThumbnailCoordinator {
     pub fn new() -> Self {
-        let (task_tx, task_rx) = std::sync::mpsc::channel::<ThumbnailTask>();
-        let task_rx = Arc::new(Mutex::new(task_rx));
-        let in_flight = Arc::new(Mutex::new(HashSet::new()));
-
-        // Spawn a bounded pool of 4 thumbnail generator worker threads
-        for _ in 0..4 {
-            let rx = task_rx.clone();
-            let inflight = in_flight.clone();
-            spawn_named_thread!("thumb-worker", move || {
-                while let Ok(task) = {
-                    let lock = rx.lock();
-                    lock.recv()
-                } {
-                    let res = generate_thumbnail(&task.file_path, task.mime_type.as_deref());
-                    {
-                        let mut set = inflight.lock();
-                        set.remove(&task.file_path);
-                    }
-                    if let Ok(thumb_path) = res {
-                        glib::idle_add_once(move || {
-                            (task.on_complete)(thumb_path);
-                        });
-                    }
-                }
-            })
-            .expect("failed to spawn thumb-worker thread");
-        }
-
         Self {
-            in_flight,
-            sender: task_tx,
+            in_flight: Arc::new(Mutex::new(HashSet::new())),
+            pool: glib::ThreadPool::exclusive(MAX_THUMBNAIL_WORKERS)
+                .expect("Failed to create thumbnail thread pool"),
         }
     }
 
@@ -884,11 +838,27 @@ impl ThumbnailCoordinator {
             }
         }
 
-        let _ = self.sender.send(ThumbnailTask {
-            file_path,
-            mime_type,
-            on_complete: Box::new(on_complete),
-        });
+        let inflight = self.in_flight.clone();
+        let path = file_path.clone();
+        if self
+            .pool
+            .push(move || {
+                let res = generate_thumbnail(&path, mime_type.as_deref());
+                {
+                    let mut set = inflight.lock();
+                    set.remove(&path);
+                }
+                if let Ok(thumb_path) = res {
+                    glib::idle_add_once(move || {
+                        on_complete(thumb_path);
+                    });
+                }
+            })
+            .is_err()
+        {
+            let mut set = self.in_flight.lock();
+            set.remove(&file_path);
+        }
     }
 }
 
