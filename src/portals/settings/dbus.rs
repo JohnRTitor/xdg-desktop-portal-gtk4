@@ -1,5 +1,5 @@
 use {
-    gtk4::gio::{Settings, SettingsSchemaSource, prelude::SettingsExt},
+    gtk4::gio::{Settings, SettingsSchemaSource},
     parking_lot::RwLock,
     std::{collections::HashMap, sync::Arc, time::Duration},
     zbus::{
@@ -91,56 +91,107 @@ impl SettingsPortal {
         let sender = proxy.sender.clone();
 
         tokio::spawn(async move {
-            use {
-                gtk4::glib,
-                notify::{RecursiveMode, Watcher},
-                tokio::sync::mpsc,
-            };
+            use tokio::sync::mpsc;
 
             let (tx, mut rx) = mpsc::channel::<()>(100);
 
-            // Watch GSettings on the GTK main thread.
-            // `Settings` is a GObject (`!Send`), so we create it and connect the
-            // change signal via UiProxy, which dispatches to the main thread.
-            // The object is intentionally leaked to keep the signal handler alive
+            // Watch GSettings and configuration files on the GTK main thread.
+            // `Settings` and `gio::FileMonitor` are GObjects (`!Send`), so they must
+            // be created and connected on the GLib main context via UiProxy.
+            // The objects are intentionally leaked to keep the signal handlers alive
             // for the daemon's entire lifetime.
             {
-                let tx_gsettings = tx.clone();
+                let tx_main = tx.clone();
                 let _ = sender.send(Box::new(move || {
-                    let Some(source) = SettingsSchemaSource::default() else {
-                        return;
+                    use gtk4::{
+                        gio::{self, prelude::*},
+                        glib,
                     };
-                    if source.lookup(NS_GNOME_DESKTOP_INTERFACE, true).is_none() {
-                        return;
+
+                    // Watch GSettings for GNOME interface changes.
+                    if let Some(source) = SettingsSchemaSource::default()
+                        && source.lookup(NS_GNOME_DESKTOP_INTERFACE, true).is_some()
+                    {
+                        let settings = Settings::new(NS_GNOME_DESKTOP_INTERFACE);
+                        settings.connect_changed(None, {
+                            let tx = tx_main.clone();
+                            move |_, _| {
+                                let _ = tx.try_send(());
+                            }
+                        });
+                        // Prevent the Rust destructor (`g_object_unref`) from running.
+                        // The daemon is a long-running process and this Settings object
+                        // must outlive the signal callback; leaking it is deliberate.
+                        std::mem::forget(settings);
                     }
 
-                    let settings = Settings::new(NS_GNOME_DESKTOP_INTERFACE);
-                    settings.connect_changed(None, move |_, _| {
-                        let _ = tx_gsettings.try_send(());
-                    });
-                    // Prevent the Rust destructor (`g_object_unref`) from running.
-                    // The daemon is a long-running process and this Settings object
-                    // must outlive the signal callback; leaking it is deliberate.
-                    std::mem::forget(settings);
+                    // Watch INI/config files with GIO file monitors (backed by inotify
+                    // on Linux) integrated into the existing GLib main loop.
+                    let config_dir = glib::user_config_dir();
+                    let watch_targets = [
+                        config_dir.join("gtk-3.0"),
+                        config_dir.join("gtk-4.0"),
+                        config_dir.join("kdeglobals"),
+                    ];
+
+                    for path in &watch_targets {
+                        let file = gio::File::for_path(path);
+                        let monitor = if path.is_dir() {
+                            file.monitor_directory(
+                                gio::FileMonitorFlags::NONE,
+                                gio::Cancellable::NONE,
+                            )
+                        } else {
+                            file.monitor_file(gio::FileMonitorFlags::NONE, gio::Cancellable::NONE)
+                        };
+
+                        let Ok(monitor) = monitor else {
+                            continue;
+                        };
+
+                        monitor.set_rate_limit(100);
+                        monitor.connect_changed({
+                            let tx = tx_main.clone();
+                            move |_, _, _, _| {
+                                let _ = tx.try_send(());
+                            }
+                        });
+                        // Keep the monitor alive for the daemon lifetime.
+                        std::mem::forget(monitor);
+                    }
+
+                    // Watch only the parent config directory (non-recursive) so we can
+                    // detect creation/replacement of the specific targets above on fresh
+                    // profiles, without reacting to unrelated changes in ~/.config.
+                    let config_dir_file = gio::File::for_path(&config_dir);
+                    if let Ok(monitor) = config_dir_file
+                        .monitor_directory(gio::FileMonitorFlags::NONE, gio::Cancellable::NONE)
+                    {
+                        let relevant_names = [
+                            std::ffi::OsString::from("gtk-3.0"),
+                            std::ffi::OsString::from("gtk-4.0"),
+                            std::ffi::OsString::from("kdeglobals"),
+                        ];
+                        monitor.set_rate_limit(100);
+                        monitor.connect_changed({
+                            let tx = tx_main.clone();
+                            move |_, file, other_file, _| {
+                                let is_relevant = [Some(file), other_file]
+                                    .into_iter()
+                                    .flatten()
+                                    .filter_map(|f| f.basename())
+                                    .any(|name| relevant_names.iter().any(|n| n == &name));
+
+                                if is_relevant {
+                                    let _ = tx.try_send(());
+                                }
+                            }
+                        });
+                        // Keep the monitor alive for the daemon lifetime.
+                        std::mem::forget(monitor);
+                    }
                 }));
             }
-
-            // Watch INI files — `notify` is fully thread-safe, runs fine in tokio.
-            let tx_files = tx.clone();
-            let _watcher =
-                notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
-                    if res.is_ok() {
-                        let _ = tx_files.try_send(());
-                    }
-                })
-                .ok()
-                .map(|mut w| {
-                    let config_dir = glib::user_config_dir();
-                    let _ = w.watch(&config_dir.join("gtk-3.0"), RecursiveMode::NonRecursive);
-                    let _ = w.watch(&config_dir.join("gtk-4.0"), RecursiveMode::NonRecursive);
-                    let _ = w.watch(&config_dir.join("kdeglobals"), RecursiveMode::NonRecursive);
-                    w
-                });
 
             // Initial load
             agg.reload_all();
