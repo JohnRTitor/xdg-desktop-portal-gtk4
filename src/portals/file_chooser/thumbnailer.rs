@@ -1,3 +1,16 @@
+//! Thumbnail generation for the file chooser.
+//!
+//! Work runs on GLib's shared thread pool ([`glib::ThreadPool::shared`]), not on
+//! portal-owned threads, so workers appear as `pool-*` in a thread dump:
+//! `GThreadPool` has no API for naming its workers. The pool is shared rather
+//! than exclusive so idle workers return to GLib's global pool and are stopped
+//! after its idle timeout (15 seconds by default in GLib 2.84) instead of
+//! staying resident for the process lifetime.
+//!
+//! Cancellation is cooperative via [`ThumbnailCancel`]: queued jobs exit before
+//! touching the filesystem, running external thumbnailers are killed, and a
+//! single in-process image decode cannot be interrupted mid-call.
+
 use {
     gtk4::{
         FileChooserDialog, Widget,
