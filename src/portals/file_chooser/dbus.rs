@@ -286,7 +286,7 @@ impl FileChooser {
         let base = gio::File::for_uri(&uri)
             .path()
             .ok_or(SaveFilesError::SelectedNotValidPath)?;
-        let mut uris = vec![];
+        let mut uris = Vec::with_capacity(files.len());
         for file in files {
             let mut path = base.join(&file.0);
             if path.exists() {

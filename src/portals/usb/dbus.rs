@@ -130,7 +130,7 @@ impl UsbPortal {
         devices_in: Vec<UsbDeviceData>,
         options: HashMap<String, OwnedValue>,
     ) -> Response<UsbResults> {
-        let mut parsed_devices = Vec::new();
+        let mut parsed_devices = Vec::with_capacity(devices_in.len());
         for (id, props, access_options) in devices_in {
             let properties = UdevProperties::of(&props);
 

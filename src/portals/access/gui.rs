@@ -67,7 +67,9 @@ where
     if !choices_requested {
         return None;
     }
-    let mut out = Vec::new();
+    let booleans = booleans.into_iter();
+    let radios = radios.into_iter();
+    let mut out = Vec::with_capacity(booleans.size_hint().0 + radios.size_hint().0);
     for (id, active) in booleans {
         out.push(FinalChoice {
             id: id.to_owned(),
