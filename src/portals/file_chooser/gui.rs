@@ -226,7 +226,7 @@ impl FileChooserUi {
         });
         handler_id.set(Some(response_handler));
 
-        super::thumbnailer::setup_dialog_thumbnailer(&dialog, &context);
+        let thumbnail_cancel = super::thumbnailer::setup_dialog_thumbnailer(&dialog, &context);
 
         dialog.show();
         context.spawn_local(async move {
@@ -234,6 +234,15 @@ impl FileChooserUi {
             tokio::select! {
                 _ = done_rx.recv() => {}
                 _ = close_on_close => {}
+            }
+            // Cancel thumbnail work as soon as the dialog is closing, on both the
+            // response and D-Bus cancellation paths. Relying only on `hide` can
+            // leave queued jobs running through the delayed destroy below.
+            thumbnail_cancel.cancel();
+            // Ensure the window is gone for the cancellation path; normal responses
+            // already closed it above. This also emits `hide`, which cancels again.
+            if dialog.is_visible() {
+                dialog.close();
             }
             // Delay destruction to work around GTK4 FileChooserWidget bugs where
             // background GIO tasks (like directory loading) can complete after

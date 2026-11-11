@@ -14,9 +14,18 @@ This is a Linux desktop portal daemon implementing the `org.freedesktop.impl.por
 - Run the GTK4 event loop strictly on the main thread (`gtk4` objects are `!Send` and `!Sync`).
 - Run the Tokio runtime on a dedicated background OS thread (`#[tokio::main(flavor = "current_thread")]`) to handle D-Bus methods without blocking the UI. This single-threaded runtime is sufficient since DBus operations are largely I/O bound.
 - Offload heavy or blocking operations from Tokio using `tokio::task::spawn_blocking` to prevent freezing the single-threaded async runtime.
-- Offload blocking background work from the GTK thread (e.g., thumbnail generation) using `glib::ThreadPool` rather than permanent `std::thread` loops so idle threads terminate.
+- Offload blocking background work from the GTK thread (e.g., thumbnail generation) using a shared `glib::ThreadPool` rather than permanent `std::thread` loops. Use `ThreadPool::shared`, not `exclusive`: exclusive pools keep their workers for the process lifetime, while shared workers return to GLib's global pool and terminate after its idle timeout.
 - Dispatch UI operations from Tokio to GTK using `crate::gui::run_ui_task(proxy, ...)` and await the channel response.
 - Cache long-lived GTK objects across multiple requests using `thread_local!` within the GTK thread.
+
+### Reading thread dumps
+
+Useful when debugging with `ps -L`, `gdb`, or similar. Thread names are chosen by libraries and may change between versions; only the ownership and lifetime are stable.
+
+- `pool-*` — GLib thread-pool workers. This includes thumbnail jobs, `GTask`, and any other non-exclusive GLib pool. `GThreadPool` does not let callers name its threads.
+- `pool-spawner` — GLib's global thread-pool spawner; lives for the process lifetime.
+- `disk$*` (often shown as `process:disk$0..3`) — Mesa shader/disk-cache workers created by `util_queue_init(..., "disk$", ...)`. They persist for the process lifetime and are not portal work.
+- `tokio-zbus` — the dedicated Tokio runtime thread; `gmain` — the GTK main loop; `dconf worker`, `gdbus`, and `[pango] fontcon` — standard GLib/GTK runtime threads.
 
 ## DBus
 
