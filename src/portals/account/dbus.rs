@@ -98,7 +98,11 @@ impl Account {
                 })
             }
             Err(e) => {
-                tracing::error!(error = %e, "GetUserInformation failed");
+                if e.is_user_cancellation() {
+                    tracing::debug!(error = %e, "GetUserInformation cancelled by user");
+                } else {
+                    tracing::error!(error = %e, "GetUserInformation failed");
+                }
                 Response::from_ui_error(e)
             }
         }

@@ -179,7 +179,11 @@ impl FileChooser {
                 writable: Some(res.writeable),
             }),
             Err(e) => {
-                tracing::error!(error = %e, "OpenFile failed");
+                if e.is_user_cancellation() {
+                    tracing::debug!(error = %e, "OpenFile cancelled by user");
+                } else {
+                    tracing::error!(error = %e, "OpenFile failed");
+                }
                 Response::from_ui_error(e)
             }
         }
@@ -218,7 +222,11 @@ impl FileChooser {
                 current_filter: res.current_filter.map(unmap_filter),
             }),
             Err(e) => {
-                tracing::error!(error = %e, "SaveFile failed");
+                if e.is_user_cancellation() {
+                    tracing::debug!(error = %e, "SaveFile cancelled by user");
+                } else {
+                    tracing::error!(error = %e, "SaveFile failed");
+                }
                 Response::from_ui_error(e)
             }
         }
@@ -327,6 +335,14 @@ impl FileChooser {
             .await
         {
             Ok(res) => Response::success(res),
+            Err(SaveFilesError::Ui(e)) => {
+                if e.is_user_cancellation() {
+                    tracing::debug!(error = %e, "SaveFiles cancelled by user");
+                } else {
+                    tracing::error!(error = %e, "SaveFiles failed");
+                }
+                Response::from_ui_error(e)
+            }
             Err(e) => {
                 tracing::error!(error = %e, "SaveFiles failed");
                 // A rejected request never reached a dialog the user answered --

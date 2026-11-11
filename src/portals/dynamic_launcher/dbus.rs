@@ -111,7 +111,11 @@ impl DynamicLauncher {
                 })
             }
             Err(e) => {
-                tracing::error!(error = %e, "PrepareInstall failed");
+                if e.is_user_cancellation() {
+                    tracing::debug!(error = %e, "PrepareInstall cancelled by user");
+                } else {
+                    tracing::error!(error = %e, "PrepareInstall failed");
+                }
                 Response::from_ui_error(e)
             }
         }
