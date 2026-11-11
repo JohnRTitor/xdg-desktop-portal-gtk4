@@ -1,6 +1,6 @@
 pkgname=xdg-desktop-portal-gtk4
-pkgver=1.6.4
-pkgrel=2
+pkgver=1.6.5
+pkgrel=1
 pkgdesc="GTK4 backend implementation of xdg-desktop-portal"
 arch=('x86_64')
 url="https://github.com/JohnRTitor/xdg-desktop-portal-gtk4"

@@ -1826,7 +1826,7 @@ dependencies = [
 
 [[package]]
 name = "xdg-desktop-portal-gtk4"
-version = "1.6.4"
+version = "1.6.5"
 dependencies = [
  "current_locale",
  "fastrand",
