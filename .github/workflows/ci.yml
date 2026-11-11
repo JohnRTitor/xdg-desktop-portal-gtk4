@@ -56,11 +56,11 @@ jobs:
       - name: Install dependencies (Fedora)
         if: contains(matrix.distro, 'fedora')
         run: |
-          dnf install -y gcc gtk4 gtk4-devel git rust cargo dbus-daemon
+          dnf install -y gcc gtk4 gtk4-devel git rust cargo dbus-daemon gdk-pixbuf2
       - name: Install dependencies (Arch Linux)
         if: contains(matrix.distro, 'archlinux')
         run: |
-          pacman -Syu --noconfirm base-devel gtk4 git rust cargo dbus
+          pacman -Syu --noconfirm base-devel gtk4 git rust cargo dbus gdk-pixbuf2
       - name: Build
         run: cargo build --locked
       - name: Test
