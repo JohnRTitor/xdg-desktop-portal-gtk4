@@ -1,6 +1,7 @@
 use {
     crate::core::{request::run_request, response::Response},
     gtk4::{gio, gio::AppInfo, glib, prelude::AppLaunchContextExt},
+    std::sync::Arc,
     zbus::{
         ObjectServer, fdo, interface,
         message::Header,
@@ -8,17 +9,47 @@ use {
     },
 };
 
+/// Opens a `mailto:` URI, optionally with an activation token, in the host's
+/// default email client.
+type Launcher = Arc<dyn Fn(&str, Option<&str>) -> Result<(), glib::Error> + Send + Sync>;
+
 /// D-Bus interface wrapper for the Email portal.
 ///
-/// This struct holds no state because it simply constructs a `mailto:` URI
-/// and uses GIO to launch the host system's default email client.
+/// This struct holds no per-request state: it constructs a `mailto:` URI and
+/// hands it to the configured launcher (GIO in production).
 pub struct Email {
     session_manager: crate::core::session_manager::SessionManager,
+    launcher: Launcher,
 }
 
 impl Email {
     pub fn new(session_manager: crate::core::session_manager::SessionManager) -> Self {
-        Self { session_manager }
+        Self::with_launcher(session_manager, |url, activation_token| {
+            let launch_context = gio::AppLaunchContext::new();
+            if let Some(token) = activation_token {
+                // Pass the Wayland/X11 activation token so the mail client can raise its window.
+                launch_context.setenv("DESKTOP_STARTUP_ID", token);
+                launch_context.setenv("XDG_ACTIVATION_TOKEN", token);
+            }
+
+            // We rely on GIO to determine the default application for `mailto:` URIs.
+            AppInfo::launch_default_for_uri(url, Some(&launch_context))
+        })
+    }
+
+    /// Test-only constructor that delegates URI launching to `launcher`.
+    ///
+    /// Production code must use [`Email::new`], which wires the launcher to
+    /// GIO. This exists so integration tests can observe or replace the launch
+    /// without starting an external mail client.
+    pub fn with_launcher(
+        session_manager: crate::core::session_manager::SessionManager,
+        launcher: impl Fn(&str, Option<&str>) -> Result<(), glib::Error> + Send + Sync + 'static,
+    ) -> Self {
+        Self {
+            session_manager,
+            launcher: Arc::new(launcher),
+        }
     }
 }
 
@@ -50,16 +81,8 @@ impl Email {
         // default mail client using a `mailto:` URI.
         let url = build_mailto_url(&options);
 
-        let launch_context = gio::AppLaunchContext::new();
-        if let Some(token) = &options.activation_token {
-            // Pass the Wayland/X11 activation token so the mail client can raise its window.
-            launch_context.setenv("DESKTOP_STARTUP_ID", token);
-            launch_context.setenv("XDG_ACTIVATION_TOKEN", token);
-        }
-
-        // We rely on GIO to determine the default application for `mailto:` URIs.
-        match AppInfo::launch_default_for_uri(&url, Some(&launch_context)) {
-            Ok(_) => Response::success(EmailResults::default()),
+        match (self.launcher)(&url, options.activation_token.as_deref()) {
+            Ok(()) => Response::success(EmailResults::default()),
             Err(e) => {
                 tracing::error!(error = %e, "ComposeEmail failed");
                 // Launching the mail client is not a dialog, so there is no user refusal

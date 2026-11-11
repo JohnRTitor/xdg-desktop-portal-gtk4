@@ -43,8 +43,8 @@
 //!    per specification) or a cancelled response if launching fails.
 //! 8. **Cleanup:** `run_request` handles exporting and unexporting the request object.
 //!
-//! **Ownership:** Request tracking is owned by the `run_request` helper. The `Email` struct itself
-//! is stateless.
+//! **Ownership:** Request tracking is owned by the `run_request` helper. The `Email` struct keeps
+//! no per-request state; it only holds the session manager and the URI launcher.
 //!
 //! ## Session Management
 //!
