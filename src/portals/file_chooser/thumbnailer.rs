@@ -13,14 +13,28 @@ use {
     parking_lot::Mutex,
     std::{
         collections::{HashMap, HashSet},
-        fs,
+        fs, io,
         os::unix::fs::PermissionsExt,
         path::{Path, PathBuf},
         process::Command,
         sync::{Arc, LazyLock},
+        thread,
         time::{Duration, UNIX_EPOCH},
     },
 };
+
+fn spawn_error(name: &str, e: std::io::Error) -> std::io::Error {
+    io::Error::new(e.kind(), format!("failed to spawn {name} thread: {e}"))
+}
+
+macro_rules! spawn_named_thread {
+    ($name:expr, $f:expr) => {
+        thread::Builder::new()
+            .name($name.into())
+            .spawn($f)
+            .map_err(|e| spawn_error($name, e))
+    };
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ThumbnailSize {
@@ -831,7 +845,7 @@ impl ThumbnailCoordinator {
         for _ in 0..4 {
             let rx = task_rx.clone();
             let inflight = in_flight.clone();
-            std::thread::spawn(move || {
+            spawn_named_thread!("thumb-worker", move || {
                 while let Ok(task) = {
                     let lock = rx.lock();
                     lock.recv()
@@ -847,7 +861,8 @@ impl ThumbnailCoordinator {
                         });
                     }
                 }
-            });
+            })
+            .expect("failed to spawn thumb-worker thread");
         }
 
         Self {
