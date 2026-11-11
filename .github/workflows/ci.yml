@@ -63,16 +63,6 @@ jobs:
           pacman -Syu --noconfirm base-devel gtk4 git rust cargo dbus gdk-pixbuf2
       - name: Build
         run: cargo build --locked
-      - name: Debug thumbnailer registry (Fedora)
-        if: contains(matrix.distro, 'fedora')
-        run: |
-          echo "--- /usr/share/thumbnailers ---"
-          ls -la /usr/share/thumbnailers 2>&1 || echo "(missing)"
-          echo "--- glycin-thumbnailer ---"
-          command -v glycin-thumbnailer 2>&1 || echo "(not in PATH)"
-          echo "--- gdk-pixbuf-thumbnailer ---"
-          command -v gdk-pixbuf-thumbnailer 2>&1 || echo "(not in PATH)"
-          echo "--- XDG_DATA_DIRS=${XDG_DATA_DIRS:-<unset>} ---"
       - name: Test
         # See the comment in the `test` job above: without a session bus the
         # D-Bus tests skip themselves and pass without asserting anything.

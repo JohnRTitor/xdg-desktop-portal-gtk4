@@ -1836,6 +1836,7 @@ dependencies = [
  "gdk4-x11",
  "gtk4",
  "language-tags",
+ "libc",
  "parking_lot",
  "rust-i18n",
  "rustix",

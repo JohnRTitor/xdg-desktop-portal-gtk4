@@ -17,7 +17,10 @@ use {
         os::unix::fs::PermissionsExt,
         path::{Path, PathBuf},
         process::Command,
-        sync::{Arc, LazyLock},
+        sync::{
+            Arc, LazyLock,
+            atomic::{AtomicBool, Ordering},
+        },
         time::{Duration, UNIX_EPOCH},
     },
 };
@@ -474,6 +477,7 @@ fn execute_thumbnailer_command(
     input_uri: &str,
     output_path: &Path,
     size: u32,
+    cancel: &ThumbnailCancel,
 ) -> Result<(), String> {
     let tokens = split_command(exec);
     if tokens.is_empty() {
@@ -511,6 +515,11 @@ fn execute_thumbnailer_command(
 
     let deadline = std::time::Instant::now() + Duration::from_secs(10);
     loop {
+        if cancel.is_cancelled() {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(CANCELLED.to_string());
+        }
         match child.try_wait() {
             Ok(Some(status)) => {
                 return if status.success() {
@@ -561,11 +570,94 @@ fn private_temp_path(prefix: &str) -> Option<PathBuf> {
     Some(path)
 }
 
+/// Cooperative cancellation shared by all thumbnail jobs belonging to one dialog.
+///
+/// A job is cheap to skip when it has not started yet, so the worker pool checks this
+/// before touching the filesystem. Running jobs also poll it between sizes and fallback
+/// stages; a single image decode cannot be interrupted mid-call.
+#[derive(Clone, Debug, Default)]
+pub struct ThumbnailCancel {
+    cancelled: Arc<AtomicBool>,
+}
+
+impl ThumbnailCancel {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn cancel(&self) {
+        self.cancelled.store(true, Ordering::Release);
+    }
+
+    pub fn is_cancelled(&self) -> bool {
+        self.cancelled.load(Ordering::Acquire)
+    }
+
+    /// Identity comparison for the owning dialog/token, used to avoid
+    /// clobbering a newer owner when an older cancelled job finishes.
+    pub fn same(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.cancelled, &other.cancelled)
+    }
+}
+
+impl PartialEq for ThumbnailCancel {
+    fn eq(&self, other: &Self) -> bool {
+        self.same(other)
+    }
+}
+
+impl Eq for ThumbnailCancel {}
+
+/// Ask glibc to return free memory from all arenas to the operating system.
+///
+/// `malloc_trim` is glibc-specific; other allocators either release memory eagerly or
+/// expose a different API. This intentionally does nothing elsewhere.
+fn trim_allocator() {
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    unsafe {
+        libc::malloc_trim(0);
+    }
+}
+
+/// Coalesce repeated trim requests so close + batch-drain do not both walk every
+/// glibc arena in quick succession.
+static TRIM_SCHEDULED: AtomicBool = AtomicBool::new(false);
+
+fn schedule_trim() {
+    if TRIM_SCHEDULED.swap(true, Ordering::AcqRel) {
+        return;
+    }
+    glib::idle_add_once(|| {
+        TRIM_SCHEDULED.store(false, Ordering::Release);
+        trim_allocator();
+    });
+}
+
+const CANCELLED: &str = "Thumbnail generation cancelled";
+
+fn check_cancelled(cancel: &ThumbnailCancel) -> Result<(), String> {
+    if cancel.is_cancelled() {
+        Err(CANCELLED.to_string())
+    } else {
+        Ok(())
+    }
+}
+
 /// Generate thumbnails directly following the FreeDesktop .thumbnailer spec.
 ///
 /// Both the `normal` (128) and `large` (256) cache entries are produced so that GIO's
 /// `THUMBNAIL_SIZE_AUTO` never selects a stale external thumbnail over a fresh one.
 pub fn generate_thumbnail(file_path: &Path, mime_type: Option<&str>) -> Result<PathBuf, String> {
+    generate_thumbnail_cancellable(file_path, mime_type, &ThumbnailCancel::new())
+}
+
+fn generate_thumbnail_cancellable(
+    file_path: &Path,
+    mime_type: Option<&str>,
+    cancel: &ThumbnailCancel,
+) -> Result<PathBuf, String> {
+    check_cancelled(cancel)?;
+
     let uri = file_to_uri(file_path).ok_or_else(|| "Failed to construct file URI".to_string())?;
     let mime = mime_type.unwrap_or("application/octet-stream");
 
@@ -581,6 +673,7 @@ pub fn generate_thumbnail(file_path: &Path, mime_type: Option<&str>) -> Result<P
         .map(|p| is_thumbnail_valid(p, file_path))
         .unwrap_or(false);
     if normal_ok && large_ok {
+        check_cancelled(cancel)?;
         return target_normal.ok_or_else(|| "no thumbnail path".to_string());
     }
 
@@ -593,9 +686,12 @@ pub fn generate_thumbnail(file_path: &Path, mime_type: Option<&str>) -> Result<P
         })
         .collect();
 
+    check_cancelled(cancel)?;
+
     // 1. Use a registered FreeDesktop .thumbnailer when one matches the MIME type.
     if let Some(spec) = REGISTRY.find_thumbnailer(mime) {
         for size in &needs_gen {
+            check_cancelled(cancel)?;
             let Some(target_path) = get_thumbnail_path(&uri, *size) else {
                 continue;
             };
@@ -606,11 +702,15 @@ pub fn generate_thumbnail(file_path: &Path, mime_type: Option<&str>) -> Result<P
                     &uri,
                     &temp_output,
                     size.pixel_size(),
+                    cancel,
                 )
                 .is_ok()
                     && let Ok(raw_png) = fs::read(&temp_output)
                 {
                     let _ = fs::remove_file(&temp_output);
+                    if cancel.is_cancelled() {
+                        return Err(CANCELLED.to_string());
+                    }
                     let _ = save_thumbnail_file(&raw_png, &uri, file_path, &target_path);
                 } else {
                     let _ = fs::remove_file(&temp_output);
@@ -633,6 +733,7 @@ pub fn generate_thumbnail(file_path: &Path, mime_type: Option<&str>) -> Result<P
     // A) PDF fallback tools: evince-thumbnailer or pdftoppm
     if mime == "application/pdf" {
         for size in &needs_gen {
+            check_cancelled(cancel)?;
             let Some(target_path) = get_thumbnail_path(&uri, *size) else {
                 continue;
             };
@@ -648,12 +749,17 @@ pub fn generate_thumbnail(file_path: &Path, mime_type: Option<&str>) -> Result<P
                     &uri,
                     &temp_output,
                     size.pixel_size(),
+                    cancel,
                 )
                 .is_ok()
                     && let Ok(raw_png) = fs::read(&temp_output)
-                    && save_thumbnail_file(&raw_png, &uri, file_path, &target_path).is_ok()
                 {
-                    produced = true;
+                    if cancel.is_cancelled() {
+                        return Err(CANCELLED.to_string());
+                    }
+                    if save_thumbnail_file(&raw_png, &uri, file_path, &target_path).is_ok() {
+                        produced = true;
+                    }
                 }
                 let _ = fs::remove_file(&temp_output);
             }
@@ -674,15 +780,50 @@ pub fn generate_thumbnail(file_path: &Path, mime_type: Option<&str>) -> Result<P
                 ]);
                 cmd.stdout(std::process::Stdio::null());
                 cmd.stderr(std::process::Stdio::null());
-                if let Ok(status) = cmd.status()
-                    && status.success()
-                {
-                    let produced_png = PathBuf::from(format!("{prefix_str}.png"));
-                    if let Ok(raw_png) = fs::read(&produced_png) {
-                        let _ = save_thumbnail_file(&raw_png, &uri, file_path, &target_path);
-                    }
+
+                let produced_png = PathBuf::from(format!("{prefix_str}.png"));
+                let Ok(mut child) = cmd.spawn() else {
+                    let _ = fs::remove_file(&prefix);
                     let _ = fs::remove_file(&produced_png);
+                    continue;
+                };
+                let deadline = std::time::Instant::now() + Duration::from_secs(10);
+                let status = loop {
+                    if cancel.is_cancelled() {
+                        let _ = child.kill();
+                        let _ = child.wait();
+                        let _ = fs::remove_file(&produced_png);
+                        let _ = fs::remove_file(&prefix);
+                        return Err(CANCELLED.to_string());
+                    }
+                    match child.try_wait() {
+                        Ok(Some(status)) => break status,
+                        Ok(None) if std::time::Instant::now() >= deadline => {
+                            let _ = child.kill();
+                            let _ = child.wait();
+                            let _ = fs::remove_file(&produced_png);
+                            let _ = fs::remove_file(&prefix);
+                            return Err("pdftoppm timed out after 10s".to_string());
+                        }
+                        Ok(None) => std::thread::sleep(Duration::from_millis(20)),
+                        Err(e) => {
+                            let _ = fs::remove_file(&produced_png);
+                            let _ = fs::remove_file(&prefix);
+                            return Err(format!("Failed to wait for pdftoppm: {e}"));
+                        }
+                    }
+                };
+                if status.success()
+                    && let Ok(raw_png) = fs::read(&produced_png)
+                {
+                    if cancel.is_cancelled() {
+                        let _ = fs::remove_file(&produced_png);
+                        let _ = fs::remove_file(&prefix);
+                        return Err(CANCELLED.to_string());
+                    }
+                    let _ = save_thumbnail_file(&raw_png, &uri, file_path, &target_path);
                 }
+                let _ = fs::remove_file(&produced_png);
                 let _ = fs::remove_file(&prefix);
             }
         }
@@ -701,6 +842,7 @@ pub fn generate_thumbnail(file_path: &Path, mime_type: Option<&str>) -> Result<P
     // B) Image fallback: glycin-thumbnailer, then gdk-pixbuf-thumbnailer, then in-process pixbuf loader
     if mime.starts_with("image/") {
         for size in &needs_gen {
+            check_cancelled(cancel)?;
             let Some(target_path) = get_thumbnail_path(&uri, *size) else {
                 continue;
             };
@@ -755,21 +897,30 @@ pub fn generate_thumbnail(file_path: &Path, mime_type: Option<&str>) -> Result<P
                     &uri,
                     &temp_output,
                     size.pixel_size(),
+                    cancel,
                 )
                 .is_ok()
                     && let Ok(raw_png) = fs::read(&temp_output)
-                    && save_thumbnail_file(&raw_png, &uri, file_path, &target_path).is_ok()
                 {
-                    produced = true;
+                    if cancel.is_cancelled() {
+                        return Err(CANCELLED.to_string());
+                    }
+                    if save_thumbnail_file(&raw_png, &uri, file_path, &target_path).is_ok() {
+                        produced = true;
+                    }
                 }
                 let _ = fs::remove_file(&temp_output);
             }
 
             if !produced {
+                check_cancelled(cancel)?;
                 let s = size.pixel_size() as i32;
                 if let Ok(pixbuf) = gdk_pixbuf::Pixbuf::from_file_at_scale(file_path, s, s, true)
                     && let Ok(raw_png) = pixbuf.save_to_bufferv("png", &[])
                 {
+                    if cancel.is_cancelled() {
+                        return Err(CANCELLED.to_string());
+                    }
                     let _ = save_thumbnail_file(&raw_png, &uri, file_path, &target_path);
                 }
             }
@@ -787,8 +938,10 @@ pub fn generate_thumbnail(file_path: &Path, mime_type: Option<&str>) -> Result<P
     }
 
     // 3. Last-resort fallback: Tumbler D-Bus via native GLib, if registered.
+    check_cancelled(cancel)?;
     if trigger_tumbler_dbus(&uri, mime) {
         for _ in 0..10 {
+            check_cancelled(cancel)?;
             std::thread::sleep(Duration::from_millis(50));
             if let Some(tp) = get_thumbnail_path(&uri, ThumbnailSize::Normal)
                 && is_thumbnail_valid(&tp, file_path)
@@ -845,7 +998,7 @@ const MAX_THUMBNAIL_WORKERS: u32 = 4;
 
 /// Coordinator for managing asynchronous thumbnail generation requests and avoiding duplicate work.
 pub struct ThumbnailCoordinator {
-    in_flight: Arc<Mutex<HashSet<PathBuf>>>,
+    in_flight: Arc<Mutex<HashMap<PathBuf, ThumbnailCancel>>>,
     pool: glib::ThreadPool,
 }
 
@@ -858,7 +1011,7 @@ impl Default for ThumbnailCoordinator {
 impl ThumbnailCoordinator {
     pub fn new() -> Self {
         Self {
-            in_flight: Arc::new(Mutex::new(HashSet::new())),
+            in_flight: Arc::new(Mutex::new(HashMap::new())),
             pool: glib::ThreadPool::exclusive(MAX_THUMBNAIL_WORKERS)
                 .expect("Failed to create thumbnail thread pool"),
         }
@@ -866,37 +1019,96 @@ impl ThumbnailCoordinator {
 
     /// Queue a file for thumbnailing if it is not already being processed.
     /// When complete, invokes `on_complete` on the GTK main thread.
-    pub fn queue_thumbnail<F>(&self, file_path: PathBuf, mime_type: Option<String>, on_complete: F)
-    where
+    ///
+    /// A cancelled token makes this a no-op. Workers re-check the token before
+    /// starting and between decode stages, so closing a dialog stops both queued
+    /// work and most of the work already handed to the pool.
+    pub fn queue_thumbnail<F>(
+        &self,
+        file_path: PathBuf,
+        mime_type: Option<String>,
+        cancel: ThumbnailCancel,
+        on_complete: F,
+    ) where
         F: FnOnce(PathBuf) + Send + 'static,
     {
+        if cancel.is_cancelled() {
+            return;
+        }
+
         {
             let mut set = self.in_flight.lock();
-            if !set.insert(file_path.clone()) {
-                return; // Already in flight
+            if let Some(existing) = set.get(&file_path) {
+                if !existing.is_cancelled() {
+                    return; // Already in flight for an active dialog
+                }
+                // The previous owner was cancelled; let this dialog take over.
+                set.remove(&file_path);
+            }
+            if set.insert(file_path.clone(), cancel.clone()).is_some() {
+                return; // Lost a race; the other caller owns it
             }
         }
 
         let inflight = self.in_flight.clone();
         let path = file_path.clone();
+        let failed_cancel = cancel.clone();
         if self
             .pool
             .push(move || {
-                let res = generate_thumbnail(&path, mime_type.as_deref());
-                {
+                let res = if cancel.is_cancelled() {
+                    Err(CANCELLED.to_string())
+                } else {
+                    generate_thumbnail_cancellable(&path, mime_type.as_deref(), &cancel)
+                };
+
+                let removed_own_entry = {
                     let mut set = inflight.lock();
-                    set.remove(&path);
+                    if set.get(&path).is_some_and(|owner| owner.same(&cancel)) {
+                        set.remove(&path);
+                        true
+                    } else {
+                        false
+                    }
+                };
+                let should_trim = removed_own_entry
+                    && inflight.lock().is_empty()
+                    && cancel.is_cancelled();
+                if should_trim {
+                    // All work for the cancelled dialog has finished. Freeing
+                    // the arenas from the worker thread is safe, but bounce to
+                    // the GTK thread so the trim is serialized with UI frees.
+                    schedule_trim();
                 }
-                if let Ok(thumb_path) = res {
+
+                if let Ok(thumb_path) = res
+                    && !cancel.is_cancelled()
+                {
+                    let cancel_cb = cancel.clone();
                     glib::idle_add_once(move || {
-                        on_complete(thumb_path);
+                        if !cancel_cb.is_cancelled() {
+                            on_complete(thumb_path);
+                        }
                     });
                 }
             })
             .is_err()
         {
-            let mut set = self.in_flight.lock();
-            set.remove(&file_path);
+            let removed_own_entry = {
+                let mut set = self.in_flight.lock();
+                if set.get(&file_path).is_some_and(|owner| owner.same(&failed_cancel)) {
+                    set.remove(&file_path);
+                    true
+                } else {
+                    false
+                }
+            };
+            let should_trim = removed_own_entry
+                && self.in_flight.lock().is_empty()
+                && failed_cancel.is_cancelled();
+            if should_trim {
+                schedule_trim();
+            }
         }
     }
 }
@@ -948,6 +1160,7 @@ struct ViewWatcher {
     attached_views: Mutex<HashSet<usize>>,
     attached_models: Mutex<HashSet<usize>>,
     attached_stacks: Mutex<HashSet<usize>>,
+    cancel: ThumbnailCancel,
     tx: tokio::sync::mpsc::UnboundedSender<(PathBuf, String, PathBuf)>,
 }
 
@@ -1015,6 +1228,9 @@ impl ViewWatcher {
     }
 
     fn process_item(self: &Arc<Self>, info: &gio::FileInfo) {
+        if self.cancel.is_cancelled() {
+            return;
+        }
         if !should_process(info) {
             return;
         }
@@ -1031,21 +1247,54 @@ impl ViewWatcher {
         let mime = info.content_type().map(|c| c.to_string());
 
         let tx = self.tx.clone();
+        let cancel_cb = self.cancel.clone();
         let path_clone = path.clone();
         let name_clone = name.clone();
-        COORDINATOR.queue_thumbnail(path, mime, move |thumb_path| {
+        COORDINATOR.queue_thumbnail(path, mime, self.cancel.clone(), move |thumb_path| {
+            if cancel_cb.is_cancelled() {
+                return;
+            }
             let _ = tx.send((path_clone, name_clone, thumb_path));
         });
     }
 }
 
 /// Attach thumbnail generator to a FileChooserDialog.
-pub fn setup_dialog_thumbnailer(dialog: &FileChooserDialog, context: &MainContext) {
+///
+/// Returns the dialog's cancellation token. It is cancelled automatically when
+/// the dialog is hidden or destroyed; callers only need to hold it if they want
+/// to cancel earlier (for example when a D-Bus request is withdrawn).
+pub fn setup_dialog_thumbnailer(
+    dialog: &FileChooserDialog,
+    context: &MainContext,
+) -> ThumbnailCancel {
+    let cancel = ThumbnailCancel::new();
+
+    // A response or D-Bus cancellation closes/hides the dialog immediately.
+    // Stopping queued thumbnail work at that point avoids decoding files for a
+    // window that no longer exists (we measured work continuing after close).
+    let cancel_hide = cancel.clone();
+    dialog.connect_hide(move |_| cancel_hide.cancel());
+
+    let cancel_destroy = cancel.clone();
+    dialog.connect_destroy(move |_| {
+        cancel_destroy.cancel();
+        // The dialog and its thumbnails are gone; return any free arena pages
+        // instead of keeping them until the next picker or memory pressure.
+        // Defer the trim until the destroy signal has finished so the child
+        // widgets' frees are included in the same pass.
+        schedule_trim();
+    });
+
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<(PathBuf, String, PathBuf)>();
 
     let dialog_weak = dialog.downgrade();
+    let cancel_loop = cancel.clone();
     context.spawn_local(async move {
         while let Some((file_path, file_name, thumb_path)) = rx.recv().await {
+            if cancel_loop.is_cancelled() {
+                break;
+            }
             let Some(dlg) = dialog_weak.upgrade() else {
                 break;
             };
@@ -1126,6 +1375,7 @@ pub fn setup_dialog_thumbnailer(dialog: &FileChooserDialog, context: &MainContex
         attached_views: Mutex::new(HashSet::new()),
         attached_models: Mutex::new(HashSet::new()),
         attached_stacks: Mutex::new(HashSet::new()),
+        cancel: cancel.clone(),
         tx,
     });
 
@@ -1140,6 +1390,8 @@ pub fn setup_dialog_thumbnailer(dialog: &FileChooserDialog, context: &MainContex
             watcher_map.attach(dlg.upcast_ref());
         }
     });
+
+    cancel
 }
 
 #[cfg(test)]
@@ -1244,6 +1496,74 @@ mod tests {
                 eprintln!("no thumbnailer available in this test environment ({e}); skipping");
             }
         }
+
+        let _ = fs::remove_file(&img_path);
+        let _ = fs::remove_dir_all(&test_dir);
+    }
+
+    #[test]
+    fn cancelled_token_is_sticky() {
+        let cancel = ThumbnailCancel::new();
+        assert!(!cancel.is_cancelled());
+        cancel.cancel();
+        cancel.cancel();
+        assert!(cancel.is_cancelled());
+    }
+
+    #[test]
+    fn cancelled_generation_returns_before_touching_the_file() {
+        let cancel = ThumbnailCancel::new();
+        cancel.cancel();
+
+        let err = generate_thumbnail_cancellable(
+            Path::new("/nonexistent/portal-cancelled.png"),
+            Some("image/png"),
+            &cancel,
+        )
+        .expect_err("cancelled work must not run");
+        assert_eq!(err, CANCELLED);
+    }
+
+    #[test]
+    fn cancelled_queue_does_not_generate_a_thumbnail() {
+        let test_dir = std::env::temp_dir().join("portal_test_cancelled_queue");
+        let _ = fs::create_dir_all(&test_dir);
+        let img_path = test_dir.join("cancelled.png");
+        let minimal_png: [u8; 67] = [
+            0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48,
+            0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00,
+            0x00, 0x1f, 0x15, 0xc4, 0x89, 0x00, 0x00, 0x00, 0x0a, 0x49, 0x44, 0x41, 0x54, 0x78,
+            0x9c, 0x63, 0x00, 0x01, 0x00, 0x00, 0x05, 0x00, 0x01, 0x0d, 0x0a, 0x2d, 0xb4, 0x00,
+            0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
+        ];
+        fs::write(&img_path, minimal_png).unwrap();
+
+        let uri = file_to_uri(&img_path).unwrap();
+        let thumb_path = get_thumbnail_path(&uri, ThumbnailSize::Normal).unwrap();
+        let _ = fs::remove_file(&thumb_path);
+
+        let cancel = ThumbnailCancel::new();
+        cancel.cancel();
+        let coordinator = ThumbnailCoordinator::new();
+        let (tx, rx) = std::sync::mpsc::channel();
+        coordinator.queue_thumbnail(
+            img_path.clone(),
+            Some("image/png".into()),
+            cancel,
+            move |_| {
+                let _ = tx.send(());
+            },
+        );
+
+        std::thread::sleep(Duration::from_millis(100));
+        assert!(
+            rx.try_recv().is_err(),
+            "cancelled work must not invoke its completion callback"
+        );
+        assert!(
+            !thumb_path.exists(),
+            "cancelled work must not write a thumbnail"
+        );
 
         let _ = fs::remove_file(&img_path);
         let _ = fs::remove_dir_all(&test_dir);
