@@ -479,6 +479,8 @@ fn execute_thumbnailer_command(
     size: u32,
     cancel: &ThumbnailCancel,
 ) -> Result<(), String> {
+    check_cancelled(cancel)?;
+
     let tokens = split_command(exec);
     if tokens.is_empty() {
         return Err("Empty command".to_string());
@@ -764,6 +766,8 @@ fn generate_thumbnail_cancellable(
                 let _ = fs::remove_file(&temp_output);
             }
 
+            check_cancelled(cancel)?;
+
             if !produced
                 && is_executable_or_in_path("pdftoppm")
                 && let Some(prefix) = private_temp_path("portal-pdftoppm-")
@@ -865,6 +869,15 @@ fn generate_thumbnail_cancellable(
                 if let Ok(mut child) = cmd.spawn() {
                     let deadline = std::time::Instant::now() + Duration::from_secs(10);
                     let status = loop {
+                        // Unlike the other external thumbnailers, glycin was
+                        // missing its cancellation check. Without it, closing
+                        // the dialog left glycin running for up to the full
+                        // 10s timeout and then wrote the thumbnail anyway.
+                        if cancel.is_cancelled() {
+                            let _ = child.kill();
+                            let _ = child.wait();
+                            break None;
+                        }
                         match child.try_wait() {
                             Ok(Some(status)) => break Some(status),
                             Ok(None) if std::time::Instant::now() >= deadline => {
@@ -876,7 +889,8 @@ fn generate_thumbnail_cancellable(
                             Err(_) => break None,
                         }
                     };
-                    if status.is_some_and(|s| s.success())
+                    if !cancel.is_cancelled()
+                        && status.is_some_and(|s| s.success())
                         && let Ok(raw_png) = fs::read(&temp_output)
                         && save_thumbnail_file(&raw_png, &uri, file_path, &target_path).is_ok()
                     {
@@ -885,6 +899,8 @@ fn generate_thumbnail_cancellable(
                 }
                 let _ = fs::remove_file(&temp_output);
             }
+
+            check_cancelled(cancel)?;
 
             if !produced
                 && is_executable_or_in_path("gdk-pixbuf-thumbnailer")
@@ -951,6 +967,8 @@ fn generate_thumbnail_cancellable(
         }
     }
 
+    check_cancelled(cancel)?;
+
     if let Some(tp) = get_thumbnail_path(&uri, ThumbnailSize::Normal)
         && is_thumbnail_valid(&tp, file_path)
     {
@@ -1012,7 +1030,12 @@ impl ThumbnailCoordinator {
     pub fn new() -> Self {
         Self {
             in_flight: Arc::new(Mutex::new(HashMap::new())),
-            pool: glib::ThreadPool::exclusive(MAX_THUMBNAIL_WORKERS)
+            // Use a shared pool, not an exclusive one: exclusive pools start
+            // their threads eagerly and keep them for the lifetime of the
+            // process, so cancelling every dialog would still leave the four
+            // workers resident. Shared workers return to GLib's global pool
+            // when idle and are reaped after the idle timeout.
+            pool: glib::ThreadPool::shared(Some(MAX_THUMBNAIL_WORKERS))
                 .expect("Failed to create thumbnail thread pool"),
         }
     }
@@ -1071,9 +1094,8 @@ impl ThumbnailCoordinator {
                         false
                     }
                 };
-                let should_trim = removed_own_entry
-                    && inflight.lock().is_empty()
-                    && cancel.is_cancelled();
+                let should_trim =
+                    removed_own_entry && inflight.lock().is_empty() && cancel.is_cancelled();
                 if should_trim {
                     // All work for the cancelled dialog has finished. Freeing
                     // the arenas from the worker thread is safe, but bounce to
@@ -1096,7 +1118,10 @@ impl ThumbnailCoordinator {
         {
             let removed_own_entry = {
                 let mut set = self.in_flight.lock();
-                if set.get(&file_path).is_some_and(|owner| owner.same(&failed_cancel)) {
+                if set
+                    .get(&file_path)
+                    .is_some_and(|owner| owner.same(&failed_cancel))
+                {
                     set.remove(&file_path);
                     true
                 } else {
@@ -1522,6 +1547,59 @@ mod tests {
         )
         .expect_err("cancelled work must not run");
         assert_eq!(err, CANCELLED);
+    }
+
+    #[test]
+    fn cancelled_external_thumbnailer_is_not_spawned_or_is_killed() {
+        let test_dir = std::env::temp_dir().join("portal_test_cancelled_external");
+        let _ = fs::create_dir_all(&test_dir);
+        let marker = test_dir.join("spawned");
+        let _ = fs::remove_file(&marker);
+
+        // An already-cancelled token must stop the command before spawn.
+        let cancel = ThumbnailCancel::new();
+        cancel.cancel();
+        let err = execute_thumbnailer_command(
+            "touch %o",
+            Path::new("/nonexistent/input.png"),
+            "file:///nonexistent/input.png",
+            &marker,
+            128,
+            &cancel,
+        )
+        .expect_err("cancelled work must not run");
+        assert_eq!(err, CANCELLED);
+        assert!(
+            !marker.exists(),
+            "cancelled work must not spawn the command"
+        );
+
+        // Cancellation while the command is running must kill it promptly.
+        let cancel = ThumbnailCancel::new();
+        let cancel_later = cancel.clone();
+        let canceller = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(100));
+            cancel_later.cancel();
+        });
+        let started = std::time::Instant::now();
+        let err = execute_thumbnailer_command(
+            "sleep 30",
+            Path::new("/nonexistent/input.png"),
+            "file:///nonexistent/input.png",
+            Path::new("/nonexistent/output.png"),
+            128,
+            &cancel,
+        )
+        .expect_err("cancelled work must be interrupted");
+        let elapsed = started.elapsed();
+        assert_eq!(err, CANCELLED);
+        assert!(
+            elapsed < Duration::from_secs(5),
+            "cancelled thumbnailer should be killed promptly, took {elapsed:?}"
+        );
+        canceller.join().unwrap();
+
+        let _ = fs::remove_dir_all(&test_dir);
     }
 
     #[test]
