@@ -56,7 +56,7 @@ jobs:
       - name: Install dependencies (Fedora)
         if: contains(matrix.distro, 'fedora')
         run: |
-          dnf install -y gcc gtk4 gtk4-devel git rust cargo dbus-daemon gdk-pixbuf2 gdk-pixbuf2-modules-extra
+          dnf install -y gcc gtk4 gtk4-devel git rust cargo dbus-daemon gdk-pixbuf2 gdk-pixbuf2-modules-extra glycin-thumbnailer
       - name: Install dependencies (Arch Linux)
         if: contains(matrix.distro, 'archlinux')
         run: |
@@ -68,6 +68,8 @@ jobs:
         run: |
           echo "--- /usr/share/thumbnailers ---"
           ls -la /usr/share/thumbnailers 2>&1 || echo "(missing)"
+          echo "--- glycin-thumbnailer ---"
+          command -v glycin-thumbnailer 2>&1 || echo "(not in PATH)"
           echo "--- gdk-pixbuf-thumbnailer ---"
           command -v gdk-pixbuf-thumbnailer 2>&1 || echo "(not in PATH)"
           echo "--- XDG_DATA_DIRS=${XDG_DATA_DIRS:-<unset>} ---"

@@ -698,7 +698,7 @@ pub fn generate_thumbnail(file_path: &Path, mime_type: Option<&str>) -> Result<P
         }
     }
 
-    // B) Image fallback: gdk-pixbuf-thumbnailer or direct in-process pixbuf loader
+    // B) Image fallback: glycin-thumbnailer, then gdk-pixbuf-thumbnailer, then in-process pixbuf loader
     if mime.starts_with("image/") {
         for size in &needs_gen {
             let Some(target_path) = get_thumbnail_path(&uri, *size) else {
@@ -706,7 +706,46 @@ pub fn generate_thumbnail(file_path: &Path, mime_type: Option<&str>) -> Result<P
             };
             let mut produced = false;
 
-            if is_executable_or_in_path("gdk-pixbuf-thumbnailer")
+            if is_executable_or_in_path("glycin-thumbnailer")
+                && let Some(temp_output) = private_temp_path("portal-thumb-")
+            {
+                let mut cmd = Command::new("glycin-thumbnailer");
+                cmd.args([
+                    "-i",
+                    &uri,
+                    "-o",
+                    temp_output.to_str().unwrap_or_default(),
+                    "-s",
+                    &size.pixel_size().to_string(),
+                ]);
+                cmd.stdout(std::process::Stdio::null());
+                cmd.stderr(std::process::Stdio::null());
+                if let Ok(mut child) = cmd.spawn() {
+                    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+                    let status = loop {
+                        match child.try_wait() {
+                            Ok(Some(status)) => break Some(status),
+                            Ok(None) if std::time::Instant::now() >= deadline => {
+                                let _ = child.kill();
+                                let _ = child.wait();
+                                break None;
+                            }
+                            Ok(None) => std::thread::sleep(Duration::from_millis(20)),
+                            Err(_) => break None,
+                        }
+                    };
+                    if status.is_some_and(|s| s.success())
+                        && let Ok(raw_png) = fs::read(&temp_output)
+                        && save_thumbnail_file(&raw_png, &uri, file_path, &target_path).is_ok()
+                    {
+                        produced = true;
+                    }
+                }
+                let _ = fs::remove_file(&temp_output);
+            }
+
+            if !produced
+                && is_executable_or_in_path("gdk-pixbuf-thumbnailer")
                 && let Some(temp_output) = private_temp_path("portal-thumb-")
             {
                 let cmd = "gdk-pixbuf-thumbnailer -s %s %i %o";
