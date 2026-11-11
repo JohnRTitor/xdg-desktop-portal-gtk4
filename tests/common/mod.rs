@@ -3,6 +3,11 @@ use {
     xdg_desktop_portal_gtk4::gui::UiProxy,
 };
 
+/// Skips the current integration test when a D-Bus session bus is unavailable.
+///
+/// Expands to the connected [`zbus::Connection`] on success, or prints a skip
+/// message and returns `Ok(())` from the test on failure. Intended for tests
+/// whose signature is `Result<(), Box<dyn std::error::Error>>`.
 #[macro_export]
 macro_rules! try_dbus_session {
     () => {

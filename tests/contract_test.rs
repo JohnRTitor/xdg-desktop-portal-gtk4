@@ -2,21 +2,16 @@
 //!
 //! Tests that currently pass are guards against future regressions.
 
+mod common;
+
 use {
+    common::dummy_proxy,
     std::collections::HashMap,
-    xdg_desktop_portal_gtk4::gui::UiProxy,
     zbus::{
         Connection,
         zvariant::{ObjectPath, OwnedObjectPath, Value},
     },
 };
-
-fn dummy_proxy() -> UiProxy {
-    UiProxy {
-        context: gtk4::glib::MainContext::default(),
-        sender: tokio::sync::mpsc::unbounded_channel().0,
-    }
-}
 
 // ---------------------------------------------------------------- clipboard --
 
