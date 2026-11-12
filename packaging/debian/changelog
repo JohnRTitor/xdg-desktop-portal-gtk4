@@ -1,0 +1,8 @@
+xdg-desktop-portal-gtk4 (1.6.5-1) unstable; urgency=medium
+
+  * Initial packaging.
+    - Built from cargo with vendored dependencies (--locked --offline) and
+      installed via `make install` to place the portal binary and data files.
+    - Provides an xdg-desktop-portal backend implementation using GTK4.
+
+ -- xdg-desktop-portal-gtk4 packagers <xdg-desktop-portal-gtk4-packaging@example.invalid>  Thu, 12 Nov 2026 00:00:00 +0000

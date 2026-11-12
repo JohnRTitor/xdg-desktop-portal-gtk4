@@ -1,0 +1,29 @@
+Source: xdg-desktop-portal-gtk4
+Section: gnome
+Priority: optional
+Maintainer: xdg-desktop-portal-gtk4 packagers <xdg-desktop-portal-gtk4-packaging@example.invalid>
+Build-Depends:
+ debhelper-compat (= 13),
+ cargo,
+ rustc (>= 1.92),
+ make,
+ pkgconf,
+ libgtk-4-dev,
+ libgdk-pixbuf-2.0-dev,
+ dbus,
+Standards-Version: 4.7.0
+Homepage: https://github.com/JohnRTitor/xdg-desktop-portal-gtk4
+Rules-Requires-Root: no
+
+Package: xdg-desktop-portal-gtk4
+Architecture: linux-any
+Depends:
+ ${shlibs:Depends},
+ ${misc:Depends},
+ xdg-desktop-portal,
+ gtk4,
+Provides: xdg-desktop-portal-impl
+Description: GTK4 backend implementation of xdg-desktop-portal
+ xdg-desktop-portal-gtk4 is a backend implementation for xdg-desktop-portal
+ using GTK4. It provides portal interfaces such as file chooser, account,
+ app chooser, and other desktop integration dialogs for sandboxed applications.

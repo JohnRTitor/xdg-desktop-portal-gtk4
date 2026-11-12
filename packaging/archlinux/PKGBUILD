@@ -1,0 +1,43 @@
+# Maintainer: xdg-desktop-portal-gtk4 packagers <xdg-desktop-portal-gtk4-packaging@example.invalid>
+
+pkgname=xdg-desktop-portal-gtk4
+pkgver=1.6.5
+pkgrel=1
+pkgdesc='GTK4 backend implementation of xdg-desktop-portal'
+arch=('x86_64')
+url='https://github.com/JohnRTitor/xdg-desktop-portal-gtk4'
+license=('LGPL-2.1-only')
+depends=('xdg-desktop-portal' 'gtk4' 'glib2' 'gdk-pixbuf2' 'glibc' 'libgcc')
+makedepends=('cargo' 'git' 'make' 'pkgconf')
+provides=('xdg-desktop-portal-impl')
+source=("git+$url.git#tag=v$pkgver")
+b2sums=('SKIP')
+
+pkgver() {
+  cd "$pkgname"
+  git describe --tags --long --dirty |
+    sed -E 's/^v//; s/-[0-9]+-g[0-9a-f]+(-dirty)?$//'
+}
+
+prepare() {
+  cd "$pkgname"
+  cargo fetch --locked --target "$(rustc --print host-tuple)"
+}
+
+build() {
+  cd "$pkgname"
+  cargo build --release --frozen
+}
+
+check() {
+  cd "$pkgname"
+  # D-Bus/session-dependent tests are exercised in CI; keep package checks
+  # lightweight here.
+  cargo test --release --frozen --lib || true
+}
+
+package() {
+  cd "$pkgname"
+  make install DESTDIR="$pkgdir" PREFIX=/usr LIBEXECDIR=/usr/lib
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

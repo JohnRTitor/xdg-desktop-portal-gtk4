@@ -41,7 +41,7 @@
           formatter = pkgs.nixfmt;
 
           packages = {
-            default = pkgs.callPackage ./contrib/build.nix { inherit version; };
+            default = pkgs.callPackage ./packaging/build.nix { inherit version; };
 
             xdg-desktop-portal-gtk4 = config.packages.default;
             xdg-desktop-portal-gtk4-tests = config.packages.default.override {

@@ -1,5 +1,5 @@
 name: "Setup Rust and Dependencies"
-description: "Sets up Rust, sccache, and native GTK4 dependencies"
+description: "Sets up sccache, Rust, and the native libraries xdg-desktop-portal-gtk4 links against"
 inputs:
   toolchain:
     description: "Rust toolchain to install"
@@ -12,13 +12,17 @@ inputs:
 runs:
   using: "composite"
   steps:
+    # sccache goes first so that every later step in the job resolves it through
+    # PATH. `sccache-action` without a `version` input installs the current release
     - name: Setup sccache
-      uses: mozilla-actions/sccache-action@fd02668681acd5f960e1372061bee5e3e987195c # v0.0.11
+      uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
     - name: Setup Rust
       uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # stable/v1
       with:
         toolchain: ${{ inputs.toolchain }}
         components: ${{ inputs.components }}
     - name: Install native dependencies
-      run: sudo apt-get update && sudo apt-get install -y libgtk-4-dev libgtk-4-1 dbus libgdk-pixbuf2.0-bin
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libgtk-4-dev libgtk-4-1 dbus libgdk-pixbuf2.0-bin
       shell: bash

@@ -3,14 +3,22 @@ name: CI
 on:
   pull_request:
     paths:
-      - "**.rs"
-      - "**Cargo.toml"
-      - "**Cargo.lock"
+      - '**.rs'
+      - '**Cargo.toml'
+      - '**Cargo.lock'
+      # This file lists itself, unlike `lint.yml`: the jobs here run in
+      # containers and against a toolchain this repository chooses, so a change
+      # to what installs that toolchain is itself worth running.
+      - '.github/workflows/ci.yml'
   push:
     paths:
-      - "**.rs"
-      - "**Cargo.toml"
-      - "**Cargo.lock"
+      - '**.rs'
+      - '**Cargo.toml'
+      - '**Cargo.lock'
+      - '.github/workflows/ci.yml'
+  # The `paths` filters above mean that a change touching none of them runs
+  # nothing at all. Dispatch runs the jobs whatever the filter says, and is
+  # also how to re-run something a newer push cancelled.
   workflow_dispatch:
 
 permissions:
@@ -19,17 +27,29 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
 
+# One group per ref, so a newer push to a branch cancels the run it supersedes
+# instead of both running to completion. The prefix is what keeps this from
+# cancelling `lint.yml` or `packaging.yml` outright.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     runs-on: ubuntu-latest
+    # Scoped to this job on purpose: this job installs sccache via
+    # `.github/actions/setup-rust`. Setting RUSTC_WRAPPER workflow-wide would
+    # make the `matrix-distro` containers below fail, because sccache is
+    # neither installed nor on PATH there.
     env:
       SCCACHE_GHA_ENABLED: "true"
       RUSTC_WRAPPER: "sccache"
     strategy:
+      fail-fast: false
       matrix:
         toolchain: ["1.92", stable, nightly]
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4.2.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/setup-rust
         with:
           toolchain: ${{ matrix.toolchain }}
@@ -51,8 +71,9 @@ jobs:
     runs-on: ubuntu-latest
     container:
       image: ${{ matrix.distro }}
+    # No sccache env here on purpose, see the note on the `test` job above.
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4.2.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install dependencies (Fedora)
         if: contains(matrix.distro, 'fedora')
         run: |

@@ -1,0 +1,5 @@
+usr/libexec/xdg-desktop-portal-gtk4
+usr/share/dbus-1/services/org.freedesktop.impl.portal.desktop.gtk4.service
+usr/lib/systemd/user/xdg-desktop-portal-gtk4.service
+usr/share/applications/xdg-desktop-portal-gtk4.desktop
+usr/share/xdg-desktop-portal/portals/gtk4.portal

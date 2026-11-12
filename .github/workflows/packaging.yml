@@ -1,0 +1,237 @@
+name: Packaging
+
+# Builds the distribution recipes under packaging/ with each distribution's own
+# packaging tools, in that distribution's own container image.
+
+on:
+  pull_request:
+    paths:
+      - "**.rs"
+      - "**Cargo.toml"
+      - "**Cargo.lock"
+      - "**.nix"
+      - "Makefile"
+      - "data/**"
+      - "locales/**"
+      - "packaging/**"
+      - "flake.lock"
+      - ".github/workflows/packaging.yml"
+  push:
+    paths:
+      - "**.rs"
+      - "**Cargo.toml"
+      - "**Cargo.lock"
+      - "**.nix"
+      - "Makefile"
+      - "data/**"
+      - "locales/**"
+      - "packaging/**"
+      - "flake.lock"
+      - ".github/workflows/packaging.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: packaging-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fedora-rpm:
+    name: Fedora RPM
+    runs-on: ubuntu-latest
+    container:
+      image: fedora:latest
+    steps:
+      - name: Install git and trust the workspace
+        run: |
+          dnf install -y git
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Cache the cargo registry
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: cargo-fedora-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: cargo-fedora-${{ runner.os }}-
+      - name: Install build dependencies
+        run: |
+          dnf install -y \
+            rpm-build make cargo rust gcc \
+            pkgconf-pkg-config gtk4-devel gdk-pixbuf2-devel \
+            dbus-daemon rpmlint
+      - name: Build the source and binary RPMs
+        run: |
+          set -euxo pipefail
+          version=$(sed -n '/^\[package\]/,/^\[/s/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -n1)
+          git rev-parse --git-dir >/dev/null || {
+            echo "::error::git cannot use the workspace: either the 'Install git and trust the workspace' step has to come before the checkout, or the workspace is still an untrusted safe.directory" >&2
+            exit 1
+          }
+          mkdir -p ~/rpmbuild/SOURCES
+          git archive --format=tar --prefix="xdg-desktop-portal-gtk4-$version/" HEAD \
+            | gzip -n -9 > ~/rpmbuild/SOURCES/xdg-desktop-portal-gtk4-$version.tar.gz
+          ./packaging/fedora/make-vendor-archive.sh
+          cp "packaging/fedora/xdg-desktop-portal-gtk4-$version-vendor.tar.xz" ~/rpmbuild/SOURCES/
+          rpmspec --parse packaging/fedora/xdg-desktop-portal-gtk4.spec
+          rpmbuild -bs packaging/fedora/xdg-desktop-portal-gtk4.spec
+          # --nocheck: D-Bus/session-dependent tests are exercised in CI jobs.
+          rpmbuild -ba --nocheck --noclean packaging/fedora/xdg-desktop-portal-gtk4.spec
+      - name: rpmlint
+        run: rpmlint packaging/fedora/xdg-desktop-portal-gtk4.spec
+      - name: List the package contents
+        run: |
+          set -euxo pipefail
+          for rpm in ~/rpmbuild/RPMS/*/xdg-desktop-portal-gtk4-*.rpm; do
+            rpm -qpl "$rpm"
+          done
+      - name: Show the source package metadata
+        run: |
+          rpm -qp --requires ~/rpmbuild/SRPMS/xdg-desktop-portal-gtk4-*.src.rpm
+          rpm -qp --changelog ~/rpmbuild/SRPMS/xdg-desktop-portal-gtk4-*.src.rpm
+
+  debian-deb:
+    name: Debian .deb
+    runs-on: ubuntu-latest
+    container:
+      image: debian:sid
+    steps:
+      - name: Install git and trust the workspace
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends git ca-certificates
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Cache the cargo registry
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            /home/builder/.cargo/registry
+            /home/builder/.cargo/git
+          key: cargo-debian-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: cargo-debian-${{ runner.os }}-
+      - name: Install build dependencies
+        run: |
+          apt-get install -y --no-install-recommends \
+            build-essential debhelper dpkg-dev \
+            cargo rustc make pkg-config \
+            libgtk-4-dev libgdk-pixbuf-2.0-dev dbus \
+            lintian
+      - name: Prepare an unprivileged build tree
+        id: tree
+        run: |
+          set -euxo pipefail
+          version=$(sed -n '/^\[package\]/,/^\[/s/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -n1)
+          git rev-parse --git-dir >/dev/null || {
+            echo "::error::git cannot use the workspace: either the 'Install git and trust the workspace' step has to come before the checkout, or the workspace is still an untrusted safe.directory" >&2
+            exit 1
+          }
+          useradd --create-home --shell /bin/bash builder
+          install -d -o builder -g builder /build
+          cp -a . "/build/xdg-desktop-portal-gtk4-$version"
+          git archive --format=tar --prefix="xdg-desktop-portal-gtk4-$version/" HEAD \
+            | gzip -n -9 > "/build/xdg-desktop-portal-gtk4_$version.orig.tar.gz"
+          chown -R builder:builder /build
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Build the source and binary packages
+        run: |
+          set -euxo pipefail
+          cd "/build/xdg-desktop-portal-gtk4-${{ steps.tree.outputs.version }}"
+          cp -r packaging/debian debian
+          ./debian/make-vendor.sh
+          chown -R builder:builder "/build/xdg-desktop-portal-gtk4-${{ steps.tree.outputs.version }}"
+          su builder -s /bin/bash -c "cd '/build/xdg-desktop-portal-gtk4-${{ steps.tree.outputs.version }}' && dpkg-buildpackage -us -uc --no-sign"
+      - name: Inspect the .deb
+        run: |
+          dpkg-deb --info /build/xdg-desktop-portal-gtk4_*.deb
+          dpkg-deb --contents /build/xdg-desktop-portal-gtk4_*.deb
+      - name: lintian
+        run: |
+          status=0
+          su builder -s /bin/bash -c \
+            'lintian --tag-display-limit 0 /build/xdg-desktop-portal-gtk4_*.changes' || status=$?
+          if [ "$status" -ge 2 ]; then
+            echo "::error::lintian exited with $status"
+            exit 1
+          fi
+
+  arch-pkg:
+    name: Arch package
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:latest
+    steps:
+      - name: Install git and trust the workspace
+        run: |
+          pacman -Syu --noconfirm --needed git
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install build dependencies
+        run: |
+          pacman -S --noconfirm --needed base-devel cargo gtk4 gdk-pixbuf2 pkgconf namcap
+      - name: Cache the cargo registry
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            /home/builder/.cargo/registry
+            /home/builder/.cargo/git
+          key: cargo-arch-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: cargo-arch-${{ runner.os }}-
+      - name: Prepare an unprivileged build tree
+        run: |
+          set -euxo pipefail
+          version=$(sed -n '/^\[package\]/,/^\[/s/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -n1)
+          git rev-parse --git-dir >/dev/null || {
+            echo "::error::git cannot use the workspace: either the 'Install git and trust the workspace' step has to come before the checkout, or the workspace is still an untrusted safe.directory" >&2
+            exit 1
+          }
+          useradd --create-home --shell /bin/bash builder
+          git tag --force "v$version"
+          install -d /mirror
+          git clone --bare --quiet . /mirror/xdg-desktop-portal-gtk4.git
+          chown -R builder:builder /mirror
+          install -d -o builder -g builder /build
+          cp packaging/archlinux/PKGBUILD /build/
+          chown -R builder:builder /build
+      - name: Build the package
+        run: |
+          cd /build
+          sed -i "s|git+\$url.git|git+file:///mirror/xdg-desktop-portal-gtk4.git|" PKGBUILD
+          su builder -s /bin/bash -c 'cd /build && makepkg -f --noconfirm'
+      - name: namcap
+        run: namcap /build/PKGBUILD
+      - name: List the package contents and metadata
+        run: |
+          set -euxo pipefail
+          cd /build
+          for pkg in xdg-desktop-portal-gtk4-*.pkg.tar.zst; do
+            echo "== $pkg"
+            bsdtar -tf "$pkg"
+            bsdtar -xOf "$pkg" .PKGINFO
+          done
+
+  nix:
+    name: Nix
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install and Setup Nix
+        uses: DeterminateSystems/determinate-nix-action@61cbfe2efc2d4e7a8a6d56967c3c1058e846c858 # v3.21.9
+
+      - name: Check Flake
+        run: nix flake check
+
+      - name: Build
+        run: nix build
+
+      - name: Build with DBus Tests
+        run: nix build .#xdg-desktop-portal-gtk4-tests
+
+      - name: Check formatting
+        run: nix develop --command cargo fmt --check
+
+      - name: Run clippy
+        run: nix develop --command cargo clippy --all-targets --all-features -- -D warnings

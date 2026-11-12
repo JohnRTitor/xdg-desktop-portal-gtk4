@@ -1,0 +1,54 @@
+#!/usr/bin/make -f
+# Debian packaging for xdg-desktop-portal-gtk4.
+#
+# Cargo never touches the network. Vendored crate sources arrive in
+# debian/vendor.tar.xz (see make-vendor.sh), CARGO_HOME is inside the build
+# directory, and every cargo invocation passes --locked --offline.
+
+export CARGO_HOME := $(CURDIR)/.cargo-home
+export CARGO_NET_OFFLINE := true
+export RUSTFLAGS := -C link-arg=-Wl,-z,relro -C link-arg=-Wl,-z,now
+
+VENDOR_ARCHIVE := debian/vendor.tar.xz
+VENDOR_DIR := $(CURDIR)/vendor
+
+%:
+	dh $@
+
+override_dh_auto_configure:
+	if [ ! -f "$(VENDOR_ARCHIVE)" ]; then \
+		echo "$(VENDOR_ARCHIVE) is missing; run debian/make-vendor.sh first." >&2; \
+		exit 1; \
+	fi
+	tar -xf "$(VENDOR_ARCHIVE)"
+	mkdir -p "$(CARGO_HOME)"
+	sed -e 's|@VENDOR_DIR@|$(VENDOR_DIR)|' vendor-config.toml \
+	    > "$(CARGO_HOME)/config.toml"
+	version=$$(sed -n '/^\[package\]/,/^\[/s/^version = "\([^"]*\)"/\1/p' \
+	    Cargo.toml | head -n1); \
+	expected=$$(dpkg-parsechangelog -SVersion \
+	    | sed -e 's/^[0-9][0-9]*://' -e 's/-[^-]*$$//'); \
+	if [ "$$version" != "$$expected" ]; then \
+		echo "Cargo.toml says $$version, debian/changelog says $$expected." >&2; \
+		exit 1; \
+	fi
+
+override_dh_auto_build:
+	cargo build --release --locked --offline --verbose
+
+override_dh_auto_test:
+	# D-Bus-dependent tests need a session bus and are exercised in CI.
+	:
+
+override_dh_auto_install:
+	rm -rf debian/tmp
+	$(MAKE) install DESTDIR=$(CURDIR)/debian/tmp PREFIX=/usr LIBEXECDIR=/usr/libexec
+	dh_auto_install
+
+override_dh_auto_clean:
+	dh_auto_clean
+	rm -rf "$(VENDOR_DIR)" vendor-config.toml "$(CARGO_HOME)"
+
+override_dh_clean:
+	dh_clean
+	rm -rf "$(VENDOR_DIR)" vendor-config.toml "$(CARGO_HOME)"
