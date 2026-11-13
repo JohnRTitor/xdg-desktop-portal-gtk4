@@ -24,7 +24,7 @@ let
     if lib.versionOlder gtk4.version "4.22.5" then
       gtk4.overrideAttrs (old: {
         patches = (old.patches or [ ]) ++ [
-          ../patches/0001-Revert-filechooserutils-Stop-using-pixbufs.patch
+          ../../patches/0001-Revert-filechooserutils-Stop-using-pixbufs.patch
         ];
       })
     else
@@ -42,12 +42,12 @@ rustPlatform.buildRustPackage {
   inherit version;
 
   src = lib.fileset.toSource {
-    root = ../.;
-    fileset = lib.fileset.fileFilter ({ hasExt, ... }: !hasExt "nix") ../.;
+    root = ../..;
+    fileset = lib.fileset.fileFilter ({ hasExt, ... }: !hasExt "nix") ../..;
   };
 
   cargoLock = {
-    lockFile = ../Cargo.lock;
+    lockFile = ../../Cargo.lock;
   };
 
   strictDeps = true;
