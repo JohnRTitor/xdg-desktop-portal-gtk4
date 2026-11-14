@@ -50,6 +50,9 @@ rustPlatform.buildRustPackage {
     lockFile = ../../Cargo.lock;
   };
 
+  # Install is handled in postInstall via `make install`.
+  dontCargoInstall = true;
+
   strictDeps = true;
   __structuredAttrs = true;
 
@@ -101,12 +104,16 @@ rustPlatform.buildRustPackage {
     fi
   '';
 
-  postInstall = ''
-    # Remove the default bin directory provided by rustPlatform
-    rm -rf $out/bin
+  installPhase = ''
+    runHook preInstall
 
     # Run our make install to correctly place the binary in libexec and copy data files
-    make install DESTDIR= PREFIX=$out CARGO_TARGET_DIR=target/${stdenv.hostPlatform.rust.cargoShortTarget}
+    make install \
+      DESTDIR= \
+      PREFIX=$out \
+      CARGO_TARGET_DIR=target/${stdenv.hostPlatform.rust.cargoShortTarget}
+
+    runHook postInstall
   '';
 
   meta = {
