@@ -6,7 +6,6 @@ Build-Depends:
  debhelper-compat (= 13),
  cargo,
  rustc (>= 1.92),
- make,
  pkgconf,
  libgtk-4-dev,
  libgdk-pixbuf-2.0-dev,
