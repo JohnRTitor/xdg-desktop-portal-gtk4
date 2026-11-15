@@ -50,9 +50,6 @@ rustPlatform.buildRustPackage {
     lockFile = ../../Cargo.lock;
   };
 
-  # Install is handled in postInstall via `make install`.
-  dontCargoInstall = true;
-
   strictDeps = true;
   __structuredAttrs = true;
 
@@ -68,11 +65,6 @@ rustPlatform.buildRustPackage {
 
   nativeCheckInputs = lib.optionals withDbusTests [ dbus ];
 
-  cargoTestFlags = lib.optionals withDbusTests [
-    "--"
-    "--test-threads=1"
-  ];
-
   preCheck = lib.optionalString withDbusTests ''
 
     # 1. Initialize a temporary directory for the D-Bus runtime socket
@@ -81,9 +73,9 @@ rustPlatform.buildRustPackage {
     # 2. Launch the system's dbus-daemon in the background and capture its address
     # We use --print-address=3 to cleanly output the connection string to a file descriptor
     dbus-daemon --config-file=${dbus}/share/dbus-1/session.conf \
-                --print-address=3 \
-                --nofork \
-                3>dbus-address.txt &
+      --print-address=3 \
+      --nofork \
+      3>dbus-address.txt &
 
     # Save the process ID so we can cleanly terminate it during postCheck
     DBUS_PID=$!
@@ -104,17 +96,13 @@ rustPlatform.buildRustPackage {
     fi
   '';
 
-  installPhase = ''
-    runHook preInstall
+  makeFlags = [
+    "PREFIX=${placeholder "out"}"
+    "CARGO_TARGET_DIR=target/${stdenv.hostPlatform.rust.cargoShortTarget}"
+  ];
 
-    # Run our make install to correctly place the binary in libexec and copy data files
-    make install \
-      DESTDIR= \
-      PREFIX=$out \
-      CARGO_TARGET_DIR=target/${stdenv.hostPlatform.rust.cargoShortTarget}
-
-    runHook postInstall
-  '';
+  # Installation is done automatically using make
+  dontCargoInstall = true;
 
   meta = {
     description = "A portal backend for xdg-desktop-portal using GTK4";
