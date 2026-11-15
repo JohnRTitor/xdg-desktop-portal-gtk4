@@ -52,13 +52,6 @@ dbus-run-session -- cargo test
 
 This is what CI does (see [`.github/workflows/ci.yml`](./.github/workflows/ci.yml)).
 
-> **Note:** Tests executing on the dbus daemon execute in multiple concurrent Tokio worker threads by default. However, some portals (like `SettingsPortal`) leverage GTK's glib main loop via `spawn_local`, which assumes thread exclusivity. This occasionally triggers a panic (`Failed to acquire ownership of main context, already acquired by another thread`).
-> 
-> To circumvent this, the dbus tests have to run sequentially:
-> ```bash
-> dbus-run-session -- cargo test -- --test-threads=1
-> ```
-
 ## Debugging
 
 Enable verbose logging to trace requests and observe GTK/Glib errors:
