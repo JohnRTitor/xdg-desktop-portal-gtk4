@@ -18,7 +18,7 @@
 
 You will need to build the project using Cargo, and then install the compiled binary alongside the necessary D-Bus service files and desktop portal configurations. 
 
-This project uses a custom `build.rs` script and `make` or similar standard tools are not strictly required if you just run `cargo run`, but for full installation, refer to your distribution's packaging guidelines or the project's packaging scripts (e.g., `PKGBUILD`).
+This project uses a custom [`build.rs`](./build.rs) script and `make` or similar standard tools are not strictly required if you just run `cargo run`, but for full installation, refer to your distribution's packaging guidelines or the project's packaging scripts (e.g., [`packaging/archlinux/PKGBUILD`](./packaging/archlinux/PKGBUILD)).
 
 ```bash
 # Build the binary

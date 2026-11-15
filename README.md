@@ -118,7 +118,7 @@ Disable default features in Cargo to build only what you need:
 cargo build --release --no-default-features --features "file_chooser,settings"
 ```
 
-_(See `Cargo.toml` for the full list of portal features)._
+_(See [`Cargo.toml`](./Cargo.toml) for the full list of portal features)._
 
 ## Development & Architecture
 
@@ -179,7 +179,7 @@ This architecture isolates I/O-bound D-Bus operations from the UI thread. Using 
 
 ### Additional Subsystems
 
-- **Internationalization (i18n):** Uses `rust-i18n`. Locales are stored in `locales/`.
+- **Internationalization (i18n):** Uses `rust-i18n`. Locales are stored in [`locales/`](./locales/).
 
 ## Acknowledgements & License
 

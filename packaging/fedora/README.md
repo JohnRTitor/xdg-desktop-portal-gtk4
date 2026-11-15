@@ -7,7 +7,7 @@ style of the `ananicy-rs` packaging recipes.
 ## Files
 
 - `xdg-desktop-portal-gtk4.spec`: RPM spec file.
-- `make-vendor-archive.sh`: generates `xdg-desktop-portal-gtk4-<version>-vendor.tar.xz`
+- [`make-vendor-archive.sh`](./make-vendor-archive.sh): generates `xdg-desktop-portal-gtk4-<version>-vendor.tar.xz`
   (Source1) from `Cargo.lock`.
 
 ## Local build outline

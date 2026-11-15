@@ -4,7 +4,7 @@ This document provides a comprehensive guide for manually testing the `xdg-deskt
 
 ## Overview
 
-- **Bus Name:** `org.freedesktop.impl.portal.desktop.gtk4` (or `org.freedesktop.impl.portal.desktop.gtk` if standard fallback is used, but this implementation registers the former based on the codebase `src/core/mod.rs`).
+- **Bus Name:** `org.freedesktop.impl.portal.desktop.gtk4` (or `org.freedesktop.impl.portal.desktop.gtk` if standard fallback is used, but this implementation registers the former based on the codebase [`src/core/mod.rs`](./src/core/mod.rs)).
 - **Object Path:** `/org/freedesktop/portal/desktop`
 - **Required Environment:** GTK4, D-Bus session bus.
 - **Required Services:** `org.freedesktop.portal.Desktop` (the frontend portal daemon) must be configured to use this backend.
@@ -50,7 +50,7 @@ To guarantee a bus is present, run the suite under a throwaway session bus:
 dbus-run-session -- cargo test
 ```
 
-This is what CI does (see `.github/workflows/ci.yml`).
+This is what CI does (see [`.github/workflows/ci.yml`](./.github/workflows/ci.yml)).
 
 > **Note:** Tests executing on the dbus daemon execute in multiple concurrent Tokio worker threads by default. However, some portals (like `SettingsPortal`) leverage GTK's glib main loop via `spawn_local`, which assumes thread exclusivity. This occasionally triggers a panic (`Failed to acquire ownership of main context, already acquired by another thread`).
 > 

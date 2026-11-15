@@ -21,7 +21,7 @@ These tests verify that the portal implementations properly register on the D-Bu
 To achieve reliable and isolated testing without requiring a full desktop environment or active Wayland/X11 session:
 
 1. **Isolated Session Bus:** Each test spawns its own temporary D-Bus session using `zbus::connection::Builder::session()?.serve_at(...)`. This prevents tests from interfering with each other or depending on the host's session bus.
-2. **Dummy UI Proxy:** Many portals interact with the host GTK environment via a `UiProxy` to spawn file choosers, app choosers, etc. In these tests, we inject a `dummy_proxy()` (defined in `common/mod.rs`) which simply drops the internal channel. When the portal attempts to send a UI request, it immediately receives a channel closed error, which the portal safely translates into a `fdo::Error::Failed` or cancellation response. This allows us to test the D-Bus deserialization and method invocation logic without actually opening GTK windows during CI.
+2. **Dummy UI Proxy:** Many portals interact with the host GTK environment via a `UiProxy` to spawn file choosers, app choosers, etc. In these tests, we inject a `dummy_proxy()` (defined in [`common/mod.rs`](./common/mod.rs)) which simply drops the internal channel. When the portal attempts to send a UI request, it immediately receives a channel closed error, which the portal safely translates into a `fdo::Error::Failed` or cancellation response. This allows us to test the D-Bus deserialization and method invocation logic without actually opening GTK windows during CI.
 
 ## Adding New Tests
 
