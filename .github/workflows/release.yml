@@ -9,10 +9,10 @@ permissions:
   contents: read
 
 jobs:
-  release:
+  binaries:
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
     env:
       SCCACHE_GHA_ENABLED: "true"
       RUSTC_WRAPPER: "sccache"
@@ -45,13 +45,50 @@ jobs:
           git archive --format=tar --prefix="xdg-desktop-portal-gtk4-$version/" "$tag" \
             | gzip -n -9 > "xdg-desktop-portal-gtk4-$version.tar.gz"
           sha256sum "xdg-desktop-portal-gtk4-$version.tar.gz" > "xdg-desktop-portal-gtk4-$version.tar.gz.sha256"
-      - name: Release
-        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
+      - name: Upload binaries
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          files: |
+          name: generic-linux
+          path: |
             xdg-desktop-portal-gtk4-linux-x86_64.tar.gz
             xdg-desktop-portal-gtk4-linux-x86_64.tar.gz.sha256
             xdg-desktop-portal-gtk4-[0-9]*.tar.gz
             xdg-desktop-portal-gtk4-[0-9]*.tar.gz.sha256
+          if-no-files-found: error
+
+  # Builds the same packages as a normal Packaging run. The called workflow's
+  # upload steps are shared with the PR/push runs, so their artifacts land in
+  # this run and can be collected by the release job below.
+  packages:
+    uses: ./.github/workflows/packaging.yml
+
+  release:
+    needs: [binaries, packages]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      # Each artifact keeps its own subdirectory, so identically named files
+      # from different jobs cannot overwrite one another.
+      - name: Download artifacts
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          path: dist
+      - name: Release
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
+        with:
+          working_directory: dist
+          fail_on_unmatched_files: true
+          # Scope the RPM glob to RPMS/: the artifact also holds SRPMS/, which
+          # is a source package and must not be published as a release asset.
+          files: |
+            generic-linux/xdg-desktop-portal-gtk4-linux-x86_64.tar.gz
+            generic-linux/xdg-desktop-portal-gtk4-linux-x86_64.tar.gz.sha256
+            generic-linux/xdg-desktop-portal-gtk4-[0-9]*.tar.gz
+            generic-linux/xdg-desktop-portal-gtk4-[0-9]*.tar.gz.sha256
+            fedora-rpm/RPMS/**/*.rpm
+            debian-deb/*.deb
+            arch-pkg/*.pkg.tar.zst
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

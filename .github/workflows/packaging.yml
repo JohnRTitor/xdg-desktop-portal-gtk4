@@ -4,6 +4,9 @@ name: Packaging
 # packaging tools, in that distribution's own container image.
 
 on:
+  # Reusable so the tag-triggered Release workflow can build these same
+  # packages and publish them alongside the existing release tarballs.
+  workflow_call:
   pull_request:
     paths:
       - "**.rs"
@@ -17,6 +20,11 @@ on:
       - "flake.lock"
       - ".github/workflows/packaging.yml"
   push:
+    # Explicitly branch-only: path filters are ignored for tag pushes, so
+    # without this a tag would also start a standalone run alongside the
+    # Release workflow's reusable call (same concurrency group).
+    branches:
+      - '**'
     paths:
       - "**.rs"
       - "**Cargo.toml"
@@ -92,6 +100,14 @@ jobs:
         run: |
           rpm -qp --requires ~/rpmbuild/SRPMS/xdg-desktop-portal-gtk4-*.src.rpm
           rpm -qp --changelog ~/rpmbuild/SRPMS/xdg-desktop-portal-gtk4-*.src.rpm
+      - name: Upload packages
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: fedora-rpm
+          path: |
+            ~/rpmbuild/RPMS/**/xdg-desktop-portal-gtk4-*.rpm
+            ~/rpmbuild/SRPMS/xdg-desktop-portal-gtk4-*.src.rpm
+          if-no-files-found: error
 
   debian-deb:
     name: Debian .deb
@@ -157,6 +173,18 @@ jobs:
             echo "::error::lintian exited with $status"
             exit 1
           fi
+      - name: Upload packages
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: debian-deb
+          path: |
+            /build/xdg-desktop-portal-gtk4_*.deb
+            /build/xdg-desktop-portal-gtk4_*.dsc
+            /build/xdg-desktop-portal-gtk4_*.debian.tar.*
+            /build/xdg-desktop-portal-gtk4_*.orig.tar.gz
+            /build/xdg-desktop-portal-gtk4_*.buildinfo
+            /build/xdg-desktop-portal-gtk4_*.changes
+          if-no-files-found: error
 
   arch-pkg:
     name: Arch package
@@ -212,6 +240,12 @@ jobs:
             bsdtar -tf "$pkg"
             bsdtar -xOf "$pkg" .PKGINFO
           done
+      - name: Upload packages
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: arch-pkg
+          path: /build/xdg-desktop-portal-gtk4-*.pkg.tar.zst
+          if-no-files-found: error
 
   nix:
     name: Nix
