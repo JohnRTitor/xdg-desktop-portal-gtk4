@@ -101,8 +101,21 @@ mod tests {
             never_shown.0, 2,
             "a dialog that never opened was not refused by anyone"
         );
+        let turned_down: Response<DummyResult> =
+            Response::from_ui_error(crate::gui::UiError::Refused);
+        assert_eq!(
+            turned_down.0, 2,
+            "a portal refusal without a dialog is not a user cancellation"
+        );
+        let failed: Response<DummyResult> = Response::from_ui_error(crate::gui::UiError::Failed);
+        assert_eq!(
+            failed.0, 2,
+            "a failed job after approval is not a cancellation"
+        );
 
         assert_eq!(refused.1.0, 0);
         assert_eq!(never_shown.1.0, 0);
+        assert_eq!(turned_down.1.0, 0);
+        assert_eq!(failed.1.0, 0);
     }
 }

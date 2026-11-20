@@ -1,3 +1,5 @@
+use std::os::fd::{AsRawFd, OwnedFd};
+
 use {
     crate::gui::{PortalDispatcher, UiError, UiProxy},
     gtk4::{
@@ -69,6 +71,38 @@ pub fn claim_token<T>(
             Some((_, job)) => TokenClaim::Granted(job),
             None => TokenClaim::Unknown,
         },
+    }
+}
+
+/// Non-consuming lookup used by [`PrintTokenProbe`].
+///
+/// Generic over the job payload so it can be exercised in tests without
+/// constructing the `!Send` GTK objects held by the real cache.
+fn token_is_cached<T>(jobs: &HashMap<u32, (Arc<str>, T)>, token: u32) -> bool {
+    jobs.contains_key(&token)
+}
+
+/// Reports whether `token` is parked in the `PRINT_JOBS` cache, without claiming it.
+///
+/// `Print` uses this to tell a job prepared by an earlier `PreparePrint` from a
+/// caller (such as `GtkPrintDialog` with no setup) that expects the dialog to be
+/// shown at print time. Ownership is still checked by [`claim_token`] when the
+/// job is executed, so probing never authorises a foreign token.
+pub struct PrintTokenProbe {
+    pub token: u32,
+}
+
+impl PrintTokenProbe {
+    pub async fn run(self, proxy: &UiProxy) -> Result<bool, UiError> {
+        crate::gui::run_ui_task(
+            proxy,
+            move |send, _, _| {
+                let exists = PRINT_JOBS.with(|jobs| token_is_cached(&jobs.borrow(), self.token));
+                let _ = send.dispatch(Ok(exists));
+            },
+            || UiError::Closed,
+        )
+        .await
     }
 }
 
@@ -253,12 +287,33 @@ impl PrintUi {
     }
 }
 
+/// Owns the duplicate of the print source fd until the GTK job is done.
+///
+/// GTK never closes a descriptor passed to `set_source_fd`, and gtk-rs hands
+/// `print_job.send()` an `Fn` callback, so the close is an idempotent
+/// `Option::take()` performed from that callback.
+struct JobFd(RefCell<Option<OwnedFd>>);
+
+impl JobFd {
+    fn new(fd: OwnedFd) -> Self {
+        Self(RefCell::new(Some(fd)))
+    }
+
+    /// Close the descriptor. Safe to call more than once.
+    fn close(&self) {
+        self.0.borrow_mut().take();
+    }
+}
+
 pub struct ExecutePrintUi {
     pub token: u32,
     /// The application submitting the job. A token is only valid for the
     /// application that obtained it from `PreparePrint`.
     pub app_id: String,
-    pub fd: i32,
+    /// An owned duplicate of the fd supplied with `Print`. GTK does not close
+    /// descriptors handed to `set_source_fd`, so this copy is closed by the
+    /// job's completion callback.
+    pub fd: OwnedFd,
 }
 
 impl ExecutePrintUi {
@@ -276,7 +331,7 @@ impl ExecutePrintUi {
             TokenClaim::Granted(job) => job,
             TokenClaim::Unknown => {
                 tracing::warn!("Received print request for unknown token: {}", self.token);
-                let _ = send.dispatch(Err(UiError::Rejected));
+                let _ = send.dispatch(Err(UiError::Refused));
                 return;
             }
             TokenClaim::WrongOwner(owner) => {
@@ -285,7 +340,7 @@ impl ExecutePrintUi {
                     self.token,
                     self.app_id
                 );
-                let _ = send.dispatch(Err(UiError::Rejected));
+                let _ = send.dispatch(Err(UiError::Refused));
                 return;
             }
         };
@@ -299,20 +354,29 @@ impl ExecutePrintUi {
             &cached.settings,
             &cached.page_setup,
         );
-        if let Err(e) = print_job.set_source_fd(self.fd) {
+        if let Err(e) = print_job.set_source_fd(self.fd.as_raw_fd()) {
             tracing::error!("Failed to set source fd for print job: {}", e);
-            let _ = send.dispatch(Err(UiError::Rejected));
-            return;
+            let _ = send.dispatch(Err(UiError::Refused));
+            return; // self.fd is dropped here, closing our copy
         }
 
+        // Keep our copy alive until GTK is done reading it, then close it.
+        // gtk-rs drops the boxed `Fn` callback via its destroy notify when the
+        // job completes, so the fd is closed exactly once on that path too.
+        let source_fd = JobFd::new(self.fd);
         print_job.send(move |_, err| {
-            if let Err(e) = err {
-                tracing::error!("Failed to send print job: {}", e);
-            } else {
-                tracing::info!("Print job successfully sent to CUPS");
+            source_fd.close();
+            match err {
+                Ok(()) => {
+                    tracing::info!("Print job successfully sent to CUPS");
+                    let _ = send.dispatch(Ok(()));
+                }
+                Err(e) => {
+                    tracing::error!("Failed to send print job: {}", e);
+                    let _ = send.dispatch(Err(UiError::Failed));
+                }
             }
         });
-        let _ = send.dispatch(Ok(()));
     }
 }
 
@@ -338,6 +402,73 @@ mod tests {
         assert!(matches!(claim, TokenClaim::Unknown));
         // The unrelated entry must survive.
         assert_eq!(jobs.len(), 1);
+    }
+
+    /// The fd copy must outlive GTK's asynchronous read and be closed exactly
+    /// once when the job completes, even if the callback fires twice.
+    #[test]
+    fn job_fd_closes_the_descriptor_exactly_once() {
+        use std::os::fd::AsFd;
+
+        let file = tempfile::tempfile().unwrap();
+        let dup = rustix::io::dup(file.as_fd()).unwrap();
+        let raw = dup.as_raw_fd();
+
+        assert!(
+            unsafe { libc::fcntl(raw, libc::F_GETFD) } >= 0,
+            "the descriptor must be open while the job owns it"
+        );
+
+        let job_fd = JobFd::new(dup);
+        job_fd.close();
+        assert_eq!(
+            unsafe { libc::fcntl(raw, libc::F_GETFD) },
+            -1,
+            "the descriptor must be closed after the callback"
+        );
+        job_fd.close(); // a second callback must not close anything again
+    }
+
+    /// Exercise the `run_ui_task` wrapper itself, not just its inner lookup:
+    /// the probe must dispatch a real boolean and leave the cache untouched.
+    #[tokio::test]
+    async fn token_probe_dispatches_a_real_answer() {
+        use crate::gui::UiProxy;
+
+        PRINT_JOBS.with(|jobs| jobs.borrow_mut().clear());
+        let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
+        let proxy = UiProxy {
+            context: gtk4::glib::MainContext::default(),
+            sender,
+        };
+
+        let probe = tokio::spawn(async move { PrintTokenProbe { token: 7 }.run(&proxy).await });
+        let task = receiver
+            .recv()
+            .await
+            .expect("the probe must be queued for the GTK thread");
+        task();
+
+        assert!(!probe.await.unwrap().unwrap(), "token 7 is not cached");
+        assert!(
+            PRINT_JOBS.with(|jobs| jobs.borrow().is_empty()),
+            "a probe must not insert or remove cache entries"
+        );
+    }
+
+    /// The `Print` call probes before it claims. A probe must leave the job in
+    /// place so the subsequent claim (or the rightful owner's claim) still
+    /// succeeds.
+    #[test]
+    fn probing_a_token_does_not_consume_it() {
+        let mut jobs = jobs_with(7, "org.example.A", 99);
+        assert!(token_is_cached(&jobs, 7));
+        assert!(!token_is_cached(&jobs, 8));
+        assert_eq!(jobs.len(), 1, "a probe must not remove the cached job");
+        assert!(matches!(
+            claim_token(&mut jobs, 7, "org.example.A"),
+            TokenClaim::Granted(99)
+        ));
     }
 
     #[test]

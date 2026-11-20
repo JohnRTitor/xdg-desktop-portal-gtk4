@@ -10,12 +10,12 @@ fn flatten_dict(dict: HashMap<String, Value<'_>>) -> HashMap<String, String> {
 }
 
 use {
-    super::gui::{ExecutePrintUi, PrintUi},
+    super::gui::{ExecutePrintUi, PrintTokenProbe, PrintUi},
     crate::{
         core::{request::run_request, response::Response},
         gui::UiProxy,
     },
-    std::collections::HashMap,
+    std::{collections::HashMap, os::fd::AsFd},
     zbus::{
         ObjectServer, fdo, interface,
         message::Header,
@@ -122,27 +122,72 @@ impl Print {
     async fn print_impl(
         &self,
         app_id: String,
-        _parent_window: String,
-        _title: String,
+        parent_window: String,
+        title: String,
         fd: Fd<'_>,
         options: PrintOptions,
     ) -> Response<PrintResults> {
-        use std::os::fd::AsRawFd;
-        let token = options.token.unwrap_or(0);
+        let mut token = options.token.unwrap_or(0);
 
-        // The file descriptor provided by the portal daemon must be passed to the print system.
-        // The D-Bus library (zbus) internally dup's the fd during deserialization.
-        // Because we process this on the GTK main thread synchronously (awaiting the channel),
-        // it is safe to extract the raw_fd here and pass it down.
-        let raw_fd = fd.as_raw_fd();
+        // A token from `PreparePrint` authorises a job cached there. Callers that
+        // skip that step (`GtkPrintDialog::print_file()` passes no setup, so GTK
+        // sends `token = 0`) expect `Print` to present the dialog itself, the way
+        // the GTK3 and GNOME backends do. The probe does not consume a token; a
+        // foreign token is still refused by `claim_token` when the job runs.
+        // Token 0 skips the probe entirely: it is the "no token" sentinel, not
+        // something that could name a prepared job. A real probe failure is an
+        // error, not evidence that the caller skipped `PreparePrint`.
+        let exists = if token == 0 {
+            false
+        } else {
+            match (PrintTokenProbe { token }).run(&self.proxy).await {
+                Ok(exists) => exists,
+                Err(e) => {
+                    tracing::error!(error = %e, "Print token probe failed");
+                    return Response::from_ui_error(e);
+                }
+            }
+        };
 
-        // A token is only valid for the application that obtained it. Without
-        // this check any app could consume another app's cached printer and
-        // settings by guessing a token.
+        if !exists {
+            match (PrintUi {
+                app_id: app_id.clone(),
+                parent_window,
+                activation_token: options.activation_token,
+                title,
+                settings: HashMap::new(),
+                page_setup: HashMap::new(),
+            })
+            .run(&self.proxy)
+            .await
+            {
+                Ok(result) => token = result.token,
+                Err(e) => {
+                    tracing::error!(error = %e, "Print dialog failed");
+                    return Response::from_ui_error(e);
+                }
+            }
+        }
+
+        // zvariant borrows the received fd from the D-Bus message, which zbus
+        // closes as soon as this handler returns. GTK's backend reads the fd
+        // asynchronously after `send()`, so hand the job its own descriptor and
+        // let `ExecutePrintUi` close it once the job is finished. GTK does not
+        // close the descriptor it is given. Use a CLOEXEC duplicate, like the
+        // fd zbus received, so a concurrently spawned helper cannot inherit it
+        // during a long print job.
+        let source_fd = match rustix::io::fcntl_dupfd_cloexec(fd.as_fd(), 0) {
+            Ok(fd) => fd,
+            Err(e) => {
+                tracing::error!(error = %e, "Failed to duplicate print source fd");
+                return Response::other();
+            }
+        };
+
         let res = ExecutePrintUi {
             token,
             app_id,
-            fd: raw_fd,
+            fd: source_fd,
         }
         .run(&self.proxy)
         .await;
@@ -164,6 +209,9 @@ impl Print {
 ///    It returns a unique token to the frontend.
 /// 2. `Print`: The frontend provides the document data via a file descriptor, along with the token.
 ///    The portal matches the token to the cached print settings and submits the job to CUPS.
+///
+/// A caller that skips `PreparePrint` sends `token = 0` (as `GtkPrintDialog` does when given no
+/// setup); `Print` then presents the dialog itself and prints with the resulting job.
 #[interface(name = "org.freedesktop.impl.portal.Print")]
 impl Print {
     #[allow(clippy::too_many_arguments)]
