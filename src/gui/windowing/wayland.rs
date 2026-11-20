@@ -11,7 +11,7 @@ pub fn set_wayland_parent(widget: &impl IsA<Widget>, parent_window: &str) {
         return;
     };
     let Some(toplevel) = surface.downcast_ref::<WaylandToplevel>() else {
-        tracing::warn!("Tried to set Wayland parent, but surface is not WaylandToplevel");
+        tracing::debug!("Tried to set Wayland parent, but surface is not WaylandToplevel");
         return;
     };
     toplevel.set_transient_for_exported(parent_window);

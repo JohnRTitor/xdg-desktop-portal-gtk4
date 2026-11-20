@@ -385,7 +385,7 @@ impl ExecutePrintUi {
             source_fd.close();
             match err {
                 Ok(()) => {
-                    tracing::info!("Print job sent successfully");
+                    tracing::debug!("Print job sent successfully");
                     let _ = send.dispatch(Ok(()));
                 }
                 Err(e) => {

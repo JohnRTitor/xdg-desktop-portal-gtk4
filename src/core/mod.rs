@@ -188,6 +188,7 @@ impl Portal {
             .request_name_with_flags(NAME, flags)
             .await
             .map_err(PortalError::AcquireName)?;
+        tracing::info!("Portal ready on {NAME}");
         Ok(Self { _session: session })
     }
 }

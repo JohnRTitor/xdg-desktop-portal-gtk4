@@ -52,7 +52,7 @@ pub fn setup_window<W: IsA<gtk4::Window> + IsA<Widget>>(
                 window.realize();
                 set_wayland_parent(window.upcast_ref::<Widget>(), &handle);
             } else {
-                tracing::warn!(
+                tracing::debug!(
                     "Wayland parent handle provided but portal is not running on Wayland."
                 );
             }
@@ -78,7 +78,7 @@ pub fn setup_window<W: IsA<gtk4::Window> + IsA<Widget>>(
                     }
 
                     let Some(x11_display) = display_opt.as_ref() else {
-                        tracing::warn!("Failed to open X11 display for XWayland fallback.");
+                        tracing::debug!("Failed to open X11 display for XWayland fallback.");
                         return;
                     };
 
@@ -87,7 +87,7 @@ pub fn setup_window<W: IsA<gtk4::Window> + IsA<Widget>>(
                     set_x11_parent(window.upcast_ref::<Widget>(), xid);
                 });
             } else {
-                tracing::warn!("X11 parent handle provided but portal backend is unsupported.");
+                tracing::debug!("X11 parent handle provided but portal backend is unsupported.");
             }
         }
     }

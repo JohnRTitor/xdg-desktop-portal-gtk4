@@ -173,7 +173,7 @@ impl AppChooser {
         handle: OwnedObjectPath,
         choices: Vec<String>,
     ) -> fdo::Result<()> {
-        tracing::info!("UpdateChoices called for handle: {}", handle.as_str());
+        tracing::debug!("UpdateChoices called for handle: {}", handle.as_str());
         // A handle with no live dialog means the frontend and the backend have
         // lost track of each other. Say so instead of reporting success, which
         // hid exactly this desynchronisation.

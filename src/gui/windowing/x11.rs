@@ -14,7 +14,7 @@ pub fn set_x11_parent(widget: &impl IsA<Widget>, parent_xid: u64) {
     };
 
     let Some(x11_surface) = surface.downcast_ref::<X11Surface>() else {
-        tracing::warn!("Tried to set X11 parent, but surface is not X11Surface");
+        tracing::debug!("Tried to set X11 parent, but surface is not X11Surface");
         return;
     };
 
@@ -25,13 +25,13 @@ pub fn set_x11_parent(widget: &impl IsA<Widget>, parent_xid: u64) {
 
     // Safely look up the GDK surface representation from the raw parent XID
     let Some(parent_surface) = X11Surface::lookup_for_display(&display, parent_xid) else {
-        tracing::error!("Failed to resolve GDK surface for parent XID: {parent_xid}");
+        tracing::debug!("Failed to resolve GDK surface for parent XID: {parent_xid}");
         return;
     };
 
     // Set the transient parent using safe GDK4 methods
     let Some(toplevel) = surface.downcast_ref::<gtk4::gdk::Toplevel>() else {
-        tracing::warn!("Tried to set X11 parent, but surface is not a Toplevel");
+        tracing::debug!("Tried to set X11 parent, but surface is not a Toplevel");
         return;
     };
 
