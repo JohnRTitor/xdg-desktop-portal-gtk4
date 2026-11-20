@@ -32,6 +32,10 @@ pub fn setup_window<W: IsA<gtk4::Window> + IsA<Widget>>(
     }
 
     let Some(identifier) = WindowIdentifier::parse(parent_handle) else {
+        tracing::debug!(
+            parent_handle,
+            "Invalid parent window handle; dialog will be unparented"
+        );
         return;
     };
 

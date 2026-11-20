@@ -75,8 +75,14 @@ where
             v = f => v,
             // Requested by the frontend, or the caller vanished. Either way the
             // work never completed, which is "other", not "the user cancelled".
-            _ = notify.notified() => Response::other(),
-            _ = cancel_notify.notified() => Response::other(),
+            _ = notify.notified() => {
+                tracing::debug!(%handle, "Request.Close received before portal work completed");
+                Response::other()
+            }
+            _ = cancel_notify.notified() => {
+                tracing::debug!(%handle, %app_id, "Request cancelled: caller disconnected");
+                Response::other()
+            }
         },
     };
 

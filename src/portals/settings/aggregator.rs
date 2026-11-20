@@ -104,14 +104,23 @@ impl SettingsAggregator {
 
     fn read_gsettings(state: &mut SettingsState) {
         let Some(source) = SettingsSchemaSource::default() else {
+            tracing::debug!("Settings: no default GSettings schema source");
             return;
         };
         if source.lookup(NS_GNOME_DESKTOP_INTERFACE, true).is_none() {
+            tracing::debug!(
+                schema = NS_GNOME_DESKTOP_INTERFACE,
+                "Settings: schema not installed"
+            );
             return;
         }
 
         let settings = Settings::new(NS_GNOME_DESKTOP_INTERFACE);
         let Some(schema) = settings.settings_schema() else {
+            tracing::debug!(
+                schema = NS_GNOME_DESKTOP_INTERFACE,
+                "Settings: schema has no settings object"
+            );
             return;
         };
 
@@ -154,10 +163,12 @@ impl SettingsAggregator {
             .load_from_file(&config_path, KeyFileFlags::NONE)
             .is_err()
         {
+            tracing::debug!(path = %config_path.display(), "Settings: could not read GTK settings.ini");
             return;
         }
 
         let Ok(keys) = key_file.keys("Settings") else {
+            tracing::debug!(path = %config_path.display(), "Settings: settings.ini has no [Settings] group");
             return;
         };
 
@@ -194,6 +205,7 @@ impl SettingsAggregator {
             .load_from_file(&config_path, KeyFileFlags::NONE)
             .is_err()
         {
+            tracing::debug!(path = %config_path.display(), "Settings: could not read kdeglobals");
             return;
         }
 

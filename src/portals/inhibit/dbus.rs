@@ -401,9 +401,13 @@ impl Inhibit {
 
             tokio::spawn(async move {
                 let Some(proxy) = ss_proxy_opt else {
+                    tracing::debug!(
+                        "No screen-saver proxy; monitor sessions cannot see ActiveChanged"
+                    );
                     return;
                 };
                 let Ok(mut stream) = proxy.receive_active_changed().await else {
+                    tracing::debug!("Could not subscribe to screen-saver ActiveChanged signal");
                     return;
                 };
 

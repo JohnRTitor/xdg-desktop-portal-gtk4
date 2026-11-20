@@ -43,6 +43,7 @@ impl<T> PortalDispatcher<T> for UiDispatcher<T> {
         {
             return tx.send(data);
         }
+        tracing::debug!("UI result channel already consumed or receiver dropped");
         Err(data)
     }
 }

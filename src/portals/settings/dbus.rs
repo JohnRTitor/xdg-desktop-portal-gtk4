@@ -146,6 +146,7 @@ impl SettingsPortal {
                         };
 
                         let Ok(monitor) = monitor else {
+                            tracing::debug!(path = %path.display(), "Could not monitor settings config path");
                             continue;
                         };
 
@@ -240,6 +241,7 @@ impl SettingsPortal {
         if let Some(val) = state.get(&namespace, &key) {
             Ok(val)
         } else {
+            tracing::debug!(%namespace, %key, "Setting not found");
             Err(fdo::Error::Failed("Setting not found".into()))
         }
     }

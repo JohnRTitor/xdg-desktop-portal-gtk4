@@ -149,6 +149,13 @@ impl Print {
             }
         };
 
+        tracing::debug!(
+            token,
+            prepared = exists,
+            showing_dialog = !exists,
+            "Print token resolved"
+        );
+
         if !exists {
             match (PrintUi {
                 app_id: app_id.clone(),

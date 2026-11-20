@@ -188,6 +188,7 @@ impl PrintUi {
         dialog.connect_response(move |d, r| {
             let res = (|| -> Result<PrintResult, UiError> {
                 if r != ResponseType::Ok {
+                    tracing::debug!(response = ?r, "Print dialog dismissed");
                     return Err(UiError::Rejected);
                 }
 
@@ -226,6 +227,12 @@ impl PrintUi {
                 let settings_obj = d.settings();
                 let page_setup_obj = d.page_setup();
 
+                tracing::debug!(
+                    printer = %printer.name(),
+                    output_uri = ?settings_obj.get("output-uri"),
+                    "Print dialog accepted; job cached"
+                );
+
                 // Generate a token to identify this job in the subsequent
                 // `Print` call. Zero is reserved by the contract as "no token",
                 // and a token must not collide with one already cached, or a
@@ -247,6 +254,7 @@ impl PrintUi {
                 // If it takes longer or crashes, we evict the cached job to prevent a memory leak.
                 let source_id =
                     glib::timeout_add_seconds_local_once(PRINT_TOKEN_TIMEOUT_SECS, move || {
+                        tracing::debug!(token = token_clone, "Cached print job expired");
                         PRINT_JOBS.with(|jobs| {
                             jobs.borrow_mut().remove(&token_clone);
                         });
@@ -348,6 +356,15 @@ impl ExecutePrintUi {
         // Cancel the eviction timeout since we are now executing the print job
         cached.source_id.remove();
 
+        tracing::debug!(
+            token = self.token,
+            printer = %cached.printer.name(),
+            output_uri = ?cached.settings.get("output-uri"),
+            output_basename = ?cached.settings.get("output-basename"),
+            source_fd = self.fd.as_raw_fd(),
+            "Submitting print job"
+        );
+
         let print_job = gtk4::PrintJob::new(
             &cached.title,
             &cached.printer,
@@ -368,7 +385,7 @@ impl ExecutePrintUi {
             source_fd.close();
             match err {
                 Ok(()) => {
-                    tracing::info!("Print job successfully sent to CUPS");
+                    tracing::info!("Print job sent successfully");
                     let _ = send.dispatch(Ok(()));
                 }
                 Err(e) => {
