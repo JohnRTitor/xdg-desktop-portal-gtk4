@@ -52,10 +52,19 @@ pub struct TempSoundFile {
 
 impl Drop for TempSoundFile {
     fn drop(&mut self) {
-        let path = self.path.clone();
-        spawn_blocking(move || {
-            let _ = std::fs::remove_file(&path);
-        });
+        // The last `Arc` can be dropped on a thread with no Tokio runtime (a
+        // shutdown path, a synchronous caller, a plain unit test). `spawn_blocking`
+        // panics in that case, and this daemon builds with `panic = "abort"`, so
+        // a stray drop would take down the whole process. Unlinking one file is
+        // cheap: do it inline when there is no runtime to hand it to.
+        if tokio::runtime::Handle::try_current().is_ok() {
+            let path = self.path.clone();
+            spawn_blocking(move || {
+                let _ = std::fs::remove_file(&path);
+            });
+        } else {
+            let _ = std::fs::remove_file(&self.path);
+        }
     }
 }
 
@@ -311,6 +320,46 @@ fn register_notification(
         }),
     );
     key
+}
+
+/// Applies the outcome of a `Notify` call to the two routing maps.
+///
+/// Retiring the previous state *before* the call meant a failed `Notify` left
+/// the still-live host notification with no reverse entry (so its actions could
+/// no longer be routed) and dropped its staged sound file early, while the
+/// forward map kept pointing at the old host ID. Nothing is changed on error.
+///
+/// A server may reuse `replaces_id` as the new ID. In that case
+/// [`register_notification`] overwrites the old reverse entry itself, retiring
+/// the old sound file; removing the old entry as well would delete the one we
+/// just registered. Only a genuinely different ID needs an explicit removal.
+fn apply_notify_result<E>(
+    active: &ActiveNotifications,
+    reverse: &ReverseMapType,
+    replaces_id: u32,
+    app_id: &str,
+    portal_id: &str,
+    result: Result<u32, E>,
+    action_targets: HashMap<String, OwnedVariant>,
+    default_action: Option<String>,
+    sound_file: Option<Arc<TempSoundFile>>,
+) {
+    let Ok(new_id) = result else {
+        return;
+    };
+    if replaces_id != 0 && replaces_id != new_id {
+        reverse.lock().remove(&replaces_id);
+    }
+    register_notification(
+        active,
+        reverse,
+        app_id,
+        portal_id,
+        new_id,
+        action_targets,
+        default_action,
+        sound_file,
+    );
 }
 
 /// Retires a notification the host daemon reported closed.
@@ -653,34 +702,32 @@ impl Notification {
         if let Some(proxy) = &self.proxy {
             let replaces_id = active_id(&self.active_notifications, &app_id, &id).unwrap_or(0);
 
-            if replaces_id != 0 {
-                self.reverse_map.lock().remove(&replaces_id);
-            }
-
-            if let Ok(new_id) = proxy
-                .notify(
-                    &app_id,
-                    replaces_id,
-                    &icon_name,
-                    title,
-                    body,
-                    &actions,
-                    &hints,
-                    -1,
-                )
-                .await
-            {
-                register_notification(
-                    &self.active_notifications,
-                    &self.reverse_map,
-                    &app_id,
-                    &id,
-                    new_id,
-                    action_targets,
-                    notification.default_action.clone(),
-                    sound_file,
-                );
-            }
+            // `apply_notify_result` is a no-op on error: the host is still
+            // showing the old notification, so its routing state and sound file
+            // must stay intact. `AddNotification` has no reply value, so there
+            // is no `Response::other()` to return here.
+            apply_notify_result(
+                &self.active_notifications,
+                &self.reverse_map,
+                replaces_id,
+                &app_id,
+                &id,
+                proxy
+                    .notify(
+                        &app_id,
+                        replaces_id,
+                        &icon_name,
+                        title,
+                        body,
+                        &actions,
+                        &hints,
+                        -1,
+                    )
+                    .await,
+                action_targets,
+                notification.default_action.clone(),
+                sound_file,
+            );
         }
 
         let server_clone = server.clone();
@@ -861,6 +908,22 @@ fn platform_data(activation_token: Option<String>) -> HashMap<&'static str, Vari
     data
 }
 
+/// Whether a stored activation token still belongs to the notification that
+/// currently owns the host ID.
+///
+/// Host IDs can be reused: a replacement may keep the same ID while swapping
+/// the reverse-map target. A token received before that swap was issued for the
+/// old notification and must not be passed to the new one's action. Each token
+/// is stored together with the target it was issued for, and identity (rather
+/// than value) comparison is used because two registrations with identical
+/// fields still represent different notifications.
+fn token_belongs_to(
+    issued_for: &Arc<NotificationTarget>,
+    current: Option<&Arc<NotificationTarget>>,
+) -> bool {
+    current.is_some_and(|current| Arc::ptr_eq(issued_for, current))
+}
+
 /// Listens to the notification server's `ActivationToken`, `ActionInvoked` and
 /// `NotificationClosed` signals on one stream, in the order the server sent
 /// them.
@@ -880,7 +943,10 @@ async fn listen_for_server_signals(
 ) -> zbus::Result<()> {
     let mut stream = proxy.inner().receive_all_signals().await?;
     // Tokens are single-use, so each is consumed by the action it precedes.
-    let mut activation_tokens: HashMap<u32, String> = HashMap::new();
+    // The target the token was issued for travels with it: a replacement or
+    // removal of that notification invalidates the token even when the host
+    // reuses the same ID, so it can no longer activate the wrong action.
+    let mut activation_tokens: HashMap<u32, (Arc<NotificationTarget>, String)> = HashMap::new();
 
     while let Some(message) = stream.next().await {
         let header = message.header();
@@ -890,8 +956,13 @@ async fn listen_for_server_signals(
                     tracing::warn!("Failed to deserialize ActivationToken signal body");
                     continue;
                 };
-                if reverse_map.lock().contains_key(&id) {
-                    activation_tokens.insert(id, token);
+                if let Some(target) = reverse_map.lock().get(&id).cloned() {
+                    activation_tokens.insert(id, (target, token));
+                } else {
+                    // No live notification owns this ID (it was replaced with a
+                    // different ID, or removed). Clear any token left over from
+                    // the old one rather than letting it linger.
+                    activation_tokens.remove(&id);
                 }
             }
             Some("ActionInvoked") => {
@@ -899,8 +970,19 @@ async fn listen_for_server_signals(
                     tracing::warn!("Failed to deserialize ActionInvoked signal body");
                     continue;
                 };
-                let token = activation_tokens.remove(&id);
                 let target = reverse_map.lock().get(&id).cloned();
+                let token = match activation_tokens.remove(&id) {
+                    Some((issued_for, token)) if token_belongs_to(&issued_for, target.as_ref()) => {
+                        Some(token)
+                    }
+                    Some((_, stale)) => {
+                        tracing::debug!(
+                            "Discarding activation token {stale} issued for a replaced notification"
+                        );
+                        None
+                    }
+                    None => None,
+                };
                 if let Some(target) = target {
                     dispatch_action(&server, &session_bus, &target, &action_key, token);
                 }
@@ -910,6 +992,8 @@ async fn listen_for_server_signals(
                     tracing::warn!("Failed to deserialize NotificationClosed signal body");
                     continue;
                 };
+                // A replacement or removal is reported by the host as a close;
+                // drop the token with the routing state it belongs to.
                 activation_tokens.remove(&id);
                 retire_closed_notification(&reverse_map, &active_notifications, id);
             }
@@ -1117,6 +1201,42 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// The last `Arc<TempSoundFile>` can be dropped on a thread with no Tokio
+    /// runtime. The old unconditional `spawn_blocking` panicked there, and with
+    /// `panic = "abort"` that took down the whole daemon instead of just
+    /// leaking a staged sound file. This must stay a plain `#[test]`.
+    #[test]
+    fn dropping_a_sound_file_outside_a_runtime_removes_it() {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+
+        assert!(
+            tokio::runtime::Handle::try_current().is_err(),
+            "this regression test must run outside a Tokio runtime"
+        );
+
+        let dir = std::env::temp_dir().join(format!(
+            "xdp-sound-drop-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("sound.snd");
+        std::fs::write(&path, b"x").unwrap();
+
+        {
+            let sound = Arc::new(TempSoundFile { path: path.clone() });
+            assert_eq!(Arc::strong_count(&sound), 1);
+            drop(sound); // last reference: Drop runs on this non-Tokio thread
+        }
+
+        assert!(
+            !path.exists(),
+            "TempSoundFile::drop must unlink inline when there is no runtime"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[tokio::test]
     async fn test_notification_properties() {
         let notification = Notification::new(None).await;
@@ -1280,6 +1400,139 @@ mod notification_map_tests {
         assert!(!retire_closed_notification(&reverse, &active, 1234));
         assert_eq!(active.lock().len(), 1);
         assert_eq!(reverse.lock().len(), 1);
+    }
+
+    fn staged_sound() -> Arc<TempSoundFile> {
+        Arc::new(TempSoundFile {
+            path: std::env::temp_dir().join("xdpg-apply-notify-nonexistent.snd"),
+        })
+    }
+
+    /// A failed `Notify` leaves the old host notification live, so both maps
+    /// and its sound file must be left exactly as they were.
+    #[test]
+    fn a_failed_notify_keeps_the_old_routing_state() {
+        let (active, reverse) = empty_maps();
+        let sound = staged_sound();
+        register_notification(
+            &active,
+            &reverse,
+            "org.example.App",
+            "7",
+            42,
+            HashMap::new(),
+            Some("old-action".into()),
+            Some(sound.clone()),
+        );
+
+        apply_notify_result(
+            &active,
+            &reverse,
+            42,
+            "org.example.App",
+            "7",
+            Err::<u32, ()>(()),
+            HashMap::new(),
+            Some("new-action".into()),
+            None,
+        );
+
+        assert_eq!(active_id(&active, "org.example.App", "7"), Some(42));
+        let lock = reverse.lock();
+        assert_eq!(lock.len(), 1);
+        assert_eq!(lock[&42].default_action.as_deref(), Some("old-action"));
+        assert_eq!(
+            Arc::strong_count(&sound),
+            2,
+            "the sound file must not be dropped"
+        );
+    }
+
+    /// A successful replacement retires the old reverse entry (and its sound
+    /// file) and points the forward map at the new host ID.
+    #[test]
+    fn a_successful_notify_retires_the_old_state() {
+        let (active, reverse) = empty_maps();
+        let sound = staged_sound();
+        register_notification(
+            &active,
+            &reverse,
+            "org.example.App",
+            "7",
+            42,
+            HashMap::new(),
+            Some("old-action".into()),
+            Some(sound.clone()),
+        );
+
+        apply_notify_result(
+            &active,
+            &reverse,
+            42,
+            "org.example.App",
+            "7",
+            Ok::<u32, ()>(99),
+            HashMap::new(),
+            Some("new-action".into()),
+            None,
+        );
+
+        assert_eq!(active_id(&active, "org.example.App", "7"), Some(99));
+        let lock = reverse.lock();
+        assert!(!lock.contains_key(&42), "the superseded entry must be gone");
+        assert_eq!(lock.len(), 1);
+        assert_eq!(lock[&99].default_action.as_deref(), Some("new-action"));
+        drop(lock);
+        assert_eq!(
+            Arc::strong_count(&sound),
+            1,
+            "retiring the old entry must release its sound file"
+        );
+    }
+
+    /// Some hosts reuse the replaced ID. Overwriting the reverse entry is then
+    /// the retirement; removing the old entry too would delete the new one.
+    #[test]
+    fn a_successful_notify_reusing_the_id_keeps_the_new_entry() {
+        let (active, reverse) = empty_maps();
+        let sound = staged_sound();
+        register_notification(
+            &active,
+            &reverse,
+            "org.example.App",
+            "7",
+            42,
+            HashMap::new(),
+            Some("old-action".into()),
+            Some(sound.clone()),
+        );
+
+        apply_notify_result(
+            &active,
+            &reverse,
+            42,
+            "org.example.App",
+            "7",
+            Ok::<u32, ()>(42),
+            HashMap::new(),
+            Some("new-action".into()),
+            None,
+        );
+
+        assert_eq!(active_id(&active, "org.example.App", "7"), Some(42));
+        let lock = reverse.lock();
+        assert_eq!(lock.len(), 1);
+        assert_eq!(
+            lock[&42].default_action.as_deref(),
+            Some("new-action"),
+            "the new target must survive the reuse of its ID"
+        );
+        drop(lock);
+        assert_eq!(
+            Arc::strong_count(&sound),
+            1,
+            "the old sound file must be retired"
+        );
     }
 
     #[tokio::test]
@@ -1684,6 +1937,24 @@ mod action_list_tests {
         assert_eq!(data["activation-token"], Variant::from("token-1"));
         assert_eq!(data["desktop-startup-id"], Variant::from("token-1"));
         assert!(platform_data(None).is_empty());
+    }
+
+    /// A token received before a replacement that reuses the host ID belongs
+    /// to the old notification and must not activate the new one's action.
+    #[test]
+    fn a_token_from_a_replaced_notification_is_rejected() {
+        let old = Arc::new(target_for(&PortalNotification {
+            default_action: Some("app.old".into()),
+            ..Default::default()
+        }));
+        let new = Arc::new(target_for(&PortalNotification {
+            default_action: Some("app.new".into()),
+            ..Default::default()
+        }));
+
+        assert!(token_belongs_to(&old, Some(&old)));
+        assert!(!token_belongs_to(&old, Some(&new)));
+        assert!(!token_belongs_to(&old, None));
     }
 
     /// The regression this guards: the list used to be built as a

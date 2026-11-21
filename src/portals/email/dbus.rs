@@ -162,11 +162,17 @@ fn build_mailto_url(options: &ComposeEmailOptions) -> String {
         .into_iter()
         .chain(options.addresses.iter().flatten().map(|s| s.as_str()));
 
+    // The address list is the `mailto:` path, before any `?`. The primary
+    // addresses are just as caller-controlled as cc/bcc, so they need the same
+    // escaping: a raw `&` or `?` here would inject query parameters of its own,
+    // and a raw `#` would truncate the URI. `@` is a reserved URI character but
+    // is what makes an address recognizable, so allow it literally; commas
+    // remain escaped so one address cannot be read as two recipients.
     if let Some(first_addr) = addrs_iter.next() {
-        url.push_str(first_addr);
+        url.push_str(glib::uri_escape_string(first_addr, Some("@"), true).as_str());
         for addr in addrs_iter {
             url.push(',');
-            url.push_str(addr);
+            url.push_str(glib::uri_escape_string(addr, Some("@"), true).as_str());
         }
     }
 
@@ -270,6 +276,29 @@ mod tests {
         assert_eq!(
             build_mailto_url(&options),
             "mailto:single@example.com,foo@example.com,bar@example.com"
+        );
+    }
+
+    /// The primary addresses live before the `?`, but they are just as
+    /// caller-controlled as cc/bcc. An unescaped `&` there was read as the start
+    /// of a new query parameter, letting one address inject fields of its own.
+    /// `@` stays literal so addresses remain recognizable.
+    #[test]
+    fn test_compose_url_primary_address_is_escaped() {
+        let options = ComposeEmailOptions {
+            address: Some("a&b@example.com".into()),
+            addresses: Some(vec![
+                "c?d@example.com".into(),
+                "e,f@example.com".into(),
+                "g#h@example.com".into(),
+                "i%j@example.com".into(),
+            ]),
+            subject: Some("Hi".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            build_mailto_url(&options),
+            "mailto:a%26b@example.com,c%3Fd@example.com,e%2Cf@example.com,g%23h@example.com,i%25j@example.com?subject=Hi"
         );
     }
 
