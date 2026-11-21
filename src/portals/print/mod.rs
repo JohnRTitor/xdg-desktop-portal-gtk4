@@ -100,8 +100,10 @@
 //!
 //! ## Extension Guide
 //!
-//! - **Custom Print Settings:** If GTK adds new custom print settings, `gui.rs` must be updated to
-//!   serialize and deserialize these specific keys into the D-Bus dictionaries passed during `PreparePrint`.
+//! - **Custom Print Settings:** Print settings and page setups cross the D-Bus boundary as typed
+//!   `a{sv}` dictionaries. Keys with scalar values are round-tripped automatically by the generic
+//!   helpers in `gui.rs`, which accept `b/y/n/q/i/u/x/t/d/s`; no per-key code is needed. `gui.rs`
+//!   only needs updating if a value type outside that set has to be carried in either direction.
 //!
 //! ## Cross-Portal Consistency
 //!

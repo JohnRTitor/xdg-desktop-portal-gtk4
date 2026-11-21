@@ -1,10 +1,16 @@
-/// Flatten a portal options dict into the string map the print UI consumes,
-/// keeping only the string values that GTK can be fed through a KeyFile.
-fn flatten_dict(dict: HashMap<String, Value<'_>>) -> HashMap<String, String> {
+/// Convert a portal `a{sv}` dict into owned values, preserving each value's type.
+///
+/// GTK serialises page setups with doubles for the paper dimensions and all four
+/// margins. Flattening those to strings (or dropping them) made the dialog fail
+/// to apply the caller's page setup, so keep the original variants intact.
+fn to_owned_dict(dict: HashMap<String, Value<'_>>) -> HashMap<String, OwnedValue> {
     dict.into_iter()
-        .filter_map(|(k, v)| match &v {
-            Value::Str(s) => Some((k, s.to_string())),
-            _ => None,
+        .filter_map(|(k, v)| match v.try_into_owned() {
+            Ok(owned) => Some((k, owned)),
+            Err(e) => {
+                tracing::warn!(key = %k, error = %e, "Ignoring unsupported print option value");
+                None
+            }
         })
         .collect()
 }
@@ -94,11 +100,8 @@ impl Print {
             parent_window,
             activation_token: options.activation_token.clone(),
             title,
-            // These used to be discarded, so an application that requested a
-            // particular printer, paper size or orientation got a dialog that
-            // ignored all of it.
-            settings: flatten_dict(settings),
-            page_setup: flatten_dict(page_setup),
+            settings: to_owned_dict(settings),
+            page_setup: to_owned_dict(page_setup),
         }
         .run(&self.proxy)
         .await;
@@ -356,6 +359,7 @@ mod tests {
         let results = PreparePrintResults {
             token: 999,
             has_current_page: Some(true),
+            page_setup: HashMap::from([("MarginTop".to_string(), OwnedValue::from(11.0f64))]),
             ..Default::default()
         };
 
@@ -374,6 +378,40 @@ mod tests {
                 .try_clone()
                 .unwrap(),
             Value::from(true)
+        );
+        let page_setup = decoded.get("page-setup").unwrap().try_clone().unwrap();
+        let Value::Dict(dict) = page_setup else {
+            panic!("page-setup must be a dict");
+        };
+        let key = String::from("MarginTop");
+        let margin: Value = dict.get(&key).unwrap().unwrap();
+        assert_eq!(margin, Value::from(11.0f64));
+    }
+
+    /// This is the exact site of the reported bug: the old `flatten_dict`
+    /// kept only strings, so GTK's double-valued margins never reached the
+    /// dialog. Guard the conversion itself, not just its downstream users.
+    #[test]
+    fn to_owned_dict_preserves_non_string_values() {
+        let dict = HashMap::from([
+            ("Name".to_string(), Value::from("iso_a4_210x297mm")),
+            ("MarginTop".to_string(), Value::from(11.0f64)),
+            ("Width".to_string(), Value::from(210.0f64)),
+            ("Collate".to_string(), Value::from(true)),
+        ]);
+
+        let owned = to_owned_dict(dict);
+        assert_eq!(owned.len(), 4, "no value type may be dropped");
+        assert_eq!(
+            f64::try_from(&owned["MarginTop"]).unwrap(),
+            11.0,
+            "margins must survive as doubles"
+        );
+        assert_eq!(f64::try_from(&owned["Width"]).unwrap(), 210.0);
+        assert!(bool::try_from(&owned["Collate"]).unwrap());
+        assert_eq!(
+            String::try_from(owned["Name"].try_clone().unwrap()).unwrap(),
+            "iso_a4_210x297mm"
         );
     }
 }

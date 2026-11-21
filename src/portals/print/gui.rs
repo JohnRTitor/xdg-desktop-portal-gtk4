@@ -111,28 +111,116 @@ pub struct PrintUi {
     pub parent_window: String,
     pub activation_token: Option<String>,
     pub title: String,
-    /// The caller's requested print settings, as the flat key→value dict the
-    /// portal contract uses. Applied to the dialog before it is shown, so a
-    /// requested printer, paper size or orientation is not silently discarded.
-    pub settings: HashMap<String, String>,
-    pub page_setup: HashMap<String, String>,
+    /// The caller's requested print settings, as the `a{sv}` dict the portal
+    /// contract uses. Applied to the dialog before it is shown, so a requested
+    /// printer, paper size or orientation is not silently discarded.
+    pub settings: HashMap<String, OwnedValue>,
+    pub page_setup: HashMap<String, OwnedValue>,
 }
 
-const SETTINGS_GROUP: &str = "Print Settings";
-const PAGE_SETUP_GROUP: &str = "Page Setup";
-
-/// Rebuild a GTK object from a flat key→value dict.
+/// Convert one scalar from a zvariant `a{sv}` value into a `glib::Variant`.
 ///
-/// The contract carries `settings` and `page_setup` as flat `a{sv}` dicts, and
-/// this is the inverse of the serialisation the portal itself produces. GTK4
-/// has no GVariant constructors for these (unlike GTK3), so the dict is staged
-/// through a `KeyFile` and handed to GTK from there.
-fn from_flat_dict(entries: &HashMap<String, String>, group: &str) -> glib::KeyFile {
-    let key_file = glib::KeyFile::new();
-    for (k, v) in entries {
-        key_file.set_string(group, k, v);
+/// The value types must survive the trip: `PageSetup` stores paper dimensions
+/// and margins as doubles, and `PrintSettings` has boolean and integer keys as
+/// well as strings. A string-only key file dropped all of the non-strings.
+/// Together with [`glib_to_owned`] this accepts the numeric and string scalar
+/// types used by the print portal: `b/y/n/q/i/u/x/t/d/s`. Other basic types,
+/// such as object paths, signatures and Unix FDs, are skipped with a warning.
+fn owned_to_glib(value: &OwnedValue) -> Option<glib::Variant> {
+    let v = match &**value {
+        Value::Bool(v) => (*v).into(),
+        Value::U8(v) => (*v).into(),
+        Value::I16(v) => (*v).into(),
+        Value::U16(v) => (*v).into(),
+        Value::F64(v) => (*v).into(),
+        Value::I32(v) => (*v).into(),
+        Value::U32(v) => (*v).into(),
+        Value::I64(v) => (*v).into(),
+        Value::U64(v) => (*v).into(),
+        Value::Str(s) => s.as_str().into(),
+        _ => return None,
+    };
+    Some(v)
+}
+
+/// Convert one `a{sv}` value coming from GTK back into an owned zvariant value.
+fn glib_to_owned(value: &glib::Variant) -> Option<OwnedValue> {
+    // `a{sv}` boxes every value in a `v`; unwrap it before inspecting the type.
+    let inner = if value.type_() == glib::VariantTy::VARIANT {
+        value.get::<glib::Variant>()?
+    } else {
+        value.clone()
+    };
+    let ty = inner.type_().to_string();
+    match ty.as_str() {
+        "s" => {
+            let s = inner.get::<String>()?;
+            OwnedValue::try_from(Value::from(s.as_str())).ok()
+        }
+        "d" => Some(OwnedValue::from(inner.get::<f64>()?)),
+        "b" => Some(OwnedValue::from(inner.get::<bool>()?)),
+        "y" => Some(OwnedValue::from(inner.get::<u8>()?)),
+        "n" => Some(OwnedValue::from(inner.get::<i16>()?)),
+        "q" => Some(OwnedValue::from(inner.get::<u16>()?)),
+        "i" => Some(OwnedValue::from(inner.get::<i32>()?)),
+        "u" => Some(OwnedValue::from(inner.get::<u32>()?)),
+        "x" => Some(OwnedValue::from(inner.get::<i64>()?)),
+        "t" => Some(OwnedValue::from(inner.get::<u64>()?)),
+        _ => None,
     }
-    key_file
+}
+
+/// Convert a `glib::Variant` of type `a{sv}` into owned zvariant values.
+///
+/// Entries with an unsupported value type are skipped individually: dropping
+/// the whole dict because of one key would discard every valid setting too.
+fn variant_to_owned_dict(variant: &glib::Variant) -> HashMap<String, OwnedValue> {
+    variant
+        .iter()
+        .filter_map(|entry| {
+            // A dict entry is `{sv}`, which is not the same type as `(sv)` to
+            // GVariant even though their binary layouts match. Read the two
+            // children directly instead of asking for a tuple.
+            let key = entry.child_value(0).get::<String>()?;
+            let value = entry.child_value(1);
+            match glib_to_owned(&value) {
+                Some(owned) => Some((key, owned)),
+                None => {
+                    tracing::warn!(%key, ?value, "Ignoring unsupported value from GTK print dict");
+                    None
+                }
+            }
+        })
+        .collect()
+}
+
+/// Inverse of [`variant_to_owned_dict`]: rebuild the `a{sv}` `glib::Variant`
+/// that GTK's `from_gvariant` constructors expect.
+///
+/// Unsupported values and empty keys are skipped individually, so one bad
+/// entry cannot discard the rest of the caller's requested settings. GLib
+/// emits a critical for an empty key, which would also be an attacker-driven
+/// log-spam / abort vector under `G_DEBUG=fatal-criticals`.
+fn owned_dict_to_variant(dict: &HashMap<String, OwnedValue>) -> glib::Variant {
+    let builder = glib::VariantDict::new(None::<&glib::Variant>);
+    for (key, value) in dict {
+        match to_variant_entry(key, value) {
+            Some((key, variant)) => builder.insert_value(&key, &variant),
+            None => tracing::warn!(%key, ?value, "Ignoring invalid print setting entry"),
+        }
+    }
+    builder.end()
+}
+
+/// Validate one caller-supplied entry before it reaches GLib. Separating this
+/// from the dict loop lets tests verify the empty-key guard directly: GLib
+/// would reject an empty key on its own, so outcome-only tests cannot tell
+/// whether our guard is still there.
+fn to_variant_entry(key: &str, value: &OwnedValue) -> Option<(String, glib::Variant)> {
+    if key.is_empty() {
+        return None;
+    }
+    Some((key.to_string(), owned_to_glib(value)?))
 }
 
 pub struct PrintResult {
@@ -163,18 +251,12 @@ impl PrintUi {
         // Apply what the caller asked for before the dialog is shown, otherwise
         // the user's confirmation is about settings the application never chose.
         if !self.settings.is_empty() {
-            let kf = from_flat_dict(&self.settings, SETTINGS_GROUP);
-            match gtk4::PrintSettings::from_key_file(&kf, Some(SETTINGS_GROUP)) {
-                Ok(s) => dialog.set_settings(Some(&s)),
-                Err(e) => tracing::warn!("Could not apply requested print settings: {e}"),
-            }
+            let variant = owned_dict_to_variant(&self.settings);
+            dialog.set_settings(Some(&gtk4::PrintSettings::from_gvariant(&variant)));
         }
         if !self.page_setup.is_empty() {
-            let kf = from_flat_dict(&self.page_setup, PAGE_SETUP_GROUP);
-            match gtk4::PageSetup::from_key_file(&kf, Some(PAGE_SETUP_GROUP)) {
-                Ok(p) => dialog.set_page_setup(&p),
-                Err(e) => tracing::warn!("Could not apply requested page setup: {e}"),
-            }
+            let variant = owned_dict_to_variant(&self.page_setup);
+            dialog.set_page_setup(&gtk4::PageSetup::from_gvariant(&variant));
         }
 
         crate::gui::windowing::external_window::setup_window(
@@ -192,32 +274,8 @@ impl PrintUi {
                     return Err(UiError::Rejected);
                 }
 
-                let mut settings_map = HashMap::new();
-                let mut page_setup_map = HashMap::new();
-
-                let settings = d.settings();
-                settings.foreach(|k, v| {
-                    if let Ok(owned) = zbus::zvariant::OwnedValue::try_from(Value::from(v)) {
-                        settings_map.insert(String::from(k), owned);
-                    }
-                });
-
-                let page_setup = d.page_setup();
-                let key_file = glib::KeyFile::new();
-                page_setup.to_key_file(&key_file, Some("Page Setup"));
-                if let Ok(keys) = key_file.keys("Page Setup") {
-                    for key in keys {
-                        let Ok(val) = key_file.value("Page Setup", &key) else {
-                            continue;
-                        };
-                        let Ok(owned) =
-                            zbus::zvariant::OwnedValue::try_from(Value::from(val.as_str()))
-                        else {
-                            continue;
-                        };
-                        page_setup_map.insert(String::from(key.as_str()), owned);
-                    }
-                }
+                let settings_map = variant_to_owned_dict(&d.settings().to_gvariant());
+                let page_setup_map = variant_to_owned_dict(&d.page_setup().to_gvariant());
 
                 let Some(printer) = d.selected_printer() else {
                     // Dialog was confirmed but no printer was selected
@@ -553,5 +611,220 @@ mod tests {
             claim_token(&mut jobs, 1, ""),
             TokenClaim::Granted(5)
         ));
+    }
+
+    fn gtk_ready() -> bool {
+        static INIT: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        *INIT.get_or_init(|| gtk4::init().is_ok())
+    }
+
+    /// Assert the concrete GVariant type code of each value, so a symmetric
+    /// mistake in both mapping tables cannot hide behind a round-trip equality.
+    fn assert_variant_types(variant: &glib::Variant, expected: &[(&str, &str)]) {
+        let mut actual = HashMap::new();
+        for entry in variant.iter() {
+            let key = entry.child_value(0).get::<String>().unwrap();
+            let inner = entry.child_value(1).get::<glib::Variant>().unwrap();
+            actual.insert(key, inner.type_().to_string());
+        }
+        for (key, ty) in expected {
+            assert_eq!(
+                actual.get(*key).map(String::as_str),
+                Some(*ty),
+                "wrong GVariant type for {key}"
+            );
+        }
+    }
+
+    /// The `glib::Variant` <-> zvariant bridge must preserve value types, not
+    /// only raw bytes. Doubles (margins, paper dimensions) are the values the
+    /// old string-only KeyFile dropped, causing the reported warning.
+    #[test]
+    fn owned_dict_variant_round_trip_preserves_all_scalar_types() {
+        use zbus::zvariant::Value;
+
+        let dict = HashMap::from([
+            (
+                "Name".to_string(),
+                OwnedValue::try_from(Value::from("iso_a4_210x297mm")).unwrap(),
+            ),
+            ("Byte".to_string(), OwnedValue::from(7u8)),
+            ("Short".to_string(), OwnedValue::from(-3i16)),
+            ("UShort".to_string(), OwnedValue::from(9u16)),
+            ("Width".to_string(), OwnedValue::from(210.0f64)),
+            ("Collate".to_string(), OwnedValue::from(true)),
+            ("Copies".to_string(), OwnedValue::from(2i32)),
+            ("Scale".to_string(), OwnedValue::from(100u32)),
+            ("JobId".to_string(), OwnedValue::from(42i64)),
+            ("Timeout".to_string(), OwnedValue::from(90u64)),
+        ]);
+
+        let variant = owned_dict_to_variant(&dict);
+        assert_eq!(variant.type_().to_string(), "a{sv}");
+        assert_variant_types(
+            &variant,
+            &[
+                ("Name", "s"),
+                ("Byte", "y"),
+                ("Short", "n"),
+                ("UShort", "q"),
+                ("Width", "d"),
+                ("Collate", "b"),
+                ("Copies", "i"),
+                ("Scale", "u"),
+                ("JobId", "x"),
+                ("Timeout", "t"),
+            ],
+        );
+        let back = variant_to_owned_dict(&variant);
+
+        assert_eq!(
+            back, dict,
+            "the a{{sv}} dict must survive the bridge intact"
+        );
+        assert_eq!(
+            f64::try_from(back["Width"].try_clone().unwrap()).unwrap(),
+            210.0
+        );
+        assert!(bool::try_from(back["Collate"].try_clone().unwrap()).unwrap());
+        assert_eq!(
+            i32::try_from(back["Copies"].try_clone().unwrap()).unwrap(),
+            2
+        );
+    }
+
+    /// A single unsupported value (or an empty key) must not discard the rest
+    /// of the dict. The old response path skipped bad keys individually; the
+    /// typed bridge must not regress that resilience.
+    #[test]
+    fn bad_entries_are_skipped_without_dropping_valid_ones() {
+        use zbus::zvariant::Value;
+
+        let array = OwnedValue::try_from(Value::from(vec![1u32, 2u32])).unwrap();
+        let dict = HashMap::from([
+            (
+                String::new(),
+                OwnedValue::try_from(Value::from("empty key")).unwrap(),
+            ),
+            ("BadType".to_string(), array),
+            ("MarginTop".to_string(), OwnedValue::from(11.0f64)),
+            (
+                "Orientation".to_string(),
+                OwnedValue::try_from(Value::from("portrait")).unwrap(),
+            ),
+        ]);
+
+        // Assert the guard directly: GLib rejects empty keys on its own, so an
+        // outcome-only check would still pass if our explicit guard disappeared.
+        assert!(to_variant_entry("", &OwnedValue::from(1.0f64)).is_none());
+        assert!(to_variant_entry("MarginTop", &OwnedValue::from(1.0f64)).is_some());
+
+        let variant = owned_dict_to_variant(&dict);
+        let back = variant_to_owned_dict(&variant);
+
+        assert_eq!(back.len(), 2, "only the two valid entries should survive");
+        assert_eq!(
+            f64::try_from(back["MarginTop"].try_clone().unwrap()).unwrap(),
+            11.0
+        );
+        assert_eq!(
+            String::try_from(back["Orientation"].try_clone().unwrap()).unwrap(),
+            "portrait"
+        );
+    }
+
+    /// Exercise the response direction directly: a raw GTK-style `a{sv}` with
+    /// one unsupported value must still yield all supported entries.
+    #[test]
+    fn gtk_variant_with_unsupported_value_keeps_valid_entries() {
+        use glib::prelude::ToVariant;
+
+        let builder = glib::VariantDict::new(None::<&glib::Variant>);
+        builder.insert_value("BadType", &vec![1u32, 2u32].to_variant());
+        builder.insert_value("MarginTop", &11.5f64.to_variant());
+        builder.insert_value("Orientation", &"portrait".to_variant());
+
+        let back = variant_to_owned_dict(&builder.end());
+        assert_eq!(back.len(), 2, "the array value must be skipped, not fatal");
+        assert_eq!(
+            f64::try_from(back["MarginTop"].try_clone().unwrap()).unwrap(),
+            11.5
+        );
+        assert_eq!(
+            String::try_from(back["Orientation"].try_clone().unwrap()).unwrap(),
+            "portrait"
+        );
+    }
+
+    /// Regression for the "Key file does not have key 'MarginTop'" warning:
+    /// GTK sends doubles for the paper dimensions and margins. A string-only
+    /// KeyFile dropped them, so the dialog fell back to defaults and logged.
+    #[test]
+    fn gtk_style_page_setup_dict_applies_margins() {
+        use zbus::zvariant::Value;
+
+        let string = |s: &str| OwnedValue::try_from(Value::from(s)).unwrap();
+        let number = |v: f64| OwnedValue::from(v);
+
+        let dict = HashMap::from([
+            ("Name".to_string(), string("iso_a4_210x297mm")),
+            ("DisplayName".to_string(), string("A4")),
+            ("Width".to_string(), number(210.0)),
+            ("Height".to_string(), number(297.0)),
+            ("MarginTop".to_string(), number(11.0)),
+            ("MarginBottom".to_string(), number(11.0)),
+            ("MarginLeft".to_string(), number(11.0)),
+            ("MarginRight".to_string(), number(11.0)),
+            ("Orientation".to_string(), string("portrait")),
+        ]);
+
+        let variant = owned_dict_to_variant(&dict);
+        // These assertions need no display, so they run in headless CI too.
+        assert_variant_types(
+            &variant,
+            &[("MarginTop", "d"), ("Width", "d"), ("Orientation", "s")],
+        );
+        let typed = variant_to_owned_dict(&variant);
+        assert_eq!(
+            f64::try_from(typed["MarginTop"].try_clone().unwrap()).unwrap(),
+            11.0
+        );
+
+        if !gtk_ready() {
+            eprintln!("No graphical display available; skipping GTK object assertions");
+            return;
+        }
+
+        // The response path reads real GTK variants, not just VariantDict
+        // output: verify MarginTop comes back as a double from GTK's own data.
+        let setup = gtk4::PageSetup::from_gvariant(&variant);
+        let from_gtk = variant_to_owned_dict(&setup.to_gvariant());
+        assert_eq!(
+            f64::try_from(from_gtk["MarginTop"].try_clone().unwrap()).unwrap(),
+            11.0,
+            "GTK's own variant must preserve the margin as a double"
+        );
+        assert!(
+            (setup.top_margin(gtk4::Unit::Mm) - 11.0).abs() < 1e-6,
+            "the requested margin must reach GTK instead of being lost"
+        );
+
+        // GTK's PrintSettings::from_gvariant stores string values, so verify
+        // the caller's string settings also survive the same typed path.
+        let settings_dict = HashMap::from([
+            ("printer".to_string(), string("Print to File")),
+            ("output-uri".to_string(), string("file:///tmp/print.pdf")),
+        ]);
+        let settings_variant = owned_dict_to_variant(&settings_dict);
+        let settings = gtk4::PrintSettings::from_gvariant(&settings_variant);
+        let back = variant_to_owned_dict(&settings.to_gvariant());
+        assert_eq!(
+            String::try_from(back["printer"].try_clone().unwrap()).unwrap(),
+            "Print to File"
+        );
+        assert_eq!(
+            String::try_from(back["output-uri"].try_clone().unwrap()).unwrap(),
+            "file:///tmp/print.pdf"
+        );
     }
 }
