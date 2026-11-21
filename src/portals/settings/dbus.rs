@@ -2,11 +2,7 @@ use {
     gtk4::gio::{Settings, SettingsSchemaSource},
     parking_lot::RwLock,
     std::{collections::HashMap, sync::Arc, time::Duration},
-    zbus::{
-        fdo, interface,
-        object_server::SignalEmitter,
-        zvariant::{OwnedValue, Value},
-    },
+    zbus::{OwnedVariant, Variant, fdo, interface, object_server::SignalEmitter},
 };
 
 use crate::{
@@ -57,7 +53,7 @@ fn namespace_matches(namespace: &str, patterns: &[String]) -> bool {
 ///
 /// Only the namespaces the caller asked for (or all of them) appear, and each is
 /// accompanied by a copy of its key/value map: the reply type is an owned
-/// `HashMap<String, HashMap<String, OwnedValue>>`, so the inner copy is required
+/// `HashMap<String, HashMap<String, OwnedVariant>>`, so the inner copy is required
 /// by the D-Bus contract rather than by the lookup.
 ///
 /// A namespace that is supported but has no data is omitted rather than sent as
@@ -66,7 +62,7 @@ fn namespace_matches(namespace: &str, patterns: &[String]) -> bool {
 fn read_all_from_state(
     state: &SettingsState,
     requested: &[String],
-) -> HashMap<String, HashMap<String, OwnedValue>> {
+) -> HashMap<String, HashMap<String, OwnedVariant>> {
     state
         .namespaces
         .iter()
@@ -236,7 +232,7 @@ pub(crate) fn map_color_scheme(val: &str) -> u32 {
 
 #[interface(name = "org.freedesktop.impl.portal.Settings")]
 impl SettingsPortal {
-    async fn read(&self, namespace: String, key: String) -> Result<OwnedValue, fdo::Error> {
+    async fn read(&self, namespace: String, key: String) -> Result<OwnedVariant, fdo::Error> {
         let state = self.aggregator.read();
         if let Some(val) = state.get(&namespace, &key) {
             Ok(val)
@@ -249,7 +245,7 @@ impl SettingsPortal {
     async fn read_all(
         &self,
         namespaces: Vec<String>,
-    ) -> Result<HashMap<String, HashMap<String, OwnedValue>>, fdo::Error> {
+    ) -> Result<HashMap<String, HashMap<String, OwnedVariant>>, fdo::Error> {
         Ok(read_all_from_state(&self.aggregator.read(), &namespaces))
     }
 
@@ -258,7 +254,7 @@ impl SettingsPortal {
         ctx: &SignalEmitter<'_>,
         namespace: &str,
         key: &str,
-        value: &Value<'_>,
+        value: &Variant<'_>,
     ) -> zbus::Result<()>;
 
     #[zbus(property, name = "version")]
@@ -442,8 +438,8 @@ mod read_all_tests {
     /// `read_kdeglobals` writes: `format!("{}.{}", NS_KDE_KDEGLOBALS, group)`.
     const KDE_GROUP: &str = "org.kde.kdeglobals.KDE";
 
-    fn value(s: &str) -> OwnedValue {
-        OwnedValue::try_from(Value::from(s)).expect("str to OwnedValue is infallible")
+    fn value(s: &str) -> OwnedVariant {
+        OwnedVariant::try_from(Variant::from(s)).expect("str to OwnedVariant is infallible")
     }
 
     /// Populates the namespaces the aggregator can produce, including the
@@ -456,7 +452,7 @@ mod read_all_tests {
         state
     }
 
-    fn keys(result: &HashMap<String, HashMap<String, OwnedValue>>) -> Vec<&str> {
+    fn keys(result: &HashMap<String, HashMap<String, OwnedVariant>>) -> Vec<&str> {
         let mut v: Vec<&str> = result.keys().map(String::as_str).collect();
         v.sort_unstable();
         v

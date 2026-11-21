@@ -9,13 +9,12 @@ use {
     },
     xdg_desktop_portal_gtk4::portals::notification::dbus::Notification,
     zbus::{
-        Connection, MatchRule, MessageStream,
+        Connection, MatchRule, MessageStream, OwnedVariant, Variant,
         connection::Builder,
         fdo::{RequestNameFlags, RequestNameReply},
         interface,
         object_server::SignalEmitter,
         proxy,
-        zvariant::{OwnedValue, Value},
     },
 };
 
@@ -29,7 +28,7 @@ trait NotificationPortal {
         &self,
         app_id: &str,
         id: &str,
-        notification: HashMap<&str, zbus::zvariant::Value<'_>>,
+        notification: HashMap<&str, zbus::Variant<'_>>,
     ) -> zbus::Result<()>;
 
     fn remove_notification(&self, app_id: &str, id: &str) -> zbus::Result<()>;
@@ -46,16 +45,16 @@ async fn test_guard() -> tokio::sync::MutexGuard<'static, ()> {
 async fn test_notification_add_remove() -> Result<(), Box<dyn std::error::Error>> {
     let _guard = test_guard().await;
     let client_conn = try_dbus_session!();
-    let _conn = Builder::session()?
+    let _conn = Builder::session()
         .serve_at(
             "/org/freedesktop/portal/desktop",
             Notification::new(None).await,
-        )?
+        )
         .build()
         .await?;
 
     let proxy = NotificationPortalProxy::builder(&client_conn)
-        .destination(_conn.unique_name().unwrap().clone())?
+        .destination(_conn.unique_name().unwrap().clone())
         .build()
         .await?;
 
@@ -77,11 +76,11 @@ async fn test_notification_add_remove() -> Result<(), Box<dyn std::error::Error>
 fn button<'a>(
     label: &'a str,
     action: &'a str,
-    target: Option<Value<'a>>,
-) -> HashMap<&'a str, Value<'a>> {
+    target: Option<Variant<'a>>,
+) -> HashMap<&'a str, Variant<'a>> {
     let mut button = HashMap::from([
-        ("label", Value::from(label)),
-        ("action", Value::from(action)),
+        ("label", Variant::from(label)),
+        ("action", Variant::from(action)),
     ]);
     if let Some(target) = target {
         button.insert("target", target);
@@ -96,24 +95,24 @@ fn button<'a>(
 async fn buttons_in_the_specified_format_are_accepted() -> Result<(), Box<dyn std::error::Error>> {
     let _guard = test_guard().await;
     let client_conn = try_dbus_session!();
-    let portal_conn = Builder::session()?
+    let portal_conn = Builder::session()
         .serve_at(
             "/org/freedesktop/portal/desktop",
             Notification::new(None).await,
-        )?
+        )
         .build()
         .await?;
     let proxy = NotificationPortalProxy::builder(&client_conn)
-        .destination(portal_conn.unique_name().unwrap().clone())?
+        .destination(portal_conn.unique_name().unwrap().clone())
         .build()
         .await?;
 
     let notification = HashMap::from([
-        ("title", Value::from("New message")),
+        ("title", Variant::from("New message")),
         (
             "buttons",
-            Value::from(vec![
-                button("Reply", "app.reply", Some(Value::from("thread-7"))),
+            Variant::from(vec![
+                button("Reply", "app.reply", Some(Variant::from("thread-7"))),
                 button("Mark read", "mark-read", None),
             ]),
         ),
@@ -142,7 +141,7 @@ impl FakeServer {
         _summary: String,
         _body: String,
         actions: Vec<String>,
-        _hints: HashMap<String, OwnedValue>,
+        _hints: HashMap<String, OwnedVariant>,
         _expire_timeout: i32,
     ) -> u32 {
         if app_name == APP_ID {
@@ -177,8 +176,8 @@ const APP_PATH: &str = "/org/example/NotificationRouting";
 type AppCall = (
     &'static str,
     String,
-    Vec<OwnedValue>,
-    HashMap<String, OwnedValue>,
+    Vec<OwnedVariant>,
+    HashMap<String, OwnedVariant>,
 );
 
 /// A stand-in application exporting `org.freedesktop.Application`.
@@ -188,7 +187,7 @@ struct FakeApp {
 
 #[interface(name = "org.freedesktop.Application")]
 impl FakeApp {
-    fn activate(&self, platform_data: HashMap<String, OwnedValue>) {
+    fn activate(&self, platform_data: HashMap<String, OwnedVariant>) {
         self.calls
             .lock()
             .push(("Activate", String::new(), Vec::new(), platform_data));
@@ -197,15 +196,15 @@ impl FakeApp {
     fn activate_action(
         &self,
         action_name: String,
-        parameter: Vec<OwnedValue>,
-        platform_data: HashMap<String, OwnedValue>,
+        parameter: Vec<OwnedVariant>,
+        platform_data: HashMap<String, OwnedVariant>,
     ) {
         self.calls
             .lock()
             .push(("ActivateAction", action_name, parameter, platform_data));
     }
 
-    fn open(&self, _uris: Vec<String>, _platform_data: HashMap<String, OwnedValue>) {}
+    fn open(&self, _uris: Vec<String>, _platform_data: HashMap<String, OwnedVariant>) {}
 }
 
 /// Serves `object` and claims `name` without replacing or queueing behind an
@@ -216,9 +215,9 @@ async fn claim<I: zbus::object_server::Interface>(
     path: &'static str,
     object: I,
 ) -> Result<Option<Connection>, Box<dyn std::error::Error>> {
-    let conn = Builder::session()?.serve_at(path, object)?.build().await?;
+    let conn = Builder::session().serve_at(path, object).build().await?;
     match conn
-        .request_name_with_flags(name, RequestNameFlags::DoNotQueue.into())
+        .request_name_with_flags(name, RequestNameFlags::DO_NOT_QUEUE)
         .await
     {
         Ok(RequestNameReply::PrimaryOwner) => Ok(Some(conn)),
@@ -237,8 +236,8 @@ async fn wait_for<T>(mut probe: impl FnMut() -> Option<T>) -> T {
     panic!("timed out waiting for the expected D-Bus traffic");
 }
 
-fn owned(value: Value<'_>) -> OwnedValue {
-    OwnedValue::try_from(value).expect("plain values convert")
+fn owned(value: Variant<'_>) -> OwnedVariant {
+    OwnedVariant::try_from(value).expect("plain values convert")
 }
 
 /// The fdo action ids the server reports back must reach the app as the
@@ -278,37 +277,37 @@ async fn invoked_actions_reach_the_application() -> Result<(), Box<dyn std::erro
         return Ok(());
     };
 
-    let portal_conn = Builder::session()?
+    let portal_conn = Builder::session()
         .serve_at(
             "/org/freedesktop/portal/desktop",
             Notification::new(Some(client_conn.clone())).await,
-        )?
+        )
         .build()
         .await?;
     let portal = NotificationPortalProxy::builder(&client_conn)
-        .destination(portal_conn.unique_name().unwrap().clone())?
+        .destination(portal_conn.unique_name().unwrap().clone())
         .build()
         .await?;
     let mut portal_signals = MessageStream::for_match_rule(
         MatchRule::builder()
             .msg_type(zbus::message::Type::Signal)
-            .sender(portal_conn.unique_name().unwrap().clone())?
-            .interface("org.freedesktop.impl.portal.Notification")?
-            .member("ActionInvoked")?
-            .build(),
+            .sender(portal_conn.unique_name().unwrap().clone())
+            .interface("org.freedesktop.impl.portal.Notification")
+            .member("ActionInvoked")
+            .build()?,
         &client_conn,
         None,
     )
     .await?;
 
     let notification = HashMap::from([
-        ("title", Value::from("New message")),
-        ("default-action", Value::from("app.open")),
-        ("default-action-target", Value::from(7u32)),
+        ("title", Variant::from("New message")),
+        ("default-action", Variant::from("app.open")),
+        ("default-action-target", Variant::from(7u32)),
         (
             "buttons",
-            Value::from(vec![
-                button("Reply", "app.reply", Some(Value::from("thread-7"))),
+            Variant::from(vec![
+                button("Reply", "app.reply", Some(Variant::from("thread-7"))),
                 button("Mark read", "mark-read", None),
             ]),
         ),
@@ -344,14 +343,14 @@ async fn invoked_actions_reach_the_application() -> Result<(), Box<dyn std::erro
     let (method, name, parameter, platform_data) =
         wait_for(|| app_calls.lock().first().cloned()).await;
     assert_eq!((method, name.as_str()), ("ActivateAction", "open"));
-    assert_eq!(parameter, [owned(Value::from(7u32))]);
+    assert_eq!(parameter, [owned(Variant::from(7u32))]);
     assert_eq!(
         platform_data["activation-token"],
-        owned(Value::from("token-1"))
+        owned(Variant::from("token-1"))
     );
     assert_eq!(
         platform_data["desktop-startup-id"],
-        owned(Value::from("token-1"))
+        owned(Variant::from("token-1"))
     );
 
     // An exported button: its target is the only parameter, and the token was
@@ -360,7 +359,7 @@ async fn invoked_actions_reach_the_application() -> Result<(), Box<dyn std::erro
     let (method, name, parameter, platform_data) =
         wait_for(|| app_calls.lock().get(1).cloned()).await;
     assert_eq!((method, name.as_str()), ("ActivateAction", "reply"));
-    assert_eq!(parameter, [owned(Value::from("thread-7"))]);
+    assert_eq!(parameter, [owned(Variant::from("thread-7"))]);
     assert!(platform_data.is_empty());
 
     // A button that isn't an exported action: the app is activated and the
@@ -371,7 +370,7 @@ async fn invoked_actions_reach_the_application() -> Result<(), Box<dyn std::erro
     let signal = tokio::time::timeout(Duration::from_secs(5), portal_signals.next())
         .await?
         .expect("the portal must emit ActionInvoked")?;
-    let (app_id, id, action, _parameter): (String, String, String, Vec<OwnedValue>) =
+    let (app_id, id, action, _parameter): (String, String, String, Vec<OwnedVariant>) =
         signal.body().deserialize()?;
     assert_eq!(
         (app_id.as_str(), id.as_str(), action.as_str()),

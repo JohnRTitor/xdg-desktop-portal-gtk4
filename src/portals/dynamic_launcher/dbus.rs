@@ -5,9 +5,8 @@ use {
         gui::UiProxy,
     },
     zbus::{
-        ObjectServer, fdo, interface,
-        message::Header,
-        zvariant::{DeserializeDict, OwnedObjectPath, OwnedValue, SerializeDict, Type, Value},
+        DeserializeDict, ObjectServer, OwnedObjectPath, OwnedVariant, SerializeDict, Type, Variant,
+        fdo, interface, message::Header,
     },
 };
 
@@ -33,7 +32,7 @@ impl DynamicLauncher {
 }
 
 #[derive(DeserializeDict, Type, Debug, Default)]
-#[zvariant(signature = "dict")]
+#[zbus(signature = "dict")]
 #[allow(dead_code)]
 struct PrepareInstallOptions {
     modal: Option<bool>,
@@ -46,25 +45,25 @@ struct PrepareInstallOptions {
 }
 
 #[derive(SerializeDict, Type, Debug)]
-#[zvariant(signature = "dict")]
+#[zbus(signature = "dict")]
 struct PrepareInstallResults {
     name: String,
-    #[zvariant(rename = "icon")]
-    icon_v: OwnedValue,
+    #[zbus(rename = "icon")]
+    icon_v: OwnedVariant,
 }
 
 impl Default for PrepareInstallResults {
     fn default() -> Self {
         Self {
             name: String::new(),
-            icon_v: OwnedValue::try_from(Value::Str("".into()))
-                .expect("Converting a static empty string to a DBus Value is infallible"),
+            icon_v: OwnedVariant::try_from(Variant::Str("".into()))
+                .expect("Converting a static empty string to a DBus Variant is infallible"),
         }
     }
 }
 
 #[derive(DeserializeDict, Type, Debug, Default)]
-#[zvariant(signature = "dict")]
+#[zbus(signature = "dict")]
 struct RequestInstallTokenOptions {}
 
 impl DynamicLauncher {
@@ -73,7 +72,7 @@ impl DynamicLauncher {
         app_id: String,
         parent_window: String,
         name: String,
-        icon_v: OwnedValue,
+        icon_v: OwnedVariant,
         options: PrepareInstallOptions,
     ) -> Response<PrepareInstallResults> {
         let (icon_name, icon_data) = parse_icon(&icon_v);
@@ -137,7 +136,7 @@ impl DynamicLauncher {
         app_id: String,
         parent_window: String,
         name: String,
-        icon_v: Value<'_>,
+        icon_v: Variant<'_>,
         options: PrepareInstallOptions,
         #[zbus(object_server)] server: &ObjectServer,
     ) -> Result<Response<PrepareInstallResults>, fdo::Error> {
@@ -145,10 +144,10 @@ impl DynamicLauncher {
             .sender()
             .map(|s| String::from(s.as_str()))
             .ok_or_else(|| fdo::Error::Failed("Missing sender".into()))?;
-        let icon_owned = match OwnedValue::try_from(icon_v) {
+        let icon_owned = match OwnedVariant::try_from(icon_v) {
             Ok(v) => v,
             Err(e) => {
-                tracing::error!("Failed to allocate OwnedValue: {}", e);
+                tracing::error!("Failed to allocate OwnedVariant: {}", e);
                 // A malformed icon is a backend failure, not something the user
                 // declined, so this is "other" rather than "cancelled".
                 return Ok(Response::other());
@@ -206,12 +205,12 @@ impl DynamicLauncher {
 ///
 /// The portal specification allows the icon to be passed as a string (icon name),
 /// a byte array (serialized image data), or a themed icon struct.
-fn parse_icon(icon_v: &OwnedValue) -> (Option<String>, Option<Vec<u8>>) {
+fn parse_icon(icon_v: &OwnedVariant) -> (Option<String>, Option<Vec<u8>>) {
     if let Ok(s) = <&str>::try_from(&**icon_v) {
         return (Some(s.into()), None);
     }
 
-    let Ok(structure) = zbus::zvariant::Structure::try_from(&**icon_v) else {
+    let Ok(structure) = zbus::Structure::try_from(&**icon_v) else {
         return (None, None);
     };
 
@@ -226,13 +225,13 @@ fn parse_icon(icon_v: &OwnedValue) -> (Option<String>, Option<Vec<u8>>) {
 
     match type_str {
         "bytes" => {
-            let bytes = <Value>::try_from(&fields[1])
+            let bytes = <Variant>::try_from(&fields[1])
                 .ok()
                 .and_then(|v| <Vec<u8>>::try_from(v).ok());
             (None, bytes)
         }
         "themed" => {
-            let names = <Value>::try_from(&fields[1])
+            let names = <Variant>::try_from(&fields[1])
                 .ok()
                 .and_then(|v| <Vec<String>>::try_from(v).ok());
             if let Some(name) = names.and_then(|n| n.first().cloned()) {
@@ -250,12 +249,12 @@ mod tests {
         super::*,
         gtk4::glib::MainContext,
         tokio::sync::mpsc::unbounded_channel,
-        zbus::{Connection, zvariant::Value},
+        zbus::{Connection, Variant},
     };
 
     #[test]
     fn test_parse_icon_string() {
-        let v = OwnedValue::try_from(Value::Str("my-icon".into())).unwrap();
+        let v = OwnedVariant::try_from(Variant::Str("my-icon".into())).unwrap();
         let (name, data) = parse_icon(&v);
         assert_eq!(name, Some("my-icon".into()));
         assert_eq!(data, None);
@@ -263,7 +262,7 @@ mod tests {
 
     #[test]
     fn test_parse_icon_bytes() {
-        let v = OwnedValue::try_from(Value::from(("bytes", vec![1u8, 2, 3, 4]))).unwrap();
+        let v = OwnedVariant::try_from(Variant::from(("bytes", vec![1u8, 2, 3, 4]))).unwrap();
         let (name, data) = parse_icon(&v);
         assert_eq!(name, None);
         assert_eq!(data, Some(vec![1, 2, 3, 4]));
@@ -271,7 +270,7 @@ mod tests {
 
     #[test]
     fn test_parse_icon_themed() {
-        let v = OwnedValue::try_from(Value::from(("themed", vec!["icon1", "icon2"]))).unwrap();
+        let v = OwnedVariant::try_from(Variant::from(("themed", vec!["icon1", "icon2"]))).unwrap();
         let (name, data) = parse_icon(&v);
         assert_eq!(name, Some("icon1".into()));
         assert_eq!(data, None);
@@ -280,7 +279,7 @@ mod tests {
     #[test]
     fn test_parse_icon_themed_empty() {
         let empty_vec: Vec<String> = vec![];
-        let v = OwnedValue::try_from(Value::from(("themed", empty_vec))).unwrap();
+        let v = OwnedVariant::try_from(Variant::from(("themed", empty_vec))).unwrap();
         let (name, data) = parse_icon(&v);
         assert_eq!(name, None);
         assert_eq!(data, None);
@@ -288,10 +287,10 @@ mod tests {
 
     #[test]
     fn test_parse_icon_invalid_structure() {
-        let type_val = Value::Str("unknown".into());
-        let dummy_val = Value::from(123);
+        let type_val = Variant::Str("unknown".into());
+        let dummy_val = Variant::from(123);
         let variant_val = dummy_val;
-        let v = OwnedValue::try_from(Value::from((type_val, variant_val))).unwrap();
+        let v = OwnedVariant::try_from(Variant::from((type_val, variant_val))).unwrap();
         let (name, data) = parse_icon(&v);
         assert_eq!(name, None);
         assert_eq!(data, None);
@@ -299,8 +298,8 @@ mod tests {
 
     #[test]
     fn test_parse_icon_wrong_field_count() {
-        let type_val = Value::Str("bytes".into());
-        let v = OwnedValue::try_from(Value::from((type_val,))).unwrap();
+        let type_val = Variant::Str("bytes".into());
+        let v = OwnedVariant::try_from(Variant::from((type_val,))).unwrap();
         let (name, data) = parse_icon(&v);
         assert_eq!(name, None);
         assert_eq!(data, None);
@@ -387,16 +386,19 @@ mod tests {
     fn test_prepare_install_options_deserialize() {
         use {
             std::collections::HashMap,
-            zbus::zvariant::{self, Endian, Value, serialized::Context},
+            zbus::{
+                Variant,
+                wire::{self, Endian, serialized::Context},
+            },
         };
 
         let mut dict = HashMap::new();
-        dict.insert("modal", Value::from(true));
-        dict.insert("target", Value::from("https://example.com"));
-        dict.insert("launcher_type", Value::from(2u32));
+        dict.insert("modal", Variant::from(true));
+        dict.insert("target", Variant::from("https://example.com"));
+        dict.insert("launcher_type", Variant::from(2u32));
 
-        let ctxt = Context::new_dbus(Endian::Little, 0);
-        let encoded = zvariant::to_bytes(ctxt, &dict).unwrap();
+        let ctxt = Context::new(Endian::Little, 0);
+        let encoded = wire::to_bytes(ctxt, &dict).unwrap();
         let options: PrepareInstallOptions = encoded.deserialize().unwrap().0;
 
         assert_eq!(options.modal, Some(true));
@@ -409,25 +411,28 @@ mod tests {
     fn test_prepare_install_results_serialize() {
         use {
             std::collections::HashMap,
-            zbus::zvariant::{self, Endian, Value, serialized::Context},
+            zbus::{
+                Variant,
+                wire::{self, Endian, serialized::Context},
+            },
         };
 
         let results = PrepareInstallResults {
             name: "My Web App".into(),
-            icon_v: OwnedValue::try_from(Value::from("my-icon")).unwrap(),
+            icon_v: OwnedVariant::try_from(Variant::from("my-icon")).unwrap(),
         };
 
-        let ctxt = Context::new_dbus(Endian::Little, 0);
-        let encoded = zvariant::to_bytes(ctxt, &results).unwrap();
-        let decoded: HashMap<String, Value> = encoded.deserialize().unwrap().0;
+        let ctxt = Context::new(Endian::Little, 0);
+        let encoded = wire::to_bytes(ctxt, &results).unwrap();
+        let decoded: HashMap<String, Variant> = encoded.deserialize().unwrap().0;
 
         assert_eq!(
             decoded.get("name").unwrap().try_clone().unwrap(),
-            Value::from("My Web App")
+            Variant::from("My Web App")
         );
         assert_eq!(
             decoded.get("icon").unwrap().try_clone().unwrap(),
-            Value::from("my-icon")
+            Variant::from("my-icon")
         );
     }
 }

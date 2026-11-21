@@ -5,7 +5,7 @@ use {
     },
     parking_lot::RwLock,
     std::{collections::HashMap, sync::Arc},
-    zbus::zvariant::{OwnedValue, Value},
+    zbus::{OwnedVariant, Variant},
 };
 
 use crate::portals::settings::dbus::map_color_scheme;
@@ -17,11 +17,11 @@ pub const KEY_COLOR_SCHEME: &str = "color-scheme";
 
 #[derive(Default, Debug)]
 pub struct SettingsState {
-    pub namespaces: HashMap<String, HashMap<String, OwnedValue>>,
+    pub namespaces: HashMap<String, HashMap<String, OwnedVariant>>,
 }
 
 impl SettingsState {
-    pub fn get(&self, ns: &str, key: &str) -> Option<OwnedValue> {
+    pub fn get(&self, ns: &str, key: &str) -> Option<OwnedVariant> {
         self.namespaces.get(ns).and_then(|m| m.get(key).cloned())
     }
 
@@ -37,7 +37,7 @@ impl SettingsState {
     /// The miss path costs a second hash lookup (`get_mut`, then `insert`).
     /// That happens once per namespace per reload, so trading it for not
     /// allocating on every key is the right way round.
-    pub fn insert(&mut self, ns: &str, key: &str, val: OwnedValue) {
+    pub fn insert(&mut self, ns: &str, key: &str, val: OwnedVariant) {
         if let Some(inner) = self.namespaces.get_mut(ns) {
             inner.insert(key.to_owned(), val);
             return;
@@ -65,7 +65,7 @@ impl SettingsAggregator {
         }
     }
 
-    pub fn reload_all(&mut self) -> Vec<(String, String, OwnedValue)> {
+    pub fn reload_all(&mut self) -> Vec<(String, String, OwnedVariant)> {
         let mut new_state = SettingsState::default();
 
         // 1. Read GSettings
@@ -131,19 +131,19 @@ impl SettingsAggregator {
             let owned_val = match type_string {
                 "s" => val
                     .get::<String>()
-                    .and_then(|s| OwnedValue::try_from(Value::Str(s.into())).ok()),
+                    .and_then(|s| OwnedVariant::try_from(Variant::Str(s.into())).ok()),
                 "b" => val
                     .get::<bool>()
-                    .and_then(|b| OwnedValue::try_from(Value::Bool(b)).ok()),
+                    .and_then(|b| OwnedVariant::try_from(Variant::Bool(b)).ok()),
                 "u" => val
                     .get::<u32>()
-                    .and_then(|u| OwnedValue::try_from(Value::U32(u)).ok()),
+                    .and_then(|u| OwnedVariant::try_from(Variant::U32(u)).ok()),
                 "i" => val
                     .get::<i32>()
-                    .and_then(|i| OwnedValue::try_from(Value::I32(i)).ok()),
+                    .and_then(|i| OwnedVariant::try_from(Variant::I32(i)).ok()),
                 "d" => val
                     .get::<f64>()
-                    .and_then(|d| OwnedValue::try_from(Value::F64(d)).ok()),
+                    .and_then(|d| OwnedVariant::try_from(Variant::F64(d)).ok()),
                 _ => None,
             };
             let Some(v) = owned_val else {
@@ -180,17 +180,17 @@ impl SettingsAggregator {
 
             let val_str = val.as_str();
             let owned = if val_str == "true" {
-                OwnedValue::try_from(Value::Bool(true))
-                    .expect("Converting primitive Value to OwnedValue is infallible")
+                OwnedVariant::try_from(Variant::Bool(true))
+                    .expect("Converting primitive Variant to OwnedVariant is infallible")
             } else if val_str == "false" {
-                OwnedValue::try_from(Value::Bool(false))
-                    .expect("Converting primitive Value to OwnedValue is infallible")
+                OwnedVariant::try_from(Variant::Bool(false))
+                    .expect("Converting primitive Variant to OwnedVariant is infallible")
             } else if let Ok(num) = val_str.parse::<i32>() {
-                OwnedValue::try_from(Value::I32(num))
-                    .expect("Converting primitive Value to OwnedValue is infallible")
+                OwnedVariant::try_from(Variant::I32(num))
+                    .expect("Converting primitive Variant to OwnedVariant is infallible")
             } else {
-                OwnedValue::try_from(Value::Str(val_str.into()))
-                    .expect("Converting primitive Value to OwnedValue is infallible")
+                OwnedVariant::try_from(Variant::Str(val_str.into()))
+                    .expect("Converting primitive Variant to OwnedVariant is infallible")
             };
             state.insert(NS_GNOME_DESKTOP_INTERFACE, key_str, owned);
         }
@@ -225,14 +225,14 @@ impl SettingsAggregator {
 
                 let val_str = val.as_str();
                 let owned = if val_str == "true" {
-                    OwnedValue::try_from(Value::Bool(true))
-                        .expect("Converting primitive Value to OwnedValue is infallible")
+                    OwnedVariant::try_from(Variant::Bool(true))
+                        .expect("Converting primitive Variant to OwnedVariant is infallible")
                 } else if val_str == "false" {
-                    OwnedValue::try_from(Value::Bool(false))
-                        .expect("Converting primitive Value to OwnedValue is infallible")
+                    OwnedVariant::try_from(Variant::Bool(false))
+                        .expect("Converting primitive Variant to OwnedVariant is infallible")
                 } else {
-                    OwnedValue::try_from(Value::Str(val_str.into()))
-                        .expect("Converting primitive Value to OwnedValue is infallible")
+                    OwnedVariant::try_from(Variant::Str(val_str.into()))
+                        .expect("Converting primitive Variant to OwnedVariant is infallible")
                 };
                 state.insert(&ns, key_str, owned);
             }
@@ -242,26 +242,26 @@ impl SettingsAggregator {
     fn resolve_appearance(state: &mut SettingsState) {
         let mut color_scheme_val = 0u32;
         if let Some(cs) = state.get(NS_GNOME_DESKTOP_INTERFACE, KEY_COLOR_SCHEME) {
-            if let Value::Str(s) = &*cs {
+            if let Variant::Str(s) = &*cs {
                 color_scheme_val = map_color_scheme(s.as_str());
             }
         } else if let Some(pref_dark) = state.get(
             NS_GNOME_DESKTOP_INTERFACE,
             "gtk-application-prefer-dark-theme",
-        ) && let Value::Bool(b) = &*pref_dark
+        ) && let Variant::Bool(b) = &*pref_dark
         {
             color_scheme_val = if *b { 1 } else { 2 };
         }
         state.insert(
             NS_FREEDESKTOP_APPEARANCE,
             KEY_COLOR_SCHEME,
-            OwnedValue::try_from(Value::U32(color_scheme_val))
-                .expect("Converting primitive Value to OwnedValue is infallible"),
+            OwnedVariant::try_from(Variant::U32(color_scheme_val))
+                .expect("Converting primitive Variant to OwnedVariant is infallible"),
         );
 
         let mut contrast_val = 0u32;
         if let Some(hc) = state.get(NS_GNOME_DESKTOP_INTERFACE, "gtk-theme-name")
-            && let Value::Str(s) = &*hc
+            && let Variant::Str(s) = &*hc
             && s.as_str().contains("HighContrast")
         {
             contrast_val = 1;
@@ -269,21 +269,21 @@ impl SettingsAggregator {
         state.insert(
             NS_FREEDESKTOP_APPEARANCE,
             "contrast",
-            OwnedValue::try_from(Value::U32(contrast_val))
-                .expect("Converting primitive Value to OwnedValue is infallible"),
+            OwnedVariant::try_from(Variant::U32(contrast_val))
+                .expect("Converting primitive Variant to OwnedVariant is infallible"),
         );
 
         let mut reduced_motion_val = 0u32;
         if let Some(ea) = state.get(NS_GNOME_DESKTOP_INTERFACE, "gtk-enable-animations")
-            && let Value::Bool(b) = &*ea
+            && let Variant::Bool(b) = &*ea
         {
             reduced_motion_val = if *b { 0 } else { 1 };
         }
         state.insert(
             NS_FREEDESKTOP_APPEARANCE,
             "reduced-motion",
-            OwnedValue::try_from(Value::U32(reduced_motion_val))
-                .expect("Converting primitive Value to OwnedValue is infallible"),
+            OwnedVariant::try_from(Variant::U32(reduced_motion_val))
+                .expect("Converting primitive Variant to OwnedVariant is infallible"),
         );
     }
 }
@@ -292,8 +292,9 @@ impl SettingsAggregator {
 mod tests {
     use super::*;
 
-    fn bool_value(v: bool) -> OwnedValue {
-        OwnedValue::try_from(Value::Bool(v)).expect("primitive Value to OwnedValue is infallible")
+    fn bool_value(v: bool) -> OwnedVariant {
+        OwnedVariant::try_from(Variant::Bool(v))
+            .expect("primitive Variant to OwnedVariant is infallible")
     }
 
     #[test]

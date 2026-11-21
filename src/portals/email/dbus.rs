@@ -3,9 +3,8 @@ use {
     gtk4::{gio, gio::AppInfo, glib, prelude::AppLaunchContextExt},
     std::sync::Arc,
     zbus::{
-        ObjectServer, fdo, interface,
+        DeserializeDict, ObjectServer, OwnedObjectPath, SerializeDict, Type, fdo, interface,
         message::Header,
-        zvariant::{DeserializeDict, OwnedObjectPath, SerializeDict, Type},
     },
 };
 
@@ -54,7 +53,7 @@ impl Email {
 }
 
 #[derive(DeserializeDict, Type, Debug, Default)]
-#[zvariant(signature = "dict")]
+#[zbus(signature = "dict")]
 struct ComposeEmailOptions {
     address: Option<String>,
     addresses: Option<Vec<String>>,
@@ -67,7 +66,7 @@ struct ComposeEmailOptions {
 }
 
 #[derive(SerializeDict, Type, Debug, Default)]
-#[zvariant(signature = "dict")]
+#[zbus(signature = "dict")]
 struct EmailResults {}
 
 impl Email {
@@ -217,7 +216,7 @@ impl Email {
 
 #[cfg(test)]
 mod tests {
-    use {super::*, zbus::zvariant::Type};
+    use {super::*, zbus::Type};
 
     #[test]
     fn test_compose_url_basic() {
@@ -400,15 +399,18 @@ mod tests {
     fn test_compose_email_options_deserialize() {
         use {
             std::collections::HashMap,
-            zbus::zvariant::{self, Endian, Value, serialized::Context},
+            zbus::{
+                Variant,
+                wire::{self, Endian, serialized::Context},
+            },
         };
 
         let mut dict = HashMap::new();
-        dict.insert("address", Value::from("test@example.com"));
-        dict.insert("subject", Value::from("Test Subject"));
+        dict.insert("address", Variant::from("test@example.com"));
+        dict.insert("subject", Variant::from("Test Subject"));
 
-        let ctxt = Context::new_dbus(Endian::Little, 0);
-        let encoded = zvariant::to_bytes(ctxt, &dict).unwrap();
+        let ctxt = Context::new(Endian::Little, 0);
+        let encoded = wire::to_bytes(ctxt, &dict).unwrap();
         let options: ComposeEmailOptions = encoded.deserialize().unwrap().0;
 
         assert_eq!(options.address.as_deref(), Some("test@example.com"));
@@ -419,13 +421,16 @@ mod tests {
     fn test_email_results_serialize() {
         use {
             std::collections::HashMap,
-            zbus::zvariant::{self, Endian, Value, serialized::Context},
+            zbus::{
+                Variant,
+                wire::{self, Endian, serialized::Context},
+            },
         };
 
         let results = EmailResults::default();
-        let ctxt = Context::new_dbus(Endian::Little, 0);
-        let encoded = zvariant::to_bytes(ctxt, &results).unwrap();
-        let decoded: HashMap<String, Value> = encoded.deserialize().unwrap().0;
+        let ctxt = Context::new(Endian::Little, 0);
+        let encoded = wire::to_bytes(ctxt, &results).unwrap();
+        let decoded: HashMap<String, Variant> = encoded.deserialize().unwrap().0;
 
         assert!(decoded.is_empty());
     }

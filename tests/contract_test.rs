@@ -7,10 +7,7 @@ mod common;
 use {
     common::dummy_proxy,
     std::collections::HashMap,
-    zbus::{
-        Connection,
-        zvariant::{ObjectPath, OwnedObjectPath, Value},
-    },
+    zbus::{Connection, ObjectPath, OwnedObjectPath, Variant},
 };
 
 // ---------------------------------------------------------------- clipboard --
@@ -48,27 +45,19 @@ async fn clipboard_validates_session_handle() {
     let Ok(client) = Connection::session().await else {
         return;
     };
-    let Ok(builder) = zbus::connection::Builder::session() else {
-        return;
-    };
-    let server_conn = builder
-        .serve_at(
-            "/org/freedesktop/portal/desktop",
-            xdg_desktop_portal_gtk4::portals::clipboard::dbus::ClipboardPortal::new(
-                client.clone(),
-                dummy_proxy(),
-                xdg_desktop_portal_gtk4::core::session_manager::SessionManager::new(
-                    client.clone(),
-                    10,
-                ),
-            ),
-        )
-        .expect("serve_at");
+    let builder = zbus::connection::Builder::session();
+    let server_conn = builder.serve_at(
+        "/org/freedesktop/portal/desktop",
+        xdg_desktop_portal_gtk4::portals::clipboard::dbus::ClipboardPortal::new(
+            client.clone(),
+            dummy_proxy(),
+            xdg_desktop_portal_gtk4::core::session_manager::SessionManager::new(client.clone(), 10),
+        ),
+    );
     let _server: zbus::connection::Connection = server_conn.build().await.expect("private bus");
 
     let proxy = ClipboardProxy::builder(&client)
         .destination(_server.unique_name().unwrap().clone())
-        .unwrap()
         .build()
         .await
         .unwrap();
@@ -114,26 +103,18 @@ async fn app_chooser_update_choices_unknown_handle() {
     let Ok(client) = Connection::session().await else {
         return;
     };
-    let Ok(builder) = zbus::connection::Builder::session() else {
-        return;
-    };
-    let server_conn = builder
-        .serve_at(
-            "/org/freedesktop/portal/desktop",
-            xdg_desktop_portal_gtk4::portals::app_chooser::dbus::AppChooser::new(
-                &dummy_proxy(),
-                xdg_desktop_portal_gtk4::core::session_manager::SessionManager::new(
-                    client.clone(),
-                    10,
-                ),
-            ),
-        )
-        .expect("serve_at");
+    let builder = zbus::connection::Builder::session();
+    let server_conn = builder.serve_at(
+        "/org/freedesktop/portal/desktop",
+        xdg_desktop_portal_gtk4::portals::app_chooser::dbus::AppChooser::new(
+            &dummy_proxy(),
+            xdg_desktop_portal_gtk4::core::session_manager::SessionManager::new(client.clone(), 10),
+        ),
+    );
     let _server = server_conn.build().await.expect("private bus");
 
     let proxy = AppChooserProxy::builder(&client)
         .destination(_server.unique_name().unwrap().clone())
-        .unwrap()
         .build()
         .await
         .unwrap();
@@ -271,8 +252,8 @@ trait Account {
         handle: &OwnedObjectPath,
         app_id: &str,
         window: &str,
-        options: HashMap<&str, Value<'_>>,
-    ) -> zbus::Result<(u32, HashMap<String, zbus::zvariant::OwnedValue>)>;
+        options: HashMap<&str, Variant<'_>>,
+    ) -> zbus::Result<(u32, HashMap<String, zbus::OwnedVariant>)>;
 }
 
 /// `Request.Close()` must be answered with a *non-cancellation* response code.
@@ -304,12 +285,9 @@ async fn request_close_reports_other_not_cancelled() {
     let h = handle.clone();
     tokio::spawn(async move {
         tokio::time::sleep(std::time::Duration::from_millis(300)).await;
-        let Ok(builder) = RequestCloserProxy::builder(&closer)
+        let builder = RequestCloserProxy::builder(&closer)
             .destination(dest.clone())
-            .and_then(|b| b.path(h.as_str()))
-        else {
-            return;
-        };
+            .path(h.as_str());
         let Ok(proxy) = builder.build().await else {
             return;
         };

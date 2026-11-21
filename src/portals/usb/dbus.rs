@@ -6,16 +6,15 @@ use {
     },
     std::collections::HashMap,
     zbus::{
-        fdo, interface,
+        Dict, OwnedObjectPath, OwnedVariant, SerializeDict, Type, Variant, fdo, interface,
         message::Header,
-        zvariant::{Dict, OwnedObjectPath, OwnedValue, SerializeDict, Type, Value},
     },
 };
 
 type UsbDeviceData = (
     String,
-    HashMap<String, OwnedValue>,
-    HashMap<String, OwnedValue>,
+    HashMap<String, OwnedVariant>,
+    HashMap<String, OwnedVariant>,
 );
 
 /// Udev keys read from a device, in fallback order.
@@ -30,11 +29,11 @@ const SERIAL_KEY: &str = "ID_SERIAL_SHORT";
 /// one implementation and never copy.
 ///
 /// The previous code instead deep-copied the dictionary per device -- and for
-/// the nested shape copied the `Value` *and then* rebuilt a `HashMap` from that
+/// the nested shape copied the `Variant` *and then* rebuilt a `HashMap` from that
 /// copy -- in order to read three strings out of it, then dropped the copy. Only
 /// the three extracted fields are ever kept.
 enum UdevProperties<'a> {
-    Flat(&'a HashMap<String, OwnedValue>),
+    Flat(&'a HashMap<String, OwnedVariant>),
     Nested(&'a Dict<'a, 'a>),
 }
 
@@ -43,9 +42,9 @@ impl<'a> UdevProperties<'a> {
     ///
     /// Falls back to the flat dictionary if `"properties"` is present but is not
     /// a dictionary, so an unexpected payload does not lose every property.
-    fn of(props: &'a HashMap<String, OwnedValue>) -> Self {
+    fn of(props: &'a HashMap<String, OwnedVariant>) -> Self {
         match props.get("properties").map(|value| &**value) {
-            Some(Value::Dict(dict)) => Self::Nested(dict),
+            Some(Variant::Dict(dict)) => Self::Nested(dict),
             _ => Self::Flat(props),
         }
     }
@@ -66,28 +65,28 @@ impl<'a> UdevProperties<'a> {
     }
 }
 
-/// Reads a `Value` as a string, tolerating one level of variant wrapping.
+/// Reads a `Variant` as a string, tolerating one level of variant wrapping.
 ///
 /// `a{sv}` normally deserialises to values that are already unwrapped, but a
 /// payload can arrive wrapped; the previous code went through
-/// `HashMap<String, OwnedValue>` and would have surfaced the wrapper as the
+/// `HashMap<String, OwnedVariant>` and would have surfaced the wrapper as the
 /// value, so this keeps that case working rather than silently dropping the
 /// property.
-fn as_str<'a>(value: &'a Value<'a>) -> Option<&'a str> {
+fn as_str<'a>(value: &'a Variant<'a>) -> Option<&'a str> {
     match value {
         // One level of unwrapping, not recursive: this is exactly what the
-        // previous `Dict -> HashMap<String, OwnedValue>` conversion did, and a
-        // nested `a{sv}`'s values arrive wrapped in `Value::Value`. Pinned by
+        // previous `Dict -> HashMap<String, OwnedVariant>` conversion did, and a
+        // nested `a{sv}`'s values arrive wrapped in `Variant::Variant`. Pinned by
         // `nested_values_arrive_wrapped_in_a_variant`.
-        Value::Value(inner) => <&str>::try_from(&**inner).ok(),
+        Variant::Variant(inner) => <&str>::try_from(&**inner).ok(),
         other => <&str>::try_from(other).ok(),
     }
 }
 
 #[derive(SerializeDict, Type, Debug, Default)]
-#[zvariant(signature = "dict")]
+#[zbus(signature = "dict")]
 pub struct UsbResults {
-    devices: Vec<(String, HashMap<String, OwnedValue>)>,
+    devices: Vec<(String, HashMap<String, OwnedVariant>)>,
 }
 
 /// D-Bus interface wrapper for the USB portal.
@@ -128,7 +127,7 @@ impl UsbPortal {
         app_id: String,
         parent_window: String,
         devices_in: Vec<UsbDeviceData>,
-        options: HashMap<String, OwnedValue>,
+        options: HashMap<String, OwnedVariant>,
     ) -> Response<UsbResults> {
         let mut parsed_devices = Vec::with_capacity(devices_in.len());
         for (id, props, access_options) in devices_in {
@@ -193,7 +192,7 @@ impl UsbPortal {
         parent_window: String,
         app_id: String,
         devices: Vec<UsbDeviceData>,
-        options: HashMap<String, OwnedValue>,
+        options: HashMap<String, OwnedVariant>,
         #[zbus(object_server)] server: &zbus::ObjectServer,
     ) -> Result<Response<UsbResults>, fdo::Error> {
         let sender = header
@@ -219,7 +218,7 @@ impl UsbPortal {
 
 #[cfg(test)]
 mod tests {
-    use {super::*, zbus::zvariant::Type};
+    use {super::*, zbus::Type};
 
     #[test]
     fn test_parse_udev_basic() {
@@ -246,24 +245,27 @@ mod tests {
 
     #[test]
     fn test_usb_results_serialize() {
-        use zbus::zvariant::{self, Endian, Value, serialized::Context};
+        use zbus::{
+            Variant,
+            wire::{self, Endian, serialized::Context},
+        };
 
         let mut props = HashMap::new();
         props.insert(
             "name".into(),
-            zbus::zvariant::OwnedValue::try_from(Value::from("Test USB")).unwrap(),
+            zbus::OwnedVariant::try_from(Variant::from("Test USB")).unwrap(),
         );
 
         let results = UsbResults {
             devices: vec![("device1".into(), props)],
         };
 
-        let ctxt = Context::new_dbus(Endian::Little, 0);
-        let encoded = zvariant::to_bytes(ctxt, &results).unwrap();
-        let decoded: HashMap<String, Value> = encoded.deserialize().unwrap().0;
+        let ctxt = Context::new(Endian::Little, 0);
+        let encoded = wire::to_bytes(ctxt, &results).unwrap();
+        let decoded: HashMap<String, Variant> = encoded.deserialize().unwrap().0;
 
         let _decoded_devices_val = decoded.get("devices").unwrap();
-        // Since signature is a{sv}, devices is returned as Value.
+        // Since signature is a{sv}, devices is returned as Variant.
         // In UsbResults, devices is `a(sa{sv})`.
         // Let's just ensure it's not empty and serialization worked.
         assert!(decoded.contains_key("devices"));
@@ -274,12 +276,12 @@ mod tests {
 mod udev_property_tests {
     use super::*;
 
-    fn owned(s: &str) -> OwnedValue {
-        OwnedValue::try_from(Value::from(s)).expect("str to OwnedValue is infallible")
+    fn owned(s: &str) -> OwnedVariant {
+        OwnedVariant::try_from(Variant::from(s)).expect("str to OwnedVariant is infallible")
     }
 
-    fn flat(pairs: &[(&str, &str)]) -> HashMap<String, OwnedValue> {
-        let source: HashMap<String, OwnedValue> = pairs
+    fn flat(pairs: &[(&str, &str)]) -> HashMap<String, OwnedVariant> {
+        let source: HashMap<String, OwnedVariant> = pairs
             .iter()
             .map(|(k, v)| ((*k).to_owned(), owned(v)))
             .collect();
@@ -290,15 +292,16 @@ mod udev_property_tests {
     /// frontend sends for some devices.
     ///
     /// The whole dictionary is round-tripped through the real D-Bus encoding on
-    /// purpose. The shape zvariant actually produces for `a{sv}` is not the
+    /// purpose. The shape zbus actually produces for `a{sv}` is not the
     /// obvious one -- a nested dictionary's values arrive wrapped in
-    /// `Value::Value` -- so hand-building it would test a payload the daemon never
+    /// `Variant::Variant` -- so hand-building it would test a payload the daemon never
     /// receives, and the unwrap in `as_str` would look like dead code.
-    fn nested(outer: &[(&str, &str)], inner: &[(&str, &str)]) -> HashMap<String, OwnedValue> {
-        let inner_map: HashMap<&str, OwnedValue> =
+    fn nested(outer: &[(&str, &str)], inner: &[(&str, &str)]) -> HashMap<String, OwnedVariant> {
+        let inner_map: HashMap<&str, OwnedVariant> =
             inner.iter().map(|(k, v)| (*k, owned(v))).collect();
-        let properties = OwnedValue::try_from(Value::from(inner_map)).expect("dict to OwnedValue");
-        let source: HashMap<String, OwnedValue> = outer
+        let properties =
+            OwnedVariant::try_from(Variant::from(inner_map)).expect("dict to OwnedVariant");
+        let source: HashMap<String, OwnedVariant> = outer
             .iter()
             .map(|(k, v)| ((*k).to_owned(), owned(v)))
             .chain(std::iter::once(("properties".to_owned(), properties)))
@@ -308,22 +311,22 @@ mod udev_property_tests {
 
     fn wire_round_trip<T>(value: &T) -> T
     where
-        T: zbus::zvariant::Type + serde::Serialize + serde::de::DeserializeOwned,
+        T: zbus::Type + serde::Serialize + serde::de::DeserializeOwned,
     {
-        let ctxt = zbus::zvariant::serialized::Context::new_dbus(zbus::zvariant::Endian::Little, 0);
-        let encoded = zbus::zvariant::to_bytes(ctxt, value).expect("serialise");
+        let ctxt = zbus::wire::serialized::Context::new(zbus::wire::Endian::Little, 0);
+        let encoded = zbus::wire::to_bytes(ctxt, value).expect("serialise");
         encoded.deserialize().expect("deserialise").0
     }
 
-    fn vendor(props: &HashMap<String, OwnedValue>) -> Option<String> {
+    fn vendor(props: &HashMap<String, OwnedVariant>) -> Option<String> {
         UsbPortal::extract_property(&UdevProperties::of(props), &VENDOR_KEYS)
     }
 
-    fn model(props: &HashMap<String, OwnedValue>) -> Option<String> {
+    fn model(props: &HashMap<String, OwnedVariant>) -> Option<String> {
         UsbPortal::extract_property(&UdevProperties::of(props), &MODEL_KEYS)
     }
 
-    fn serial(props: &HashMap<String, OwnedValue>) -> Option<String> {
+    fn serial(props: &HashMap<String, OwnedVariant>) -> Option<String> {
         UdevProperties::of(props)
             .get(SERIAL_KEY)
             .filter(|s| !s.is_empty())
@@ -402,7 +405,7 @@ mod udev_property_tests {
         let mut props = flat(&[]);
         props.insert(
             "ID_VENDOR_ENC".to_owned(),
-            OwnedValue::try_from(Value::from(42u32)).unwrap(),
+            OwnedVariant::try_from(Variant::from(42u32)).unwrap(),
         );
         props.insert("ID_VENDOR_ID".to_owned(), owned("0abc"));
         assert_eq!(vendor(&props).as_deref(), Some("0abc"));
@@ -428,7 +431,7 @@ mod udev_property_tests {
     }
 
     /// The regression this guards: the properties were deep-copied per device --
-    /// and for the nested shape the `Value` was copied *and then* rebuilt into a
+    /// and for the nested shape the `Variant` was copied *and then* rebuilt into a
     /// `HashMap` -- only to read a handful of strings out of it.
     #[test]
     fn reading_nested_properties_allocates_nothing() {
@@ -458,23 +461,23 @@ mod udev_property_tests {
     }
 
     /// Guards the shape assumption: a nested `a{sv}` really does arrive with its
-    /// values wrapped in `Value::Value`, so the unwrap in `as_str` is
+    /// values wrapped in `Variant::Variant`, so the unwrap in `as_str` is
     /// load-bearing rather than defensive noise.
     #[test]
     fn nested_values_arrive_wrapped_in_a_variant() {
         let props = nested(&[], &[("ID_VENDOR_ENC", "Acme")]);
         let nested_value = props.get("properties").expect("properties key");
-        let Value::Dict(dict) = &**nested_value else {
+        let Variant::Dict(dict) = &**nested_value else {
             panic!("properties must be a dictionary");
         };
         let wrapped: Vec<bool> = dict
             .iter()
-            .map(|(_, v)| matches!(v, Value::Value(_)))
+            .map(|(_, v)| matches!(v, Variant::Variant(_)))
             .collect();
         assert_eq!(
             wrapped,
             vec![true],
-            "zvariant wraps a{{sv}} values; if that ever changes the unwrap in \
+            "zbus wraps a{{sv}} values; if that ever changes the unwrap in \
              `as_str` becomes dead and this assertion should be revisited"
         );
     }

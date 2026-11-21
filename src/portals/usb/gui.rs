@@ -9,7 +9,7 @@ use {
     rust_i18n::t,
     std::{collections::HashMap, rc::Rc},
     tokio::sync::oneshot::Receiver,
-    zbus::zvariant::OwnedValue,
+    zbus::OwnedVariant,
 };
 
 #[derive(Debug, Clone)]
@@ -18,7 +18,7 @@ pub struct UsbDevice {
     pub title: String,
     pub subtitle: String,
     pub serial: Option<String>,
-    pub access_options: HashMap<String, OwnedValue>,
+    pub access_options: HashMap<String, OwnedVariant>,
 }
 
 pub struct UsbUi {
@@ -29,7 +29,7 @@ pub struct UsbUi {
 }
 
 pub struct UsbResult {
-    pub devices: Vec<(String, HashMap<String, OwnedValue>)>,
+    pub devices: Vec<(String, HashMap<String, OwnedVariant>)>,
 }
 
 impl UsbUi {

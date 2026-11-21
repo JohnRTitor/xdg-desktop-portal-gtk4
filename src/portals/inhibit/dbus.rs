@@ -11,15 +11,13 @@ use {
     },
     tokio::sync::Notify,
     zbus::{
-        Connection, ObjectServer, fdo, interface,
-        message::Header,
-        object_server::SignalEmitter,
-        zvariant::{DeserializeDict, OwnedObjectPath, Type, Value},
+        Connection, DeserializeDict, ObjectServer, OwnedObjectPath, Type, Variant, fdo, interface,
+        message::Header, object_server::SignalEmitter,
     },
 };
 
 #[derive(DeserializeDict, Type, Debug, Default)]
-#[zvariant(signature = "dict")]
+#[zbus(signature = "dict")]
 struct InhibitOptions {
     reason: Option<String>,
 }
@@ -43,13 +41,7 @@ trait ScreenSaver {
     default_path = "/org/freedesktop/login1"
 )]
 trait Login1Manager {
-    fn inhibit(
-        &self,
-        what: &str,
-        who: &str,
-        why: &str,
-        mode: &str,
-    ) -> zbus::Result<zbus::zvariant::OwnedFd>;
+    fn inhibit(&self, what: &str, who: &str, why: &str, mode: &str) -> zbus::Result<zbus::OwnedFd>;
 }
 
 struct InhibitRequest {
@@ -140,9 +132,9 @@ const SESSION_STATE_RUNNING: u32 = 1;
 /// 2 = Query End, 3 = Ending), and both are emitted on every transition and once
 /// when a monitor is created, so a new monitor learns the current state without
 /// waiting for the next change.
-fn monitor_state<'a>(screensaver_active: bool) -> HashMap<&'a str, Value<'a>> {
-    let mut state: HashMap<&'a str, Value<'a>> = HashMap::with_capacity(2);
-    state.insert("screensaver-active", Value::Bool(screensaver_active));
+fn monitor_state<'a>(screensaver_active: bool) -> HashMap<&'a str, Variant<'a>> {
+    let mut state: HashMap<&'a str, Variant<'a>> = HashMap::with_capacity(2);
+    state.insert("screensaver-active", Variant::Bool(screensaver_active));
     // Always publish `session-state` alongside `screensaver-active`, with the
     // one value this backend can actually be in.
     //
@@ -160,7 +152,7 @@ fn monitor_state<'a>(screensaver_active: bool) -> HashMap<&'a str, Value<'a>> {
     // every consumer see `session_state == 0`, a value outside the documented
     // 1/2/3 range, so an app that switched on it fell through to undefined
     // behaviour.
-    state.insert("session-state", Value::U32(SESSION_STATE_RUNNING));
+    state.insert("session-state", Variant::U32(SESSION_STATE_RUNNING));
     state
 }
 
@@ -487,8 +479,8 @@ impl Inhibit {
     #[zbus(signal)]
     async fn state_changed(
         ctx: &SignalEmitter<'_>,
-        session_handle: &zbus::zvariant::ObjectPath<'_>,
-        state: &HashMap<&str, Value<'_>>,
+        session_handle: &zbus::ObjectPath<'_>,
+        state: &HashMap<&str, Variant<'_>>,
     ) -> zbus::Result<()>;
 }
 
@@ -497,16 +489,19 @@ mod tests {
     use {
         super::*,
         std::collections::HashMap,
-        zbus::zvariant::{self, Endian, Value, serialized::Context},
+        zbus::{
+            Variant,
+            wire::{self, Endian, serialized::Context},
+        },
     };
 
     #[test]
     fn test_inhibit_options_deserialize() {
         let mut dict = HashMap::new();
-        dict.insert("reason", Value::from("Playing a movie"));
+        dict.insert("reason", Variant::from("Playing a movie"));
 
-        let ctxt = Context::new_dbus(Endian::Little, 0);
-        let encoded = zvariant::to_bytes(ctxt, &dict).unwrap();
+        let ctxt = Context::new(Endian::Little, 0);
+        let encoded = wire::to_bytes(ctxt, &dict).unwrap();
         let options: InhibitOptions = encoded.deserialize().unwrap().0;
 
         assert_eq!(options.reason.as_deref(), Some("Playing a movie"));
@@ -514,9 +509,9 @@ mod tests {
 
     #[test]
     fn test_inhibit_options_empty() {
-        let dict: HashMap<&str, Value> = HashMap::new();
-        let ctxt = Context::new_dbus(Endian::Little, 0);
-        let encoded = zvariant::to_bytes(ctxt, &dict).unwrap();
+        let dict: HashMap<&str, Variant> = HashMap::new();
+        let ctxt = Context::new(Endian::Little, 0);
+        let encoded = wire::to_bytes(ctxt, &dict).unwrap();
         let options: InhibitOptions = encoded.deserialize().unwrap().0;
 
         assert_eq!(options.reason, None);
@@ -753,10 +748,13 @@ mod monitor_tests {
         for active in [true, false] {
             let state = monitor_state(active);
             assert_eq!(state.len(), 2, "exactly the two contract keys");
-            assert_eq!(state.get("screensaver-active"), Some(&Value::Bool(active)));
+            assert_eq!(
+                state.get("screensaver-active"),
+                Some(&Variant::Bool(active))
+            );
             assert_eq!(
                 state.get("session-state"),
-                Some(&Value::U32(SESSION_STATE_RUNNING)),
+                Some(&Variant::U32(SESSION_STATE_RUNNING)),
                 "session-state must never be absent"
             );
             assert_eq!(
@@ -775,7 +773,7 @@ mod monitor_tests {
         for active in [true, false] {
             assert_eq!(
                 monitor_state(active).get("session-state"),
-                Some(&Value::U32(1)),
+                Some(&Variant::U32(1)),
                 "the reported state must not depend on the screensaver"
             );
         }

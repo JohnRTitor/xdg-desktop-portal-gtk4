@@ -1,6 +1,6 @@
 use {
     std::collections::HashMap,
-    zbus::{Connection, proxy, zvariant::OwnedValue},
+    zbus::{Connection, OwnedVariant, proxy},
 };
 mod common;
 use {common::*, xdg_desktop_portal_gtk4::portals::settings::dbus::SettingsPortal};
@@ -11,11 +11,11 @@ use {common::*, xdg_desktop_portal_gtk4::portals::settings::dbus::SettingsPortal
     default_path = "/org/freedesktop/portal/desktop"
 )]
 trait Settings {
-    fn read(&self, namespace: &str, key: &str) -> zbus::Result<OwnedValue>;
+    fn read(&self, namespace: &str, key: &str) -> zbus::Result<OwnedVariant>;
     fn read_all(
         &self,
         namespaces: &[&str],
-    ) -> zbus::Result<HashMap<String, HashMap<String, OwnedValue>>>;
+    ) -> zbus::Result<HashMap<String, HashMap<String, OwnedVariant>>>;
 
     #[zbus(property, name = "version")]
     fn version(&self) -> zbus::Result<u32>;
@@ -34,7 +34,7 @@ async fn test_settings_read_unknown_namespace() -> Result<(), Box<dyn std::error
 
     let client_conn = Connection::session().await?;
     let proxy = SettingsProxy::builder(&client_conn)
-        .destination(_conn.unique_name().unwrap().clone())?
+        .destination(_conn.unique_name().unwrap().clone())
         .build()
         .await?;
 
@@ -57,7 +57,7 @@ async fn test_settings_read_all_empty_namespaces() -> Result<(), Box<dyn std::er
 
     let client_conn = Connection::session().await?;
     let proxy = SettingsProxy::builder(&client_conn)
-        .destination(_conn.unique_name().unwrap().clone())?
+        .destination(_conn.unique_name().unwrap().clone())
         .build()
         .await?;
 
@@ -82,7 +82,7 @@ async fn test_settings_read_all_wildcard_namespaces() -> Result<(), Box<dyn std:
 
     let client_conn = Connection::session().await?;
     let proxy = SettingsProxy::builder(&client_conn)
-        .destination(_conn.unique_name().unwrap().clone())?
+        .destination(_conn.unique_name().unwrap().clone())
         .build()
         .await?;
 
@@ -108,7 +108,7 @@ async fn test_settings_portal_properties() -> Result<(), Box<dyn std::error::Err
 
     let client_conn = Connection::session().await?;
     let proxy = SettingsProxy::builder(&client_conn)
-        .destination(_conn.unique_name().unwrap().clone())?
+        .destination(_conn.unique_name().unwrap().clone())
         .build()
         .await?;
 

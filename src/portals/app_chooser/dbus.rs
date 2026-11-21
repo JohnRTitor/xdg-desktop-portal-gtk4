@@ -8,14 +8,13 @@ use {
     std::{collections::HashMap, sync::Arc},
     tokio::sync::mpsc::{Sender, channel},
     zbus::{
-        ObjectServer, fdo, interface,
+        DeserializeDict, ObjectServer, OwnedObjectPath, SerializeDict, Type, fdo, interface,
         message::Header,
-        zvariant::{DeserializeDict, OwnedObjectPath, SerializeDict, Type},
     },
 };
 
 #[derive(DeserializeDict, Type, Debug)]
-#[zvariant(signature = "dict")]
+#[zbus(signature = "dict")]
 #[allow(dead_code)]
 pub struct ChooseApplicationOptions {
     #[allow(dead_code)]
@@ -28,7 +27,7 @@ pub struct ChooseApplicationOptions {
 }
 
 #[derive(SerializeDict, Type, Debug, Default)]
-#[zvariant(signature = "dict")]
+#[zbus(signature = "dict")]
 pub struct ChooseApplicationResults {
     choice: Option<String>,
     activation_token: Option<String>,
@@ -210,7 +209,7 @@ mod tests {
         super::*,
         gtk4::glib::MainContext,
         tokio::sync::mpsc::unbounded_channel,
-        zbus::{Connection, zvariant::Type},
+        zbus::{Connection, Type},
     };
 
     #[test]
@@ -281,15 +280,18 @@ mod tests {
     fn test_choose_application_options_deserialize() {
         use {
             std::collections::HashMap,
-            zbus::zvariant::{self, Endian, Value, serialized::Context},
+            zbus::{
+                Variant,
+                wire::{self, Endian, serialized::Context},
+            },
         };
 
         let mut dict = HashMap::new();
-        dict.insert("modal", Value::from(true));
-        dict.insert("uri", Value::from("file:///tmp/test.txt"));
+        dict.insert("modal", Variant::from(true));
+        dict.insert("uri", Variant::from("file:///tmp/test.txt"));
 
-        let ctxt = Context::new_dbus(Endian::Little, 0);
-        let encoded = zvariant::to_bytes(ctxt, &dict).unwrap();
+        let ctxt = Context::new(Endian::Little, 0);
+        let encoded = wire::to_bytes(ctxt, &dict).unwrap();
         let options: ChooseApplicationOptions = encoded.deserialize().unwrap().0;
 
         assert_eq!(options.modal, Some(true));
@@ -300,7 +302,10 @@ mod tests {
     fn test_choose_application_results_serialize() {
         use {
             std::collections::HashMap,
-            zbus::zvariant::{self, Endian, Value, serialized::Context},
+            zbus::{
+                Variant,
+                wire::{self, Endian, serialized::Context},
+            },
         };
 
         let results = ChooseApplicationResults {
@@ -308,13 +313,13 @@ mod tests {
             activation_token: Some("token123".into()),
         };
 
-        let ctxt = Context::new_dbus(Endian::Little, 0);
-        let encoded = zvariant::to_bytes(ctxt, &results).unwrap();
-        let decoded: HashMap<String, Value> = encoded.deserialize().unwrap().0;
+        let ctxt = Context::new(Endian::Little, 0);
+        let encoded = wire::to_bytes(ctxt, &results).unwrap();
+        let decoded: HashMap<String, Variant> = encoded.deserialize().unwrap().0;
 
         assert_eq!(
             decoded.get("choice").unwrap().try_clone().unwrap(),
-            Value::from("app.desktop")
+            Variant::from("app.desktop")
         );
         assert_eq!(
             decoded
@@ -322,7 +327,7 @@ mod tests {
                 .unwrap()
                 .try_clone()
                 .unwrap(),
-            Value::from("token123")
+            Variant::from("token123")
         );
     }
 }

@@ -6,9 +6,8 @@ use {
     },
     serde::Deserialize,
     zbus::{
-        ObjectServer, fdo, interface,
+        DeserializeDict, ObjectServer, OwnedObjectPath, SerializeDict, Type, fdo, interface,
         message::Header,
-        zvariant::{DeserializeDict, OwnedObjectPath, SerializeDict, Type},
     },
 };
 
@@ -35,11 +34,11 @@ impl Access {
 }
 
 #[derive(Type, Debug, Deserialize)]
-#[zvariant(signature = "(ssa(ss)s)")]
+#[zbus(signature = "(ssa(ss)s)")]
 struct Choice(String, String, Vec<(String, String)>, String);
 
 #[derive(DeserializeDict, Type, Debug, Default)]
-#[zvariant(signature = "dict")]
+#[zbus(signature = "dict")]
 struct AccessDialogOptions {
     modal: Option<bool>,
     deny_label: Option<String>,
@@ -50,7 +49,7 @@ struct AccessDialogOptions {
 }
 
 #[derive(SerializeDict, Type, Debug, Default)]
-#[zvariant(signature = "dict")]
+#[zbus(signature = "dict")]
 struct AccessResults {
     choices: Option<Vec<(String, String)>>,
 }
@@ -168,7 +167,10 @@ mod tests {
     use {
         super::*,
         std::collections::HashMap,
-        zbus::zvariant::{self, Endian, Value, serialized::Context},
+        zbus::{
+            Variant,
+            wire::{self, Endian, serialized::Context},
+        },
     };
 
     #[test]
@@ -179,11 +181,11 @@ mod tests {
     #[test]
     fn test_access_dialog_options_deserialize() {
         let mut dict = HashMap::new();
-        dict.insert("modal", Value::from(false));
-        dict.insert("deny_label", Value::from("No"));
-        dict.insert("grant_label", Value::from("Yes"));
-        dict.insert("icon", Value::from("icon-name"));
-        dict.insert("activation_token", Value::from("token123"));
+        dict.insert("modal", Variant::from(false));
+        dict.insert("deny_label", Variant::from("No"));
+        dict.insert("grant_label", Variant::from("Yes"));
+        dict.insert("icon", Variant::from("icon-name"));
+        dict.insert("activation_token", Variant::from("token123"));
 
         let choice = (
             "choice_id",
@@ -192,10 +194,10 @@ mod tests {
             "default_variant",
         );
 
-        dict.insert("choices", Value::from(vec![choice]));
+        dict.insert("choices", Variant::from(vec![choice]));
 
-        let ctxt = Context::new_dbus(Endian::Little, 0);
-        let encoded = zvariant::to_bytes(ctxt, &dict).unwrap();
+        let ctxt = Context::new(Endian::Little, 0);
+        let encoded = wire::to_bytes(ctxt, &dict).unwrap();
         let options: AccessDialogOptions = encoded.deserialize().unwrap().0;
 
         assert_eq!(options.modal, Some(false));
@@ -208,9 +210,9 @@ mod tests {
 
     #[test]
     fn test_access_dialog_options_empty() {
-        let dict: HashMap<&str, Value> = HashMap::new();
-        let ctxt = Context::new_dbus(Endian::Little, 0);
-        let encoded = zvariant::to_bytes(ctxt, &dict).unwrap();
+        let dict: HashMap<&str, Variant> = HashMap::new();
+        let ctxt = Context::new(Endian::Little, 0);
+        let encoded = wire::to_bytes(ctxt, &dict).unwrap();
         let options: AccessDialogOptions = encoded.deserialize().unwrap().0;
 
         assert_eq!(options.modal, None);
@@ -224,10 +226,10 @@ mod tests {
             choices: Some(vec![("choice_id".into(), "variant_id".into())]),
         };
 
-        let ctxt = Context::new_dbus(Endian::Little, 0);
-        let encoded = zvariant::to_bytes(ctxt, &results).unwrap();
+        let ctxt = Context::new(Endian::Little, 0);
+        let encoded = wire::to_bytes(ctxt, &results).unwrap();
 
-        let decoded: HashMap<String, Value> = encoded.deserialize().unwrap().0;
+        let decoded: HashMap<String, Variant> = encoded.deserialize().unwrap().0;
         let choices = decoded.get("choices").unwrap();
         assert_eq!(choices.value_signature(), "a(ss)");
     }

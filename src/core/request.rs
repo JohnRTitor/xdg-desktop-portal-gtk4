@@ -2,10 +2,7 @@ use {
     crate::core::response::Response,
     std::{future::Future, sync::Arc},
     tokio::sync::Notify,
-    zbus::{
-        ObjectServer, interface,
-        zvariant::{OwnedObjectPath, Type},
-    },
+    zbus::{ObjectServer, OwnedObjectPath, Type, interface},
 };
 
 /// Runs the future to completion or exits early if the request is closed.
@@ -195,9 +192,7 @@ mod tests {
             }
             let proxy = TestRequestProxy::builder(&conn_clone)
                 .destination(conn_clone.unique_name().unwrap().clone())
-                .unwrap()
                 .path(handle_clone)
-                .unwrap()
                 .build()
                 .await
                 .unwrap();

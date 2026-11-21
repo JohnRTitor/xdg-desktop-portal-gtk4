@@ -12,9 +12,8 @@ use {
     std::{ffi::CString, path::Path},
     thiserror::Error,
     zbus::{
-        ObjectServer, fdo, interface,
+        DeserializeDict, ObjectServer, OwnedObjectPath, SerializeDict, Type, fdo, interface,
         message::Header,
-        zvariant::{DeserializeDict, OwnedObjectPath, SerializeDict, Type},
     },
 };
 
@@ -45,7 +44,7 @@ type Choice = (String, String, Vec<(String, String)>, String);
 type FileFilter = (String, Vec<(u32, String)>);
 
 #[derive(Type, Debug, Default, PartialEq)]
-#[zvariant(signature = "ay")]
+#[zbus(signature = "ay")]
 struct FilePath(String);
 
 impl<'de> Deserialize<'de> for FilePath {
@@ -63,7 +62,7 @@ impl<'de> Deserialize<'de> for FilePath {
 }
 
 #[derive(DeserializeDict, Type, Debug, Default)]
-#[zvariant(signature = "dict")]
+#[zbus(signature = "dict")]
 struct OpenFileOptions {
     accept_label: Option<String>,
     modal: Option<bool>,
@@ -77,7 +76,7 @@ struct OpenFileOptions {
 }
 
 #[derive(DeserializeDict, Type, Debug, Default)]
-#[zvariant(signature = "dict")]
+#[zbus(signature = "dict")]
 struct SaveFileOptions {
     accept_label: Option<String>,
     modal: Option<bool>,
@@ -86,13 +85,13 @@ struct SaveFileOptions {
     choices: Option<Vec<Choice>>,
     current_name: Option<String>,
     current_folder: Option<FilePath>,
-    #[zvariant(rename = "current_file")]
+    #[zbus(rename = "current_file")]
     current_file: Option<FilePath>,
     pub activation_token: Option<String>,
 }
 
 #[derive(DeserializeDict, Type, Debug, Default)]
-#[zvariant(signature = "dict")]
+#[zbus(signature = "dict")]
 struct SaveFilesOptions {
     accept_label: Option<String>,
     modal: Option<bool>,
@@ -103,7 +102,7 @@ struct SaveFilesOptions {
 }
 
 #[derive(SerializeDict, Type, Debug, Default)]
-#[zvariant(signature = "dict")]
+#[zbus(signature = "dict")]
 struct OpenFileResults {
     uris: Option<Vec<String>>,
     choices: Option<Vec<(String, String)>>,
@@ -112,7 +111,7 @@ struct OpenFileResults {
 }
 
 #[derive(SerializeDict, Type, Debug, Default)]
-#[zvariant(signature = "dict")]
+#[zbus(signature = "dict")]
 struct SaveFileResults {
     uris: Option<Vec<String>>,
     choices: Option<Vec<(String, String)>>,
@@ -120,7 +119,7 @@ struct SaveFileResults {
 }
 
 #[derive(SerializeDict, Type, Debug, Default)]
-#[zvariant(signature = "dict")]
+#[zbus(signature = "dict")]
 struct SaveFilesResults {
     uris: Option<Vec<String>>,
     choices: Option<Vec<(String, String)>>,
@@ -512,7 +511,7 @@ mod tests {
         super::*,
         gtk4::glib::MainContext,
         tokio::sync::mpsc::unbounded_channel,
-        zbus::{Connection, zvariant::Type},
+        zbus::{Connection, Type},
     };
 
     #[test]
@@ -692,16 +691,19 @@ mod tests {
     fn test_open_file_options_deserialize() {
         use {
             std::collections::HashMap,
-            zbus::zvariant::{self, Endian, Value, serialized::Context},
+            zbus::{
+                Variant,
+                wire::{self, Endian, serialized::Context},
+            },
         };
 
         let mut dict = HashMap::new();
-        dict.insert("modal", Value::from(true));
-        dict.insert("multiple", Value::from(false));
-        dict.insert("directory", Value::from(true));
+        dict.insert("modal", Variant::from(true));
+        dict.insert("multiple", Variant::from(false));
+        dict.insert("directory", Variant::from(true));
 
-        let ctxt = Context::new_dbus(Endian::Little, 0);
-        let encoded = zvariant::to_bytes(ctxt, &dict).unwrap();
+        let ctxt = Context::new(Endian::Little, 0);
+        let encoded = wire::to_bytes(ctxt, &dict).unwrap();
         let options: OpenFileOptions = encoded.deserialize().unwrap().0;
 
         assert_eq!(options.modal, Some(true));
@@ -713,15 +715,18 @@ mod tests {
     fn test_save_file_options_deserialize() {
         use {
             std::collections::HashMap,
-            zbus::zvariant::{self, Endian, Value, serialized::Context},
+            zbus::{
+                Variant,
+                wire::{self, Endian, serialized::Context},
+            },
         };
 
         let mut dict = HashMap::new();
-        dict.insert("modal", Value::from(true));
-        dict.insert("current_name", Value::from("new_file.txt"));
+        dict.insert("modal", Variant::from(true));
+        dict.insert("current_name", Variant::from("new_file.txt"));
 
-        let ctxt = Context::new_dbus(Endian::Little, 0);
-        let encoded = zvariant::to_bytes(ctxt, &dict).unwrap();
+        let ctxt = Context::new(Endian::Little, 0);
+        let encoded = wire::to_bytes(ctxt, &dict).unwrap();
         let options: SaveFileOptions = encoded.deserialize().unwrap().0;
 
         assert_eq!(options.modal, Some(true));
@@ -732,15 +737,18 @@ mod tests {
     fn test_save_files_options_deserialize() {
         use {
             std::collections::HashMap,
-            zbus::zvariant::{self, Endian, Value, serialized::Context},
+            zbus::{
+                Variant,
+                wire::{self, Endian, serialized::Context},
+            },
         };
 
         let mut dict = HashMap::new();
-        dict.insert("modal", Value::from(true));
-        dict.insert("accept_label", Value::from("Save Here"));
+        dict.insert("modal", Variant::from(true));
+        dict.insert("accept_label", Variant::from("Save Here"));
 
-        let ctxt = Context::new_dbus(Endian::Little, 0);
-        let encoded = zvariant::to_bytes(ctxt, &dict).unwrap();
+        let ctxt = Context::new(Endian::Little, 0);
+        let encoded = wire::to_bytes(ctxt, &dict).unwrap();
         let options: SaveFilesOptions = encoded.deserialize().unwrap().0;
 
         assert_eq!(options.modal, Some(true));
@@ -751,7 +759,10 @@ mod tests {
     fn test_open_file_results_serialize() {
         use {
             std::collections::HashMap,
-            zbus::zvariant::{self, Endian, Value, serialized::Context},
+            zbus::{
+                Variant,
+                wire::{self, Endian, serialized::Context},
+            },
         };
 
         let results = OpenFileResults {
@@ -761,16 +772,16 @@ mod tests {
             writable: Some(true),
         };
 
-        let ctxt = Context::new_dbus(Endian::Little, 0);
-        let encoded = zvariant::to_bytes(ctxt, &results).unwrap();
-        let decoded: HashMap<String, Value> = encoded.deserialize().unwrap().0;
+        let ctxt = Context::new(Endian::Little, 0);
+        let encoded = wire::to_bytes(ctxt, &results).unwrap();
+        let decoded: HashMap<String, Variant> = encoded.deserialize().unwrap().0;
 
         let uris_val = decoded.get("uris").unwrap();
         let uris: Vec<String> = uris_val.try_clone().unwrap().try_into().unwrap();
         assert_eq!(uris, vec!["file:///tmp/test.txt".to_owned()]);
         assert_eq!(
             decoded.get("writable").unwrap().try_clone().unwrap(),
-            Value::from(true)
+            Variant::from(true)
         );
     }
 
@@ -778,7 +789,10 @@ mod tests {
     fn test_save_file_results_serialize() {
         use {
             std::collections::HashMap,
-            zbus::zvariant::{self, Endian, Value, serialized::Context},
+            zbus::{
+                Variant,
+                wire::{self, Endian, serialized::Context},
+            },
         };
 
         let results = SaveFileResults {
@@ -787,9 +801,9 @@ mod tests {
             current_filter: None,
         };
 
-        let ctxt = Context::new_dbus(Endian::Little, 0);
-        let encoded = zvariant::to_bytes(ctxt, &results).unwrap();
-        let decoded: HashMap<String, Value> = encoded.deserialize().unwrap().0;
+        let ctxt = Context::new(Endian::Little, 0);
+        let encoded = wire::to_bytes(ctxt, &results).unwrap();
+        let decoded: HashMap<String, Variant> = encoded.deserialize().unwrap().0;
 
         let uris_val = decoded.get("uris").unwrap();
         let uris: Vec<String> = uris_val.try_clone().unwrap().try_into().unwrap();
@@ -800,7 +814,10 @@ mod tests {
     fn test_save_files_results_serialize() {
         use {
             std::collections::HashMap,
-            zbus::zvariant::{self, Endian, Value, serialized::Context},
+            zbus::{
+                Variant,
+                wire::{self, Endian, serialized::Context},
+            },
         };
 
         let results = SaveFilesResults {
@@ -811,9 +828,9 @@ mod tests {
             choices: None,
         };
 
-        let ctxt = Context::new_dbus(Endian::Little, 0);
-        let encoded = zvariant::to_bytes(ctxt, &results).unwrap();
-        let decoded: HashMap<String, Value> = encoded.deserialize().unwrap().0;
+        let ctxt = Context::new(Endian::Little, 0);
+        let encoded = wire::to_bytes(ctxt, &results).unwrap();
+        let decoded: HashMap<String, Variant> = encoded.deserialize().unwrap().0;
 
         let uris_val = decoded.get("uris").unwrap();
         let uris: Vec<String> = uris_val.try_clone().unwrap().try_into().unwrap();

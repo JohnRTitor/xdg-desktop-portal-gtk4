@@ -9,7 +9,7 @@ use {
     },
     std::{cell::RefCell, collections::HashMap, sync::Arc, time::Duration},
     tokio::sync::oneshot::Receiver,
-    zbus::zvariant::{OwnedValue, Value},
+    zbus::{OwnedVariant, Variant},
 };
 
 const PRINT_TOKEN_TIMEOUT_SECS: u32 = 300;
@@ -114,11 +114,11 @@ pub struct PrintUi {
     /// The caller's requested print settings, as the `a{sv}` dict the portal
     /// contract uses. Applied to the dialog before it is shown, so a requested
     /// printer, paper size or orientation is not silently discarded.
-    pub settings: HashMap<String, OwnedValue>,
-    pub page_setup: HashMap<String, OwnedValue>,
+    pub settings: HashMap<String, OwnedVariant>,
+    pub page_setup: HashMap<String, OwnedVariant>,
 }
 
-/// Convert one scalar from a zvariant `a{sv}` value into a `glib::Variant`.
+/// Convert one scalar from a zbus `a{sv}` value into a `glib::Variant`.
 ///
 /// The value types must survive the trip: `PageSetup` stores paper dimensions
 /// and margins as doubles, and `PrintSettings` has boolean and integer keys as
@@ -126,25 +126,25 @@ pub struct PrintUi {
 /// Together with [`glib_to_owned`] this accepts the numeric and string scalar
 /// types used by the print portal: `b/y/n/q/i/u/x/t/d/s`. Other basic types,
 /// such as object paths, signatures and Unix FDs, are skipped with a warning.
-fn owned_to_glib(value: &OwnedValue) -> Option<glib::Variant> {
+fn owned_to_glib(value: &OwnedVariant) -> Option<glib::Variant> {
     let v = match &**value {
-        Value::Bool(v) => (*v).into(),
-        Value::U8(v) => (*v).into(),
-        Value::I16(v) => (*v).into(),
-        Value::U16(v) => (*v).into(),
-        Value::F64(v) => (*v).into(),
-        Value::I32(v) => (*v).into(),
-        Value::U32(v) => (*v).into(),
-        Value::I64(v) => (*v).into(),
-        Value::U64(v) => (*v).into(),
-        Value::Str(s) => s.as_str().into(),
+        Variant::Bool(v) => (*v).into(),
+        Variant::U8(v) => (*v).into(),
+        Variant::I16(v) => (*v).into(),
+        Variant::U16(v) => (*v).into(),
+        Variant::F64(v) => (*v).into(),
+        Variant::I32(v) => (*v).into(),
+        Variant::U32(v) => (*v).into(),
+        Variant::I64(v) => (*v).into(),
+        Variant::U64(v) => (*v).into(),
+        Variant::Str(s) => s.as_str().into(),
         _ => return None,
     };
     Some(v)
 }
 
-/// Convert one `a{sv}` value coming from GTK back into an owned zvariant value.
-fn glib_to_owned(value: &glib::Variant) -> Option<OwnedValue> {
+/// Convert one `a{sv}` value coming from GTK back into an owned zbus value.
+fn glib_to_owned(value: &glib::Variant) -> Option<OwnedVariant> {
     // `a{sv}` boxes every value in a `v`; unwrap it before inspecting the type.
     let inner = if value.type_() == glib::VariantTy::VARIANT {
         value.get::<glib::Variant>()?
@@ -155,26 +155,26 @@ fn glib_to_owned(value: &glib::Variant) -> Option<OwnedValue> {
     match ty.as_str() {
         "s" => {
             let s = inner.get::<String>()?;
-            OwnedValue::try_from(Value::from(s.as_str())).ok()
+            OwnedVariant::try_from(Variant::from(s.as_str())).ok()
         }
-        "d" => Some(OwnedValue::from(inner.get::<f64>()?)),
-        "b" => Some(OwnedValue::from(inner.get::<bool>()?)),
-        "y" => Some(OwnedValue::from(inner.get::<u8>()?)),
-        "n" => Some(OwnedValue::from(inner.get::<i16>()?)),
-        "q" => Some(OwnedValue::from(inner.get::<u16>()?)),
-        "i" => Some(OwnedValue::from(inner.get::<i32>()?)),
-        "u" => Some(OwnedValue::from(inner.get::<u32>()?)),
-        "x" => Some(OwnedValue::from(inner.get::<i64>()?)),
-        "t" => Some(OwnedValue::from(inner.get::<u64>()?)),
+        "d" => Some(OwnedVariant::from(inner.get::<f64>()?)),
+        "b" => Some(OwnedVariant::from(inner.get::<bool>()?)),
+        "y" => Some(OwnedVariant::from(inner.get::<u8>()?)),
+        "n" => Some(OwnedVariant::from(inner.get::<i16>()?)),
+        "q" => Some(OwnedVariant::from(inner.get::<u16>()?)),
+        "i" => Some(OwnedVariant::from(inner.get::<i32>()?)),
+        "u" => Some(OwnedVariant::from(inner.get::<u32>()?)),
+        "x" => Some(OwnedVariant::from(inner.get::<i64>()?)),
+        "t" => Some(OwnedVariant::from(inner.get::<u64>()?)),
         _ => None,
     }
 }
 
-/// Convert a `glib::Variant` of type `a{sv}` into owned zvariant values.
+/// Convert a `glib::Variant` of type `a{sv}` into owned zbus values.
 ///
 /// Entries with an unsupported value type are skipped individually: dropping
 /// the whole dict because of one key would discard every valid setting too.
-fn variant_to_owned_dict(variant: &glib::Variant) -> HashMap<String, OwnedValue> {
+fn variant_to_owned_dict(variant: &glib::Variant) -> HashMap<String, OwnedVariant> {
     variant
         .iter()
         .filter_map(|entry| {
@@ -201,7 +201,7 @@ fn variant_to_owned_dict(variant: &glib::Variant) -> HashMap<String, OwnedValue>
 /// entry cannot discard the rest of the caller's requested settings. GLib
 /// emits a critical for an empty key, which would also be an attacker-driven
 /// log-spam / abort vector under `G_DEBUG=fatal-criticals`.
-fn owned_dict_to_variant(dict: &HashMap<String, OwnedValue>) -> glib::Variant {
+fn owned_dict_to_variant(dict: &HashMap<String, OwnedVariant>) -> glib::Variant {
     let builder = glib::VariantDict::new(None::<&glib::Variant>);
     for (key, value) in dict {
         match to_variant_entry(key, value) {
@@ -216,7 +216,7 @@ fn owned_dict_to_variant(dict: &HashMap<String, OwnedValue>) -> glib::Variant {
 /// from the dict loop lets tests verify the empty-key guard directly: GLib
 /// would reject an empty key on its own, so outcome-only tests cannot tell
 /// whether our guard is still there.
-fn to_variant_entry(key: &str, value: &OwnedValue) -> Option<(String, glib::Variant)> {
+fn to_variant_entry(key: &str, value: &OwnedVariant) -> Option<(String, glib::Variant)> {
     if key.is_empty() {
         return None;
     }
@@ -225,8 +225,8 @@ fn to_variant_entry(key: &str, value: &OwnedValue) -> Option<(String, glib::Vari
 
 pub struct PrintResult {
     pub token: u32,
-    pub settings: HashMap<String, OwnedValue>,
-    pub page_setup: HashMap<String, OwnedValue>,
+    pub settings: HashMap<String, OwnedVariant>,
+    pub page_setup: HashMap<String, OwnedVariant>,
 }
 
 impl PrintUi {
@@ -636,27 +636,27 @@ mod tests {
         }
     }
 
-    /// The `glib::Variant` <-> zvariant bridge must preserve value types, not
+    /// The `glib::Variant` <-> zbus `Variant` bridge must preserve value types, not
     /// only raw bytes. Doubles (margins, paper dimensions) are the values the
     /// old string-only KeyFile dropped, causing the reported warning.
     #[test]
     fn owned_dict_variant_round_trip_preserves_all_scalar_types() {
-        use zbus::zvariant::Value;
+        use zbus::Variant;
 
         let dict = HashMap::from([
             (
                 "Name".to_string(),
-                OwnedValue::try_from(Value::from("iso_a4_210x297mm")).unwrap(),
+                OwnedVariant::try_from(Variant::from("iso_a4_210x297mm")).unwrap(),
             ),
-            ("Byte".to_string(), OwnedValue::from(7u8)),
-            ("Short".to_string(), OwnedValue::from(-3i16)),
-            ("UShort".to_string(), OwnedValue::from(9u16)),
-            ("Width".to_string(), OwnedValue::from(210.0f64)),
-            ("Collate".to_string(), OwnedValue::from(true)),
-            ("Copies".to_string(), OwnedValue::from(2i32)),
-            ("Scale".to_string(), OwnedValue::from(100u32)),
-            ("JobId".to_string(), OwnedValue::from(42i64)),
-            ("Timeout".to_string(), OwnedValue::from(90u64)),
+            ("Byte".to_string(), OwnedVariant::from(7u8)),
+            ("Short".to_string(), OwnedVariant::from(-3i16)),
+            ("UShort".to_string(), OwnedVariant::from(9u16)),
+            ("Width".to_string(), OwnedVariant::from(210.0f64)),
+            ("Collate".to_string(), OwnedVariant::from(true)),
+            ("Copies".to_string(), OwnedVariant::from(2i32)),
+            ("Scale".to_string(), OwnedVariant::from(100u32)),
+            ("JobId".to_string(), OwnedVariant::from(42i64)),
+            ("Timeout".to_string(), OwnedVariant::from(90u64)),
         ]);
 
         let variant = owned_dict_to_variant(&dict);
@@ -698,26 +698,26 @@ mod tests {
     /// typed bridge must not regress that resilience.
     #[test]
     fn bad_entries_are_skipped_without_dropping_valid_ones() {
-        use zbus::zvariant::Value;
+        use zbus::Variant;
 
-        let array = OwnedValue::try_from(Value::from(vec![1u32, 2u32])).unwrap();
+        let array = OwnedVariant::try_from(Variant::from(vec![1u32, 2u32])).unwrap();
         let dict = HashMap::from([
             (
                 String::new(),
-                OwnedValue::try_from(Value::from("empty key")).unwrap(),
+                OwnedVariant::try_from(Variant::from("empty key")).unwrap(),
             ),
             ("BadType".to_string(), array),
-            ("MarginTop".to_string(), OwnedValue::from(11.0f64)),
+            ("MarginTop".to_string(), OwnedVariant::from(11.0f64)),
             (
                 "Orientation".to_string(),
-                OwnedValue::try_from(Value::from("portrait")).unwrap(),
+                OwnedVariant::try_from(Variant::from("portrait")).unwrap(),
             ),
         ]);
 
         // Assert the guard directly: GLib rejects empty keys on its own, so an
         // outcome-only check would still pass if our explicit guard disappeared.
-        assert!(to_variant_entry("", &OwnedValue::from(1.0f64)).is_none());
-        assert!(to_variant_entry("MarginTop", &OwnedValue::from(1.0f64)).is_some());
+        assert!(to_variant_entry("", &OwnedVariant::from(1.0f64)).is_none());
+        assert!(to_variant_entry("MarginTop", &OwnedVariant::from(1.0f64)).is_some());
 
         let variant = owned_dict_to_variant(&dict);
         let back = variant_to_owned_dict(&variant);
@@ -761,10 +761,10 @@ mod tests {
     /// KeyFile dropped them, so the dialog fell back to defaults and logged.
     #[test]
     fn gtk_style_page_setup_dict_applies_margins() {
-        use zbus::zvariant::Value;
+        use zbus::Variant;
 
-        let string = |s: &str| OwnedValue::try_from(Value::from(s)).unwrap();
-        let number = |v: f64| OwnedValue::from(v);
+        let string = |s: &str| OwnedVariant::try_from(Variant::from(s)).unwrap();
+        let number = |v: f64| OwnedVariant::from(v);
 
         let dict = HashMap::from([
             ("Name".to_string(), string("iso_a4_210x297mm")),

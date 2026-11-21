@@ -7,9 +7,8 @@ use {
     std::{collections::HashMap, sync::Arc},
     tokio::task::spawn_blocking,
     zbus::{
-        Connection, ObjectServer, interface,
-        object_server::SignalEmitter,
-        zvariant::{DeserializeDict, OwnedValue, Structure, Type, Value},
+        Connection, DeserializeDict, ObjectServer, OwnedVariant, Structure, Type, Variant,
+        interface, object_server::SignalEmitter,
     },
 };
 
@@ -124,7 +123,7 @@ trait Notifications {
         summary: &str,
         body: &str,
         actions: &[&str],
-        hints: &HashMap<&str, Value<'_>>,
+        hints: &HashMap<&str, Variant<'_>>,
         expire_timeout: i32,
     ) -> zbus::Result<u32>;
 
@@ -139,33 +138,33 @@ trait Notifications {
 
 #[zbus::proxy(interface = "org.freedesktop.Application")]
 trait Application {
-    fn activate(&self, platform_data: &HashMap<&str, Value<'_>>) -> zbus::Result<()>;
+    fn activate(&self, platform_data: &HashMap<&str, Variant<'_>>) -> zbus::Result<()>;
     fn activate_action(
         &self,
         action_name: &str,
-        parameter: &[Value<'_>],
-        platform_data: &HashMap<&str, Value<'_>>,
+        parameter: &[Variant<'_>],
+        platform_data: &HashMap<&str, Variant<'_>>,
     ) -> zbus::Result<()>;
 }
 
 #[derive(DeserializeDict, Type, Default, Debug, Clone)]
-#[zvariant(signature = "dict")]
+#[zbus(signature = "dict")]
 pub struct PortalNotification {
     title: Option<String>,
     body: Option<String>,
-    icon: Option<OwnedValue>,
+    icon: Option<OwnedVariant>,
     priority: Option<String>,
-    #[zvariant(rename = "default-action")]
+    #[zbus(rename = "default-action")]
     default_action: Option<String>,
-    #[zvariant(rename = "default-action-target")]
-    default_action_target: Option<OwnedValue>,
+    #[zbus(rename = "default-action-target")]
+    default_action_target: Option<OwnedVariant>,
     buttons: Option<Vec<PortalButton>>,
-    #[zvariant(rename = "markup-body")]
+    #[zbus(rename = "markup-body")]
     markup_body: Option<String>,
     category: Option<String>,
-    #[zvariant(rename = "display-hint")]
+    #[zbus(rename = "display-hint")]
     display_hint: Option<Vec<String>>,
-    sound: Option<OwnedValue>,
+    sound: Option<OwnedVariant>,
 }
 
 /// One entry of the `buttons` option.
@@ -175,11 +174,11 @@ pub struct PortalNotification {
 /// hint for the notification server's own UI and has no fdo equivalent, so it
 /// is not read.
 #[derive(DeserializeDict, Type, Default, Debug, Clone)]
-#[zvariant(signature = "dict")]
+#[zbus(signature = "dict")]
 pub struct PortalButton {
     label: Option<String>,
     action: Option<String>,
-    target: Option<OwnedValue>,
+    target: Option<OwnedVariant>,
 }
 
 /// Identifies one notification as the calling app knows it.
@@ -203,7 +202,7 @@ impl NotifKey {
 pub struct NotificationTarget {
     /// Back-reference to the same `NotifKey` used as the forward map's key.
     pub key: Arc<NotifKey>,
-    pub action_targets: HashMap<String, OwnedValue>,
+    pub action_targets: HashMap<String, OwnedVariant>,
     /// The portal action behind the fdo `default` action key, if one was set.
     pub default_action: Option<String>,
     pub sound_file: Option<Arc<TempSoundFile>>,
@@ -261,7 +260,7 @@ fn register_notification(
     app_id: &str,
     portal_id: &str,
     fdo_id: u32,
-    action_targets: HashMap<String, OwnedValue>,
+    action_targets: HashMap<String, OwnedVariant>,
     default_action: Option<String>,
     sound_file: Option<Arc<TempSoundFile>>,
 ) -> Arc<NotifKey> {
@@ -387,7 +386,7 @@ impl Notification {
 
         let mut icon_name = String::new();
         let mut hints = HashMap::new();
-        hints.insert("desktop-entry", Value::from(app_id.as_str()));
+        hints.insert("desktop-entry", Variant::from(app_id.as_str()));
 
         let priority = notification.priority.as_deref().unwrap_or("normal");
         let urgency: u8 = match priority {
@@ -396,32 +395,32 @@ impl Notification {
             "high" | "urgent" => 2,
             _ => 1,
         };
-        hints.insert("urgency", Value::from(urgency));
+        hints.insert("urgency", Variant::from(urgency));
 
         if let Some(category) = notification.category.as_deref() {
-            hints.insert("category", Value::from(category));
+            hints.insert("category", Variant::from(category));
         }
 
         if let Some(display_hints) = notification.display_hint.as_ref() {
             if display_hints.iter().any(|h| h == "transient") {
-                hints.insert("transient", Value::from(true));
+                hints.insert("transient", Variant::from(true));
             }
             if display_hints.iter().any(|h| h == "persistent") {
-                hints.insert("resident", Value::from(true));
+                hints.insert("resident", Variant::from(true));
             }
         }
 
         let mut sound_file: Option<Arc<TempSoundFile>> = None;
         if let Some(sound) = notification.sound.as_ref() {
             let inner = match std::ops::Deref::deref(sound) {
-                Value::Value(v) => v.as_ref(),
+                Variant::Variant(v) => v.as_ref(),
                 other => other,
             };
             if let Ok(sound_str) = <&str>::try_from(inner) {
                 if sound_str == "silent" {
-                    hints.insert("suppress-sound", Value::from(true));
+                    hints.insert("suppress-sound", Variant::from(true));
                 }
-            } else if let Value::Fd(fd) = inner {
+            } else if let Variant::Fd(fd) = inner {
                 use std::{io::Read, os::fd::AsFd};
                 if let Ok(owned_fd) = fd.as_fd().try_clone_to_owned() {
                     let mut file = std::fs::File::from(owned_fd);
@@ -482,7 +481,7 @@ impl Notification {
         if let Some(s) = sound_file.as_ref()
             && let Some(path_str) = s.path.to_str()
         {
-            hints.insert("sound-file", Value::from(path_str));
+            hints.insert("sound-file", Variant::from(path_str));
         }
 
         if let Some(v) = notification.icon.as_ref() {
@@ -497,7 +496,7 @@ impl Notification {
                     // The icon format is (sv) — the payload in fields[1] is wrapped
                     // in a variant. Unwrap it so we can extract the actual value.
                     let payload = match &fields[1] {
-                        Value::Value(inner) => inner.as_ref(),
+                        Variant::Variant(inner) => inner.as_ref(),
                         other => other,
                     };
                     match icon_type {
@@ -512,7 +511,7 @@ impl Notification {
                             // Note: xdg-desktop-portal drops raw "file" icon paths for security.
                             // Apps sending "bytes" arrays will have their bytes written to a memfd
                             // by the host portal, which forwards it to us here as "file-descriptor".
-                            if let Value::Fd(fd) = payload {
+                            if let Variant::Fd(fd) = payload {
                                 use std::os::fd::AsFd;
                                 if let Ok(owned_fd) = fd.as_fd().try_clone_to_owned() {
                                     let mut file = std::fs::File::from(owned_fd);
@@ -535,14 +534,16 @@ impl Notification {
                                             if let Ok(pixbuf) =
                                                 Pixbuf::from_stream(&stream, Cancellable::NONE)
                                             {
-                                                return OwnedValue::try_from(Value::new((
+                                                return OwnedVariant::try_from(Variant::new((
                                                     pixbuf.width(),
                                                     pixbuf.height(),
                                                     pixbuf.rowstride(),
                                                     pixbuf.has_alpha(),
                                                     pixbuf.bits_per_sample(),
                                                     pixbuf.n_channels(),
-                                                    Value::from(pixbuf.read_pixel_bytes().as_ref()),
+                                                    Variant::from(
+                                                        pixbuf.read_pixel_bytes().as_ref(),
+                                                    ),
                                                 )))
                                                 .ok();
                                             }
@@ -553,7 +554,7 @@ impl Notification {
                                     .unwrap_or(None);
 
                                     if let Some(image_data) = image_data {
-                                        hints.insert("image-data", Value::from(image_data));
+                                        hints.insert("image-data", Variant::from(image_data));
                                     }
                                 }
                             }
@@ -570,14 +571,14 @@ impl Notification {
                                     if let Ok(pixbuf) =
                                         Pixbuf::from_stream(&stream, Cancellable::NONE)
                                     {
-                                        return OwnedValue::try_from(Value::new((
+                                        return OwnedVariant::try_from(Variant::new((
                                             pixbuf.width(),
                                             pixbuf.height(),
                                             pixbuf.rowstride(),
                                             pixbuf.has_alpha(),
                                             pixbuf.bits_per_sample(),
                                             pixbuf.n_channels(),
-                                            Value::from(pixbuf.read_pixel_bytes().as_ref()),
+                                            Variant::from(pixbuf.read_pixel_bytes().as_ref()),
                                         )))
                                         .ok();
                                     }
@@ -587,7 +588,7 @@ impl Notification {
                                 .unwrap_or(None);
 
                                 if let Some(image_data) = image_data {
-                                    hints.insert("image-data", Value::from(image_data));
+                                    hints.insert("image-data", Variant::from(image_data));
                                 }
                             }
                         }
@@ -675,7 +676,7 @@ impl Notification {
         app_id: &str,
         id: &str,
         action: &str,
-        parameter: &[Value<'_>],
+        parameter: &[Variant<'_>],
     ) -> zbus::Result<()>;
 
     #[zbus(property, name = "version")]
@@ -684,9 +685,9 @@ impl Notification {
     }
 
     #[zbus(property, name = "SupportedOptions")]
-    fn supported_options(&self) -> HashMap<String, OwnedValue> {
+    fn supported_options(&self) -> HashMap<String, OwnedVariant> {
         let mut options = HashMap::new();
-        if let Ok(true_val) = OwnedValue::try_from(Value::Bool(true)) {
+        if let Ok(true_val) = OwnedVariant::try_from(Variant::Bool(true)) {
             options.insert("body".into(), true_val.clone());
             options.insert("icon".into(), true_val.clone());
             options.insert("buttons".into(), true_val.clone());
@@ -729,10 +730,10 @@ fn actions_capacity(notification: &PortalNotification) -> usize {
 /// enough to be reborrowed. `notification` outlives the `Notify` call, so the
 /// borrows are valid for as long as the caller needs them.
 ///
-/// The targets are still cloned: they are `OwnedValue`s that must outlive this
+/// The targets are still cloned: they are `OwnedVariant`s that must outlive this
 /// function, since they are stored in the reverse map and read later by the
 /// `ActionInvoked` listener.
-fn build_actions(notification: &PortalNotification) -> (Vec<&str>, HashMap<String, OwnedValue>) {
+fn build_actions(notification: &PortalNotification) -> (Vec<&str>, HashMap<String, OwnedVariant>) {
     let mut actions = Vec::with_capacity(actions_capacity(notification));
     let mut targets = HashMap::new();
 
@@ -773,7 +774,7 @@ fn build_actions(notification: &PortalNotification) -> (Vec<&str>, HashMap<Strin
 fn action_route<'a>(
     target: &'a NotificationTarget,
     action_key: &'a str,
-) -> (&'a str, Option<&'a OwnedValue>) {
+) -> (&'a str, Option<&'a OwnedVariant>) {
     let name = if action_key == "default" {
         target.default_action.as_deref().unwrap_or(action_key)
     } else {
@@ -788,11 +789,11 @@ fn action_route<'a>(
 /// specification sends just before `ActionInvoked`. It is passed under both
 /// keys the reference implementation uses: `activation-token` for current GTK
 /// and Qt, `desktop-startup-id` for GTK before 4.10.
-fn platform_data(activation_token: Option<String>) -> HashMap<&'static str, Value<'static>> {
+fn platform_data(activation_token: Option<String>) -> HashMap<&'static str, Variant<'static>> {
     let mut data = HashMap::new();
     if let Some(token) = activation_token {
-        data.insert("desktop-startup-id", Value::from(token.clone()));
-        data.insert("activation-token", Value::from(token));
+        data.insert("desktop-startup-id", Variant::from(token.clone()));
+        data.insert("activation-token", Variant::from(token));
     }
     data
 }
@@ -875,8 +876,8 @@ fn dispatch_action(
 ) {
     let (name, action_target) = action_route(target, action_key);
     let name = String::from(name);
-    let parameter: Vec<Value<'static>> = action_target
-        .map(|t| Value::from(t.clone()))
+    let parameter: Vec<Variant<'static>> = action_target
+        .map(|t| Variant::from(t.clone()))
         .into_iter()
         .collect();
     let platform_data = platform_data(activation_token);
@@ -909,7 +910,7 @@ fn dispatch_action(
         }
 
         let mut signal_parameter = parameter;
-        signal_parameter.push(Value::from(platform_data));
+        signal_parameter.push(Variant::from(platform_data));
         if let Ok(iface_ref) = server
             .interface::<_, Notification>(crate::core::DBUS_PATH)
             .await
@@ -945,11 +946,7 @@ async fn application_proxy(
 
     let builder = ApplicationProxy::builder(session_bus)
         .destination(app_id.to_owned())
-        .inspect_err(|_| tracing::debug!("No application to activate for app id {app_id:?}"))
-        .ok()?
-        .path(app_path)
-        .inspect_err(|e| tracing::error!("Invalid D-Bus path for {app_id:?}: {e}"))
-        .ok()?;
+        .path(app_path);
     builder
         .cache_properties(zbus::proxy::CacheProperties::No)
         .build()
@@ -1069,16 +1066,19 @@ mod tests {
     fn test_portal_notification_deserialize() {
         use {
             std::collections::HashMap,
-            zbus::zvariant::{self, Endian, Value, serialized::Context},
+            zbus::{
+                Variant,
+                wire::{self, Endian, serialized::Context},
+            },
         };
 
         let mut dict = HashMap::new();
-        dict.insert("title", Value::from("Test Title"));
-        dict.insert("body", Value::from("Test Body"));
-        dict.insert("priority", Value::from("high"));
+        dict.insert("title", Variant::from("Test Title"));
+        dict.insert("body", Variant::from("Test Body"));
+        dict.insert("priority", Variant::from("high"));
 
-        let ctxt = Context::new_dbus(Endian::Little, 0);
-        let encoded = zvariant::to_bytes(ctxt, &dict).unwrap();
+        let ctxt = Context::new(Endian::Little, 0);
+        let encoded = wire::to_bytes(ctxt, &dict).unwrap();
         let notification: PortalNotification = encoded.deserialize().unwrap().0;
 
         assert_eq!(notification.title.as_deref(), Some("Test Title"));
@@ -1424,8 +1424,8 @@ mod bytes_tests {
 mod action_list_tests {
     use super::*;
 
-    fn owned(s: &str) -> OwnedValue {
-        OwnedValue::try_from(Value::from(s)).expect("str to OwnedValue is infallible")
+    fn owned(s: &str) -> OwnedVariant {
+        OwnedVariant::try_from(Variant::from(s)).expect("str to OwnedVariant is infallible")
     }
 
     fn button(action: &str, label: Option<&str>, target: Option<&str>) -> PortalButton {
@@ -1611,8 +1611,8 @@ mod action_list_tests {
     #[test]
     fn platform_data_carries_the_token_under_both_keys() {
         let data = platform_data(Some("token-1".into()));
-        assert_eq!(data["activation-token"], Value::from("token-1"));
-        assert_eq!(data["desktop-startup-id"], Value::from("token-1"));
+        assert_eq!(data["activation-token"], Variant::from("token-1"));
+        assert_eq!(data["desktop-startup-id"], Variant::from("token-1"));
         assert!(platform_data(None).is_empty());
     }
 

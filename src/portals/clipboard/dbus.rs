@@ -30,10 +30,8 @@ use {
         oneshot::{Sender, channel},
     },
     zbus::{
-        Connection, fdo, interface,
-        message::Header,
+        Connection, Fd, ObjectPath, Variant, fdo, interface, message::Header,
         object_server::SignalEmitter,
-        zvariant::{Fd, ObjectPath, Value},
     },
 };
 
@@ -93,26 +91,28 @@ fn forget_session(session: &str) -> bool {
 /// carry two copies of this. The payload depends only on the advertised mime
 /// types, so a caller fanning out to several sessions must build it once and
 /// clone the map rather than rebuilding it per session.
-fn owner_changed_options<'a>(mimes: &'a gtk_backend::MimeList) -> HashMap<&'static str, Value<'a>> {
+fn owner_changed_options<'a>(
+    mimes: &'a gtk_backend::MimeList,
+) -> HashMap<&'static str, Variant<'a>> {
     let mut options = HashMap::new();
-    // `Box<str>` has no `zvariant` `Type` impl, so the array is built from
+    // `Box<str>` has no `zbus` `Type` impl, so the array is built from
     // borrowed `&str`s pointing into the list rather than from owned copies.
     options.insert(
         "mime_types",
-        Value::from(mimes.iter().map(|m| m.as_ref()).collect::<Vec<&str>>()),
+        Variant::from(mimes.iter().map(|m| m.as_ref()).collect::<Vec<&str>>()),
     );
-    options.insert("session_is_owner", Value::from(false));
+    options.insert("session_is_owner", Variant::from(false));
     options
 }
 
 /// Extracts the advertised mime types from a `SetSelection` options dict.
 ///
 /// The inverse of [`owner_changed_options`]'s mime encoding.
-fn parse_mime_types(options: &HashMap<&str, Value<'_>>) -> gtk_backend::MimeList {
+fn parse_mime_types(options: &HashMap<&str, Variant<'_>>) -> gtk_backend::MimeList {
     let mut mimes = gtk_backend::MimeList::new();
-    if let Some(Value::Array(arr)) = options.get("mime_types") {
+    if let Some(Variant::Array(arr)) = options.get("mime_types") {
         for i in 0..arr.len() {
-            if let Ok(Some(Value::Str(s))) = arr.get::<Value<'_>>(i) {
+            if let Ok(Some(Variant::Str(s))) = arr.get::<Variant<'_>>(i) {
                 mimes.push(s.as_str().into());
             }
         }
@@ -206,7 +206,7 @@ impl ClipboardPortal {
 
                 let sessions = sessions_clone.lock().clone();
                 for session in sessions {
-                    let per_session: HashMap<&str, &Value<'_>> =
+                    let per_session: HashMap<&str, &Variant<'_>> =
                         options.iter().map(|(k, v)| (*k, v)).collect();
                     let _ = Self::selection_owner_changed(&emitter, &session, per_session).await;
                 }
@@ -272,7 +272,7 @@ impl ClipboardPortal {
         &self,
         #[zbus(header)] header: Header<'_>,
         session_handle: ObjectPath<'_>,
-        _options: HashMap<&str, Value<'_>>,
+        _options: HashMap<&str, Variant<'_>>,
     ) -> fdo::Result<()> {
         let sender = header
             .sender()
@@ -363,7 +363,7 @@ impl ClipboardPortal {
                 session_handle_owned,
                 options.get("mime_types")
             );
-            let per_session: HashMap<&str, &Value<'_>> =
+            let per_session: HashMap<&str, &Variant<'_>> =
                 options.iter().map(|(k, v)| (*k, v)).collect();
             if let Err(e) =
                 Self::selection_owner_changed(&emitter, &session_handle_owned, per_session).await
@@ -381,7 +381,7 @@ impl ClipboardPortal {
     async fn set_selection(
         &self,
         session_handle: ObjectPath<'_>,
-        options: HashMap<&str, Value<'_>>,
+        options: HashMap<&str, Variant<'_>>,
     ) -> fdo::Result<()> {
         // Same session check as the three read-side methods above, and for the
         // same reason: without it, any app that holds *any* clipboard session
@@ -528,7 +528,7 @@ impl ClipboardPortal {
     async fn selection_owner_changed(
         ctxt: &SignalEmitter<'_>,
         session_handle: &ObjectPath<'_>,
-        options: HashMap<&str, &Value<'_>>,
+        options: HashMap<&str, &Variant<'_>>,
     ) -> zbus::Result<()>;
 
     #[zbus(signal)]
@@ -949,35 +949,38 @@ mod payload_tests {
         let options = owner_changed_options(&list);
 
         assert_eq!(options.len(), 2, "exactly the two contract keys");
-        assert_eq!(options.get("session_is_owner"), Some(&Value::from(false)));
+        assert_eq!(options.get("session_is_owner"), Some(&Variant::from(false)));
 
-        let Some(Value::Array(array)) = options.get("mime_types") else {
+        let Some(Variant::Array(array)) = options.get("mime_types") else {
             panic!("mime_types must be an array");
         };
         assert_eq!(array.len(), 2);
         assert_eq!(
             array.get(0).ok().flatten(),
-            Some(&Value::from("text/plain"))
+            Some(&Variant::from("text/plain"))
         );
-        assert_eq!(array.get(1).ok().flatten(), Some(&Value::from("image/png")));
+        assert_eq!(
+            array.get(1).ok().flatten(),
+            Some(&Variant::from("image/png"))
+        );
     }
 
     #[test]
     fn mime_order_is_preserved() {
         let list = mimes(&["z/last", "a/first"]);
         let options = owner_changed_options(&list);
-        let Some(Value::Array(array)) = options.get("mime_types") else {
+        let Some(Variant::Array(array)) = options.get("mime_types") else {
             panic!("mime_types must be an array");
         };
-        assert_eq!(array.get(0).ok().flatten(), Some(&Value::from("z/last")));
-        assert_eq!(array.get(1).ok().flatten(), Some(&Value::from("a/first")));
+        assert_eq!(array.get(0).ok().flatten(), Some(&Variant::from("z/last")));
+        assert_eq!(array.get(1).ok().flatten(), Some(&Variant::from("a/first")));
     }
 
     #[test]
     fn empty_mime_list_still_produces_an_array() {
         let list = gtk_backend::MimeList::new();
         let options = owner_changed_options(&list);
-        assert!(matches!(options.get("mime_types"), Some(Value::Array(a)) if a.is_empty()));
+        assert!(matches!(options.get("mime_types"), Some(Variant::Array(a)) if a.is_empty()));
     }
 
     #[test]
@@ -989,22 +992,22 @@ mod payload_tests {
 
     #[test]
     fn parsing_a_missing_or_wrongly_typed_key_yields_an_empty_list() {
-        let empty: HashMap<&str, Value<'_>> = HashMap::new();
+        let empty: HashMap<&str, Variant<'_>> = HashMap::new();
         assert!(parse_mime_types(&empty).is_empty());
 
-        let wrong_type: HashMap<&str, Value<'_>> =
-            HashMap::from([("mime_types", Value::from("text/plain"))]);
+        let wrong_type: HashMap<&str, Variant<'_>> =
+            HashMap::from([("mime_types", Variant::from("text/plain"))]);
         assert!(parse_mime_types(&wrong_type).is_empty());
     }
 
     #[test]
     fn parsing_skips_non_string_elements() {
-        let mixed = Value::from(vec![
-            Value::from("text/plain"),
-            Value::from(42u32),
-            Value::from("image/png"),
+        let mixed = Variant::from(vec![
+            Variant::from("text/plain"),
+            Variant::from(42u32),
+            Variant::from("image/png"),
         ]);
-        let options: HashMap<&str, Value<'_>> = HashMap::from([("mime_types", mixed)]);
+        let options: HashMap<&str, Variant<'_>> = HashMap::from([("mime_types", mixed)]);
         let parsed = parse_mime_types(&options);
         assert_eq!(parsed, mimes(&["text/plain", "image/png"]));
     }

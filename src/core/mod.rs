@@ -178,11 +178,11 @@ impl Portal {
         });
 
         // Request the D-Bus name.
-        // `AllowReplacement` means another instance can steal the name from us if it specifies `ReplaceExisting`.
-        // `DoNotQueue` means we fail immediately if the name is already taken, instead of waiting in a queue.
-        let mut flags = RequestNameFlags::AllowReplacement | RequestNameFlags::DoNotQueue;
+        // `ALLOW_REPLACEMENT` means another instance can steal the name from us if it specifies `REPLACE_EXISTING`.
+        // `DO_NOT_QUEUE` means we fail immediately if the name is already taken, instead of waiting in a queue.
+        let mut flags = RequestNameFlags::ALLOW_REPLACEMENT | RequestNameFlags::DO_NOT_QUEUE;
         if replace {
-            flags |= RequestNameFlags::ReplaceExisting;
+            flags |= RequestNameFlags::REPLACE_EXISTING;
         }
         session
             .request_name_with_flags(NAME, flags)

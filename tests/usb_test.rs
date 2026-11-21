@@ -3,18 +3,14 @@ use {
     common::*,
     std::collections::HashMap,
     xdg_desktop_portal_gtk4::portals::usb::dbus::UsbPortal,
-    zbus::{
-        connection::Builder,
-        proxy,
-        zvariant::{OwnedObjectPath, OwnedValue},
-    },
+    zbus::{OwnedObjectPath, OwnedVariant, connection::Builder, proxy},
 };
 
 /// `(id, properties, access_options)` as the Usb portal contract defines it.
 type UsbDeviceIn = (
     String,
-    HashMap<String, OwnedValue>,
-    HashMap<String, OwnedValue>,
+    HashMap<String, OwnedVariant>,
+    HashMap<String, OwnedVariant>,
 );
 
 #[proxy(
@@ -30,7 +26,7 @@ trait Usb {
         parent_window: &str,
         app_id: &str,
         devices: Vec<UsbDeviceIn>,
-        options: HashMap<String, OwnedValue>,
+        options: HashMap<String, OwnedVariant>,
     ) -> zbus::Result<u32>;
 }
 
@@ -42,16 +38,16 @@ async fn test_usb_acquire_devices_dummy_ui() -> Result<(), Box<dyn std::error::E
         10,
     );
     let proxy_ui = dummy_proxy();
-    let _conn = Builder::session()?
+    let _conn = Builder::session()
         .serve_at(
             "/org/freedesktop/portal/desktop",
             UsbPortal::new(&proxy_ui, sm),
-        )?
+        )
         .build()
         .await?;
 
     let proxy = UsbProxy::builder(&client_conn)
-        .destination(_conn.unique_name().unwrap().clone())?
+        .destination(_conn.unique_name().unwrap().clone())
         .build()
         .await?;
 

@@ -1,4 +1,4 @@
-use {serde::Serialize, zbus::zvariant::Type};
+use {serde::Serialize, zbus::Type};
 
 const PORTAL_SUCCESS: u32 = 0;
 const PORTAL_CANCELLED: u32 = 1;
@@ -62,10 +62,10 @@ impl<T: Type> Response<T> {
 
 #[cfg(test)]
 mod tests {
-    use {super::*, serde::Serialize, zbus::zvariant::Type};
+    use {super::*, serde::Serialize, zbus::Type};
 
     #[derive(Serialize, Type, Default)]
-    #[zvariant(signature = "u")]
+    #[zbus(signature = "u")]
     struct DummyResult(u32);
 
     #[test]

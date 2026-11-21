@@ -31,7 +31,7 @@
 //! 1. **Caller** sends a method call (`OpenFile`, `SaveFile`, or `SaveFiles`).
 //! 2. **Portal Object (`FileChooser`)** receives the request.
 //! 3. **Validation & Mapping:**
-//!    - Options like file filters and custom UI choices are translated from their raw D-Bus `zvariant`
+//!    - Options like file filters and custom UI choices are translated from their raw D-Bus `zbus`
 //!      representations into internal Rust structs (`Filter`, `Choice`).
 //!    - For `SaveFiles`, specific security checks are performed to ensure the requested files don't
 //!      contain absolute paths or `..` directory traversal attempts.

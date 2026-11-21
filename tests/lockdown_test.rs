@@ -18,13 +18,13 @@ trait Lockdown {
 #[tokio::test]
 async fn test_lockdown_all_properties_false() -> Result<(), Box<dyn std::error::Error>> {
     let client_conn = try_dbus_session!();
-    let _conn = Builder::session()?
-        .serve_at("/org/freedesktop/portal/desktop", LockdownPortal::new())?
+    let _conn = Builder::session()
+        .serve_at("/org/freedesktop/portal/desktop", LockdownPortal::new())
         .build()
         .await?;
 
     let proxy = LockdownProxy::builder(&client_conn)
-        .destination(_conn.unique_name().unwrap().clone())?
+        .destination(_conn.unique_name().unwrap().clone())
         .build()
         .await?;
 

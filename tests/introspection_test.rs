@@ -16,7 +16,10 @@
 //! `Clipboard.Version` and `Settings.Version` came to be exported where the
 //! contract says `version`.
 
-use {std::collections::BTreeSet, xdg_desktop_portal_gtk4::gui::UiProxy};
+use {
+    std::collections::{BTreeMap, BTreeSet},
+    xdg_desktop_portal_gtk4::gui::UiProxy,
+};
 
 const IMPL_PREFIX: &str = "org.freedesktop.impl.portal.";
 
@@ -152,11 +155,41 @@ const EXPECTED: &[(&str, &[(&str, &[&str])], &[&str])] = &[
     ),
 ];
 
+/// The D-Bus type of each declared property. zbus 6 converts properties through
+/// Serde and `Type` rather than `Variant`, so a getter whose Rust return type
+/// changed (or whose serde representation drifted) must be caught here as well
+/// as by the name check above.
+const EXPECTED_PROPERTY_TYPES: &[(&str, &[(&str, &str)])] = &[
+    ("Clipboard", &[("version", "u")]),
+    (
+        "DynamicLauncher",
+        &[("SupportedLauncherTypes", "u"), ("version", "u")],
+    ),
+    (
+        "Lockdown",
+        &[
+            ("disable-application-handlers", "b"),
+            ("disable-camera", "b"),
+            ("disable-location", "b"),
+            ("disable-microphone", "b"),
+            ("disable-printing", "b"),
+            ("disable-save-to-disk", "b"),
+            ("disable-sound-output", "b"),
+        ],
+    ),
+    (
+        "Notification",
+        &[("SupportedOptions", "a{sv}"), ("version", "u")],
+    ),
+    ("Settings", &[("version", "u")]),
+    ("Usb", &[("version", "u")]),
+];
+
 /// A deliberately minimal scanner for the subset of introspection XML zbus
 /// emits. Avoids pulling in an XML parser for one test.
 struct Scanned {
     methods: Vec<(String, Vec<String>)>,
-    properties: BTreeSet<String>,
+    properties: BTreeMap<String, String>,
 }
 
 fn scan_interface(xml: &str, iface: &str) -> Option<Scanned> {
@@ -168,7 +201,7 @@ fn scan_interface(xml: &str, iface: &str) -> Option<Scanned> {
 
     let mut methods = Vec::new();
     let mut cur: Option<(String, Vec<String>)> = None;
-    let mut properties = BTreeSet::new();
+    let mut properties = BTreeMap::new();
 
     for line in body.lines() {
         let t = line.trim();
@@ -182,7 +215,14 @@ fn scan_interface(xml: &str, iface: &str) -> Option<Scanned> {
             if let Some(entry) = cur.take() {
                 methods.push(entry);
             }
-            properties.insert(rest.split('"').next().unwrap_or_default().to_string());
+            let name = rest.split('"').next().unwrap_or_default().to_string();
+            let ty = rest
+                .split("type=\"")
+                .nth(1)
+                .and_then(|s| s.split('"').next())
+                .unwrap_or_default()
+                .to_string();
+            properties.insert(name, ty);
         } else if let Some(rest) = t.strip_prefix("<signal name=\"") {
             if let Some(entry) = cur.take() {
                 methods.push(entry);
@@ -213,15 +253,11 @@ fn scan_interface(xml: &str, iface: &str) -> Option<Scanned> {
 async fn introspect_backend() -> Option<String> {
     use zbus::fdo::IntrospectableProxy;
 
-    let Ok(b) = zbus::connection::Builder::session() else {
-        return None;
-    };
+    let b = zbus::connection::Builder::session();
     let Ok(server_conn) = b.build().await else {
         return None;
     };
-    let Ok(cb) = zbus::connection::Builder::session() else {
-        return None;
-    };
+    let cb = zbus::connection::Builder::session();
     let Ok(client) = cb.build().await else {
         return None;
     };
@@ -292,11 +328,7 @@ async fn introspect_backend() -> Option<String> {
     let dest = server_conn.unique_name().unwrap().clone();
     let ip = IntrospectableProxy::builder(&client)
         .destination(dest)
-        .map_err(|_| ())
-        .expect("destination")
         .path("/org/freedesktop/portal/desktop")
-        .map_err(|_| ())
-        .expect("path")
         .build()
         .await
         .expect("build introspectable proxy");
@@ -376,8 +408,8 @@ async fn property_names_match_upstream_contract() {
             continue;
         };
         for want in *properties {
-            if !scan.properties.contains(*want) {
-                let got: Vec<_> = scan.properties.iter().cloned().collect();
+            if !scan.properties.contains_key(*want) {
+                let got: Vec<_> = scan.properties.keys().cloned().collect();
                 problems.push(format!("{full}: missing property `{want}` (has {got:?})"));
             }
         }
@@ -386,6 +418,38 @@ async fn property_names_match_upstream_contract() {
     assert!(
         problems.is_empty(),
         "D-Bus property name drift:\n  {}",
+        problems.join("\n  ")
+    );
+}
+
+#[tokio::test]
+async fn property_types_match_upstream_contract() {
+    let Some(xml) = introspect_backend().await else {
+        eprintln!("no private session bus; skipping");
+        return;
+    };
+
+    let mut problems = Vec::new();
+    for (iface, properties) in EXPECTED_PROPERTY_TYPES {
+        let full = format!("{IMPL_PREFIX}{iface}");
+        let Some(scan) = scan_interface(&xml, &full) else {
+            problems.push(format!("{full}: not exported"));
+            continue;
+        };
+        for (name, want) in *properties {
+            match scan.properties.get(*name) {
+                Some(got) if got == want => {}
+                Some(got) => {
+                    problems.push(format!("{full}.{name}: type `{got}`, expected `{want}`"))
+                }
+                None => problems.push(format!("{full}: missing property `{name}`")),
+            }
+        }
+    }
+
+    assert!(
+        problems.is_empty(),
+        "D-Bus property type drift:\n  {}",
         problems.join("\n  ")
     );
 }
@@ -408,17 +472,12 @@ async fn session_interface_matches_upstream_contract() {
 
     const SESSION_PATH: &str = "/org/freedesktop/portal/desktop/session/1/1";
 
-    let Ok(b) = zbus::connection::Builder::session() else {
-        eprintln!("no private session bus; skipping");
-        return;
-    };
+    let b = zbus::connection::Builder::session();
     let Ok(server_conn) = b.build().await else {
         eprintln!("no private session bus; skipping");
         return;
     };
-    let Ok(cb) = zbus::connection::Builder::session() else {
-        return;
-    };
+    let cb = zbus::connection::Builder::session();
     let Ok(client) = cb.build().await else {
         return;
     };
@@ -434,11 +493,7 @@ async fn session_interface_matches_upstream_contract() {
 
     let ip = IntrospectableProxy::builder(&client)
         .destination(server_conn.unique_name().unwrap().clone())
-        .map_err(|_| ())
-        .expect("destination")
         .path(SESSION_PATH)
-        .map_err(|_| ())
-        .expect("path")
         .build()
         .await
         .expect("build introspectable proxy");
@@ -467,7 +522,7 @@ async fn session_interface_matches_upstream_contract() {
     );
 
     assert_eq!(
-        scan.properties.iter().collect::<Vec<_>>(),
+        scan.properties.keys().collect::<Vec<_>>(),
         vec!["version"],
         "{full} must export exactly `version`; `Version` is the capitalisation \
          drift this test exists to catch, and the frontend reads `version`"
