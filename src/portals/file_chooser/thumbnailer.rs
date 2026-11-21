@@ -763,6 +763,18 @@ fn check_cancelled(cancel: &ThumbnailCancel) -> Result<(), String> {
     }
 }
 
+/// Remove a freshly created temporary thumbnailer output and return the standard
+/// cancellation error.
+///
+/// Every cancel path that can fire after a temp file exists funnels through here,
+/// so the output is never leaked in the private runtime directory. The returned
+/// string is byte-for-byte the same `CANCELLED` value used everywhere else, so
+/// cancellation semantics are unchanged.
+fn cancelled_after_temp_cleanup(temp_path: &Path) -> String {
+    let _ = fs::remove_file(temp_path);
+    CANCELLED.to_string()
+}
+
 /// Sizes whose cached thumbnail is missing or invalid, in generation order.
 ///
 /// Derived from validity checks already performed for the early return, so a
@@ -782,19 +794,61 @@ fn sizes_needing_generation(normal_ok: bool, large_ok: bool) -> (usize, [Thumbna
     (count, sizes)
 }
 
+/// The thumbnail tiers that were actually produced by one generation pass.
+///
+/// Each tier is `Some` only when that size's cached PNG exists and validates.
+/// Keeping them separate lets the caller set `thumbnail::path` (128px) and
+/// `thumbnail::path-large` (256px) from their own files instead of aliasing a
+/// single image -- which would make GTK upscale the small one for large display.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct GeneratedThumbnails {
+    pub normal: Option<PathBuf>,
+    pub large: Option<PathBuf>,
+}
+
+impl GeneratedThumbnails {
+    /// The path to return when a caller only accepts a single thumbnail.
+    /// Prefer the normal tier, falling back to large when only that was made.
+    fn preferred(&self) -> Option<&PathBuf> {
+        self.normal.as_ref().or(self.large.as_ref())
+    }
+}
+
+/// Resolve which tiers are present after a generation pass, keeping only those
+/// whose cached PNG still validates against the source file.
+fn valid_generated_thumbnails(
+    normal: Option<&PathBuf>,
+    large: Option<&PathBuf>,
+    file_path: &Path,
+    uri: &str,
+) -> GeneratedThumbnails {
+    GeneratedThumbnails {
+        normal: normal
+            .filter(|p| is_thumbnail_valid_for_uri(p.as_path(), file_path, uri))
+            .cloned(),
+        large: large
+            .filter(|p| is_thumbnail_valid_for_uri(p.as_path(), file_path, uri))
+            .cloned(),
+    }
+}
+
 /// Generate thumbnails directly following the FreeDesktop .thumbnailer spec.
 ///
 /// Both the `normal` (128) and `large` (256) cache entries are produced so that GIO's
 /// `THUMBNAIL_SIZE_AUTO` never selects a stale external thumbnail over a fresh one.
 pub fn generate_thumbnail(file_path: &Path, mime_type: Option<&str>) -> Result<PathBuf, String> {
-    generate_thumbnail_cancellable(file_path, mime_type, &ThumbnailCancel::new())
+    let generated = generate_thumbnail_cancellable(file_path, mime_type, &ThumbnailCancel::new())?;
+    generated
+        .preferred()
+        .cloned()
+        .ok_or_else(|| "No thumbnail generated".to_string())
 }
 
 fn generate_thumbnail_cancellable(
     file_path: &Path,
     mime_type: Option<&str>,
     cancel: &ThumbnailCancel,
-) -> Result<PathBuf, String> {
+) -> Result<GeneratedThumbnails, String> {
     check_cancelled(cancel)?;
 
     let uri = file_to_uri(file_path).ok_or_else(|| "Failed to construct file URI".to_string())?;
@@ -817,7 +871,12 @@ fn generate_thumbnail_cancellable(
         .is_some_and(|p| is_thumbnail_valid_for_uri(p, file_path, &uri));
     if normal_ok && large_ok {
         check_cancelled(cancel)?;
-        return target_normal.ok_or_else(|| "no thumbnail path".to_string());
+        // Both tiers were already validated above; reuse those results directly
+        // so the fully-cached hot path does not re-read either PNG.
+        return Ok(GeneratedThumbnails {
+            normal: target_normal,
+            large: target_large,
+        });
     }
 
     // Derive the work list from those checks instead of re-reading and
@@ -861,15 +920,14 @@ fn generate_thumbnail_cancellable(
                 }
             }
         }
-        if let Some(tp) = target_normal.as_ref()
-            && is_thumbnail_valid_for_uri(tp, file_path, &uri)
-        {
-            return Ok(tp.clone());
-        }
-        if let Some(tp) = target_large.as_ref()
-            && is_thumbnail_valid_for_uri(tp, file_path, &uri)
-        {
-            return Ok(tp.clone());
+        let generated = valid_generated_thumbnails(
+            target_normal.as_ref(),
+            target_large.as_ref(),
+            file_path,
+            &uri,
+        );
+        if generated.preferred().is_some() {
+            return Ok(generated);
         }
     }
 
@@ -899,7 +957,7 @@ fn generate_thumbnail_cancellable(
                     && let Ok(raw_png) = fs::read(&temp_output)
                 {
                     if cancel.is_cancelled() {
-                        return Err(CANCELLED.to_string());
+                        return Err(cancelled_after_temp_cleanup(&temp_output));
                     }
                     if save_thumbnail_file(&raw_png, &uri, file_path, target_path).is_ok() {
                         produced = true;
@@ -973,15 +1031,14 @@ fn generate_thumbnail_cancellable(
                 let _ = fs::remove_file(&prefix);
             }
         }
-        if let Some(tp) = target_normal.as_ref()
-            && is_thumbnail_valid_for_uri(tp, file_path, &uri)
-        {
-            return Ok(tp.clone());
-        }
-        if let Some(tp) = target_large.as_ref()
-            && is_thumbnail_valid_for_uri(tp, file_path, &uri)
-        {
-            return Ok(tp.clone());
+        let generated = valid_generated_thumbnails(
+            target_normal.as_ref(),
+            target_large.as_ref(),
+            file_path,
+            &uri,
+        );
+        if generated.preferred().is_some() {
+            return Ok(generated);
         }
     }
 
@@ -1061,7 +1118,7 @@ fn generate_thumbnail_cancellable(
                     && let Ok(raw_png) = fs::read(&temp_output)
                 {
                     if cancel.is_cancelled() {
-                        return Err(CANCELLED.to_string());
+                        return Err(cancelled_after_temp_cleanup(&temp_output));
                     }
                     if save_thumbnail_file(&raw_png, &uri, file_path, target_path).is_ok() {
                         produced = true;
@@ -1083,15 +1140,14 @@ fn generate_thumbnail_cancellable(
                 }
             }
         }
-        if let Some(tp) = target_normal.as_ref()
-            && is_thumbnail_valid_for_uri(tp, file_path, &uri)
-        {
-            return Ok(tp.clone());
-        }
-        if let Some(tp) = target_large.as_ref()
-            && is_thumbnail_valid_for_uri(tp, file_path, &uri)
-        {
-            return Ok(tp.clone());
+        let generated = valid_generated_thumbnails(
+            target_normal.as_ref(),
+            target_large.as_ref(),
+            file_path,
+            &uri,
+        );
+        if generated.preferred().is_some() {
+            return Ok(generated);
         }
     }
 
@@ -1101,20 +1157,28 @@ fn generate_thumbnail_cancellable(
         for _ in 0..10 {
             check_cancelled(cancel)?;
             std::thread::sleep(Duration::from_millis(50));
-            if let Some(tp) = target_normal.as_ref()
-                && is_thumbnail_valid_for_uri(tp, file_path, &uri)
-            {
-                return Ok(tp.clone());
+            let generated = valid_generated_thumbnails(
+                target_normal.as_ref(),
+                target_large.as_ref(),
+                file_path,
+                &uri,
+            );
+            if generated.preferred().is_some() {
+                return Ok(generated);
             }
         }
     }
 
     check_cancelled(cancel)?;
 
-    if let Some(tp) = target_normal.as_ref()
-        && is_thumbnail_valid_for_uri(tp, file_path, &uri)
-    {
-        Ok(tp.clone())
+    let generated = valid_generated_thumbnails(
+        target_normal.as_ref(),
+        target_large.as_ref(),
+        file_path,
+        &uri,
+    );
+    if generated.preferred().is_some() {
+        Ok(generated)
     } else {
         Err(format!("No thumbnailer available for {mime}"))
     }
@@ -1183,7 +1247,8 @@ impl ThumbnailCoordinator {
     }
 
     /// Queue a file for thumbnailing if it is not already being processed.
-    /// When complete, invokes `on_complete` on the GTK main thread.
+    /// When complete, invokes `on_complete` with the paths of whichever size
+    /// tiers were actually generated, on the GTK main thread.
     ///
     /// A cancelled token makes this a no-op. Workers re-check the token before
     /// starting and between decode stages, so closing a dialog stops both queued
@@ -1195,7 +1260,7 @@ impl ThumbnailCoordinator {
         cancel: ThumbnailCancel,
         on_complete: F,
     ) where
-        F: FnOnce(PathBuf) + Send + 'static,
+        F: FnOnce(GeneratedThumbnails) + Send + 'static,
     {
         if cancel.is_cancelled() {
             return;
@@ -1245,13 +1310,13 @@ impl ThumbnailCoordinator {
                     schedule_trim();
                 }
 
-                if let Ok(thumb_path) = res
+                if let Ok(thumbnails) = res
                     && !cancel.is_cancelled()
                 {
                     let cancel_cb = cancel.clone();
                     glib::idle_add_once(move || {
                         if !cancel_cb.is_cancelled() {
-                            on_complete(thumb_path);
+                            on_complete(thumbnails);
                         }
                     });
                 }
@@ -1328,7 +1393,7 @@ struct ViewWatcher {
     attached_models: Mutex<HashSet<usize>>,
     attached_stacks: Mutex<HashSet<usize>>,
     cancel: ThumbnailCancel,
-    tx: tokio::sync::mpsc::UnboundedSender<(PathBuf, String, PathBuf)>,
+    tx: tokio::sync::mpsc::UnboundedSender<(PathBuf, String, GeneratedThumbnails)>,
 }
 
 impl ViewWatcher {
@@ -1416,13 +1481,13 @@ impl ViewWatcher {
         let tx = self.tx.clone();
         let cancel_cb = self.cancel.clone();
         let path_clone = path.clone();
-        COORDINATOR.queue_thumbnail(path, mime, self.cancel.clone(), move |thumb_path| {
+        COORDINATOR.queue_thumbnail(path, mime, self.cancel.clone(), move |thumbnails| {
             if cancel_cb.is_cancelled() {
                 return;
             }
             // `name` is used only here: move it into the closure instead of
             // cloning and leaving the original to drop.
-            let _ = tx.send((path_clone, name, thumb_path));
+            let _ = tx.send((path_clone, name, thumbnails));
         });
     }
 }
@@ -1454,88 +1519,106 @@ pub fn setup_dialog_thumbnailer(
         schedule_trim();
     });
 
-    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<(PathBuf, String, PathBuf)>();
+    let (tx, mut rx) =
+        tokio::sync::mpsc::unbounded_channel::<(PathBuf, String, GeneratedThumbnails)>();
 
     let dialog_weak = dialog.downgrade();
     let cancel_loop = cancel.clone();
     context.spawn_local(async move {
-        while let Some((file_path, file_name, thumb_path)) = rx.recv().await {
+        /// Write each tier's own path. The normal (128px) and large (256px)
+        /// cache entries are separate files; setting both attributes to one
+        /// path makes GTK upscale the small image for large display.
+        fn apply_thumbnail_attributes(info: &gio::FileInfo, thumbnails: &GeneratedThumbnails) {
+            if let Some(path) = thumbnails.normal.as_ref() {
+                let s = path.to_string_lossy();
+                info.set_attribute_byte_string("thumbnail::path", &s);
+                info.set_attribute_boolean("thumbnail::is-valid", true);
+            }
+            if let Some(path) = thumbnails.large.as_ref() {
+                let s = path.to_string_lossy();
+                info.set_attribute_byte_string("thumbnail::path-large", &s);
+                info.set_attribute_boolean("thumbnail::is-valid-large", true);
+            }
+            info.remove_attribute("filechooser::queried");
+            info.remove_attribute("standard::icon");
+        }
+
+        // 1. Update any visible widgets
+        fn refresh_widgets(
+            root: &Widget,
+            file_name: &str,
+            thumbnails: &GeneratedThumbnails,
+            file_path: &Path,
+        ) {
+            if root.type_().name() == "GtkFileThumbnail"
+                && let Some(info) = root.property::<Option<gio::FileInfo>>("file-info")
+            {
+                let matches = info.display_name() == file_name
+                    || info
+                        .attribute_object("standard::file")
+                        .and_then(|f| f.downcast::<gio::File>().ok())
+                        .and_then(|f| f.path())
+                        .map(|p| p == file_path)
+                        .unwrap_or(false);
+                if matches {
+                    apply_thumbnail_attributes(&info, thumbnails);
+                    root.set_property("file-info", None::<&gio::FileInfo>);
+                    root.set_property("file-info", &info);
+                }
+            }
+            let mut child = root.first_child();
+            while let Some(c) = child {
+                refresh_widgets(&c, file_name, thumbnails, file_path);
+                child = c.next_sibling();
+            }
+        }
+
+        // 2. Also update the GFileInfo in the view's model so off-screen/recycled items stay updated
+        fn update_model(
+            root: &Widget,
+            file_name: &str,
+            thumbnails: &GeneratedThumbnails,
+            file_path: &Path,
+        ) {
+            let name = root.type_().name();
+            if (name == "GtkGridView" || name == "GtkColumnView")
+                && let Some(model) = root.property::<Option<gio::ListModel>>("model")
+            {
+                for i in 0..model.n_items() {
+                    if let Some(item) = model.item(i)
+                        && let Ok(info) = item.downcast::<gio::FileInfo>()
+                    {
+                        let matches = info.display_name() == file_name
+                            || info
+                                .attribute_object("standard::file")
+                                .and_then(|f| f.downcast::<gio::File>().ok())
+                                .and_then(|f| f.path())
+                                .map(|p| p == file_path)
+                                .unwrap_or(false);
+                        if matches {
+                            apply_thumbnail_attributes(&info, thumbnails);
+                            break;
+                        }
+                    }
+                }
+                return;
+            }
+            let mut child = root.first_child();
+            while let Some(c) = child {
+                update_model(&c, file_name, thumbnails, file_path);
+                child = c.next_sibling();
+            }
+        }
+
+        while let Some((file_path, file_name, thumbnails)) = rx.recv().await {
             if cancel_loop.is_cancelled() {
                 break;
             }
             let Some(dlg) = dialog_weak.upgrade() else {
                 break;
             };
-            let thumb_str = thumb_path.to_string_lossy().to_string();
-
-            // 1. Update any visible widgets
-            fn refresh_widgets(root: &Widget, file_name: &str, thumb_str: &str, file_path: &Path) {
-                if root.type_().name() == "GtkFileThumbnail"
-                    && let Some(info) = root.property::<Option<gio::FileInfo>>("file-info")
-                {
-                    let matches = info.display_name() == file_name
-                        || info
-                            .attribute_object("standard::file")
-                            .and_then(|f| f.downcast::<gio::File>().ok())
-                            .and_then(|f| f.path())
-                            .map(|p| p == file_path)
-                            .unwrap_or(false);
-                    if matches {
-                        info.set_attribute_byte_string("thumbnail::path", thumb_str);
-                        info.set_attribute_boolean("thumbnail::is-valid", true);
-                        info.set_attribute_byte_string("thumbnail::path-large", thumb_str);
-                        info.set_attribute_boolean("thumbnail::is-valid-large", true);
-                        info.remove_attribute("filechooser::queried");
-                        info.remove_attribute("standard::icon");
-                        root.set_property("file-info", None::<&gio::FileInfo>);
-                        root.set_property("file-info", &info);
-                    }
-                }
-                let mut child = root.first_child();
-                while let Some(c) = child {
-                    refresh_widgets(&c, file_name, thumb_str, file_path);
-                    child = c.next_sibling();
-                }
-            }
-            refresh_widgets(dlg.upcast_ref(), &file_name, &thumb_str, &file_path);
-
-            // 2. Also update the GFileInfo in the view's model so off-screen/recycled items stay updated
-            fn update_model(root: &Widget, file_name: &str, thumb_str: &str, file_path: &Path) {
-                let name = root.type_().name();
-                if (name == "GtkGridView" || name == "GtkColumnView")
-                    && let Some(model) = root.property::<Option<gio::ListModel>>("model")
-                {
-                    for i in 0..model.n_items() {
-                        if let Some(item) = model.item(i)
-                            && let Ok(info) = item.downcast::<gio::FileInfo>()
-                        {
-                            let matches = info.display_name() == file_name
-                                || info
-                                    .attribute_object("standard::file")
-                                    .and_then(|f| f.downcast::<gio::File>().ok())
-                                    .and_then(|f| f.path())
-                                    .map(|p| p == file_path)
-                                    .unwrap_or(false);
-                            if matches {
-                                info.set_attribute_byte_string("thumbnail::path", thumb_str);
-                                info.set_attribute_boolean("thumbnail::is-valid", true);
-                                info.set_attribute_byte_string("thumbnail::path-large", thumb_str);
-                                info.set_attribute_boolean("thumbnail::is-valid-large", true);
-                                info.remove_attribute("filechooser::queried");
-                                info.remove_attribute("standard::icon");
-                                break;
-                            }
-                        }
-                    }
-                    return;
-                }
-                let mut child = root.first_child();
-                while let Some(c) = child {
-                    update_model(&c, file_name, thumb_str, file_path);
-                    child = c.next_sibling();
-                }
-            }
-            update_model(dlg.upcast_ref(), &file_name, &thumb_str, &file_path);
+            refresh_widgets(dlg.upcast_ref(), &file_name, &thumbnails, &file_path);
+            update_model(dlg.upcast_ref(), &file_name, &thumbnails, &file_path);
         }
     });
 
@@ -2012,6 +2095,74 @@ mod tests {
         }
 
         let _ = fs::remove_file(&pdf_path);
+        let _ = fs::remove_dir_all(&test_dir);
+    }
+
+    #[test]
+    fn cancelled_temp_cleanup_removes_file_and_returns_cancelled() {
+        let test_dir = std::env::temp_dir().join("portal_test_temp_cleanup");
+        let _ = fs::create_dir_all(&test_dir);
+        let temp = test_dir.join("stale-thumbnailer-output.png");
+        fs::write(&temp, b"not really a png").unwrap();
+        assert!(temp.exists());
+
+        // The external thumbnailers cannot be driven in-process deterministically
+        // (the cancellation check sits in a narrow race after the child exits),
+        // so the shared cleanup helper is exercised directly instead.
+        let err = cancelled_after_temp_cleanup(&temp);
+        assert_eq!(err, CANCELLED, "cancellation value must be unchanged");
+        assert!(
+            !temp.exists(),
+            "temp output must be removed on the cancel path"
+        );
+
+        // A second cleanup must stay harmless: several branches still have an
+        // unconditional `let _ = fs::remove_file(&temp_output);` on exit.
+        assert_eq!(cancelled_after_temp_cleanup(&temp), CANCELLED);
+        let _ = fs::remove_dir_all(&test_dir);
+    }
+
+    #[test]
+    fn generated_thumbnails_keep_both_tiers_distinct() {
+        let test_dir = std::env::temp_dir().join("portal_test_both_tiers");
+        let _ = fs::create_dir_all(&test_dir);
+        let src = test_dir.join("source.png");
+        let minimal_png: [u8; 67] = [
+            0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48,
+            0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00,
+            0x00, 0x1f, 0x15, 0xc4, 0x89, 0x00, 0x00, 0x00, 0x0a, 0x49, 0x44, 0x41, 0x54, 0x78,
+            0x9c, 0x63, 0x00, 0x01, 0x00, 0x00, 0x05, 0x00, 0x01, 0x0d, 0x0a, 0x2d, 0xb4, 0x00,
+            0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
+        ];
+        fs::write(&src, minimal_png).unwrap();
+        let uri = file_to_uri(&src).unwrap();
+
+        let normal = test_dir.join("tier-normal.png");
+        let large = test_dir.join("tier-large.png");
+        save_thumbnail_file(&minimal_png, &uri, &src, &normal).unwrap();
+        save_thumbnail_file(&minimal_png, &uri, &src, &large).unwrap();
+
+        let both = valid_generated_thumbnails(Some(&normal), Some(&large), &src, &uri);
+        assert_eq!(both.normal.as_deref(), Some(normal.as_path()));
+        assert_eq!(both.large.as_deref(), Some(large.as_path()));
+        assert_ne!(
+            both.normal, both.large,
+            "thumbnail::path and thumbnail::path-large must not alias one file"
+        );
+        assert_eq!(both.preferred().unwrap(), &normal);
+
+        // When only one tier was produced, leave the other key unset rather
+        // than pointing it at the surviving file.
+        let normal_only = valid_generated_thumbnails(Some(&normal), None, &src, &uri);
+        assert_eq!(normal_only.normal.as_deref(), Some(normal.as_path()));
+        assert!(normal_only.large.is_none());
+        assert_eq!(normal_only.preferred().unwrap(), &normal);
+
+        let large_only = valid_generated_thumbnails(None, Some(&large), &src, &uri);
+        assert!(large_only.normal.is_none());
+        assert_eq!(large_only.large.as_deref(), Some(large.as_path()));
+        assert_eq!(large_only.preferred().unwrap(), &large);
+
         let _ = fs::remove_dir_all(&test_dir);
     }
 }
