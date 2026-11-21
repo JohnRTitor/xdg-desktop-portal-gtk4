@@ -7,7 +7,7 @@ use {
     smallvec::SmallVec,
     std::{
         collections::HashMap,
-        sync::{Arc, LazyLock},
+        sync::{Arc, LazyLock, Weak},
     },
     tokio::task::spawn_blocking,
     zbus::{
@@ -348,7 +348,17 @@ fn apply_notify_result<E>(
         return;
     };
     if replaces_id != 0 && replaces_id != new_id {
-        reverse.lock().remove(&replaces_id);
+        // The host may have closed the old notification and recycled its id for
+        // a different one while `Notify` was in flight. Only retire the entry
+        // if it still belongs to this caller; otherwise we would delete the new
+        // owner's routing state.
+        let mut reverse_lock = reverse.lock();
+        let still_ours = reverse_lock.get(&replaces_id).is_some_and(|target| {
+            target.key.app_id.as_ref() == app_id && target.key.portal_id.as_ref() == portal_id
+        });
+        if still_ours {
+            reverse_lock.remove(&replaces_id);
+        }
     }
     register_notification(
         active,
@@ -584,14 +594,8 @@ impl Notification {
                     };
                     match icon_type {
                         "themed" => {
-                            // The icon payload is an `as`. Borrow that array
-                            // instead of materialising a whole `Vec<String>`
-                            // just to read its first element, and copy only the
-                            // one name we actually keep.
-                            if let Ok(array) = <&zbus::wire::Array>::try_from(payload)
-                                && let Ok(Some(first)) = array.get::<&str>(0)
-                            {
-                                icon_name = first.to_owned();
+                            if let Some(name) = themed_icon_name(payload) {
+                                icon_name = name;
                             }
                         }
                         "file-descriptor" => {
@@ -787,10 +791,42 @@ impl Notification {
     }
 }
 
+/// Read the first name from a themed-icon `as` payload.
+///
+/// Borrowing the array avoids materialising a `Vec<String>` just to keep one
+/// name, but the old conversion validated every element, so a malformed
+/// trailing name must still reject the whole icon. `Array -> Vec<T>` unwraps
+/// exactly one level of `Variant::Variant` per element.
+fn themed_icon_name(payload: &Variant<'_>) -> Option<String> {
+    let array = <&zbus::wire::Array>::try_from(payload).ok()?;
+    let mut first: Option<&str> = None;
+    for value in array.inner() {
+        let value = match value {
+            Variant::Variant(inner) => inner.as_ref(),
+            other => other,
+        };
+        let Ok(name) = <&str>::try_from(value) else {
+            return None;
+        };
+        if first.is_none() {
+            first = Some(name);
+        }
+    }
+    first.map(str::to_owned)
+}
+
 /// How many `&str` slots [`build_actions`] will push, so the list is sized
 /// once. Each action contributes an id and a label.
 fn actions_capacity(notification: &PortalNotification) -> usize {
-    let buttons = notification.buttons.as_ref().map_or(0, Vec::len);
+    // Buttons without an `action` are skipped by `build_actions`, so counting
+    // them would over-size the SmallVec and can force a needless heap spill
+    // even though the real slots still fit inline.
+    let buttons = notification.buttons.as_ref().map_or(0, |buttons| {
+        buttons
+            .iter()
+            .filter(|button| button.action.is_some())
+            .count()
+    });
     2 * (usize::from(notification.default_action.is_some()) + buttons)
 }
 
@@ -914,14 +950,21 @@ fn platform_data(activation_token: Option<String>) -> HashMap<&'static str, Vari
 /// Host IDs can be reused: a replacement may keep the same ID while swapping
 /// the reverse-map target. A token received before that swap was issued for the
 /// old notification and must not be passed to the new one's action. Each token
-/// is stored together with the target it was issued for, and identity (rather
-/// than value) comparison is used because two registrations with identical
-/// fields still represent different notifications.
+/// is stored together with a weak reference to the target it was issued for,
+/// and identity (rather than value) comparison is used because two
+/// registrations with identical fields still represent different notifications.
+/// A `Weak` keeps the control block (and therefore pointer identity) alive
+/// without keeping the target's action map and staged sound file alive after
+/// the notification has been retired.
 fn token_belongs_to(
-    issued_for: &Arc<NotificationTarget>,
+    issued_for: &Weak<NotificationTarget>,
     current: Option<&Arc<NotificationTarget>>,
 ) -> bool {
-    current.is_some_and(|current| Arc::ptr_eq(issued_for, current))
+    current.is_some_and(|current| {
+        issued_for
+            .upgrade()
+            .is_some_and(|issued_for| Arc::ptr_eq(&issued_for, current))
+    })
 }
 
 /// Listens to the notification server's `ActivationToken`, `ActionInvoked` and
@@ -943,10 +986,11 @@ async fn listen_for_server_signals(
 ) -> zbus::Result<()> {
     let mut stream = proxy.inner().receive_all_signals().await?;
     // Tokens are single-use, so each is consumed by the action it precedes.
-    // The target the token was issued for travels with it: a replacement or
-    // removal of that notification invalidates the token even when the host
-    // reuses the same ID, so it can no longer activate the wrong action.
-    let mut activation_tokens: HashMap<u32, (Arc<NotificationTarget>, String)> = HashMap::new();
+    // The target the token was issued for travels with it as a Weak reference:
+    // a replacement or removal invalidates the token even when the host reuses
+    // the same ID, but a pending token does not keep the retired target (and
+    // its staged sound file) alive.
+    let mut activation_tokens: HashMap<u32, (Weak<NotificationTarget>, String)> = HashMap::new();
 
     while let Some(message) = stream.next().await {
         let header = message.header();
@@ -957,7 +1001,7 @@ async fn listen_for_server_signals(
                     continue;
                 };
                 if let Some(target) = reverse_map.lock().get(&id).cloned() {
-                    activation_tokens.insert(id, (target, token));
+                    activation_tokens.insert(id, (Arc::downgrade(&target), token));
                 } else {
                     // No live notification owns this ID (it was replaced with a
                     // different ID, or removed). Clear any token left over from
@@ -1242,7 +1286,19 @@ mod tests {
         let notification = Notification::new(None).await;
         assert_eq!(notification.version(), 2);
 
+        // The property used to rebuild a ten-entry HashMap (and ten variants)
+        // on every read. Warm the LazyLock, then assert a warm read allocates
+        // nothing, so reverting to per-read construction fails this test.
+        let _ = notification.supported_options();
+        let scope = crate::alloc_probe::AllocScope::start();
         let options = notification.supported_options();
+        let snap = scope.finish();
+        std::hint::black_box(options);
+
+        assert_eq!(
+            snap.count, 0,
+            "a cached property read must not allocate: {snap:?}"
+        );
         assert!(options.contains_key("body"));
         assert!(options.contains_key("icon"));
         assert!(options.contains_key("default-action"));
@@ -1406,6 +1462,75 @@ mod notification_map_tests {
         Arc::new(TempSoundFile {
             path: std::env::temp_dir().join("xdpg-apply-notify-nonexistent.snd"),
         })
+    }
+
+    /// A host can recycle a notification id for a different caller while a
+    /// Notify is in flight. The stale-id guard must not delete the new owner's
+    /// routing state or drop its staged sound file.
+    #[test]
+    fn a_recycled_id_owned_by_another_caller_is_not_retired() {
+        let (active, reverse) = empty_maps();
+        let sound = staged_sound();
+        register_notification(
+            &active,
+            &reverse,
+            "org.example.A",
+            "1",
+            42,
+            HashMap::new(),
+            None,
+            Some(sound.clone()),
+        );
+
+        apply_notify_result(
+            &active,
+            &reverse,
+            42,
+            "org.example.B",
+            "2",
+            Ok::<u32, ()>(99),
+            HashMap::new(),
+            None,
+            None,
+        );
+
+        assert_eq!(active_id(&active, "org.example.A", "1"), Some(42));
+        assert_eq!(active_id(&active, "org.example.B", "2"), Some(99));
+        let lock = reverse.lock();
+        assert_eq!(lock.len(), 2, "the recycled id's new owner must survive");
+        assert_eq!(lock[&42].key.app_id.as_ref(), "org.example.A");
+        assert_eq!(
+            Arc::strong_count(&sound),
+            2,
+            "the other caller's staged sound must not be dropped"
+        );
+
+        // Same app, different portal id: both halves of the key are load-bearing.
+        let (active, reverse) = empty_maps();
+        register_notification(
+            &active,
+            &reverse,
+            "org.example.A",
+            "1",
+            42,
+            HashMap::new(),
+            None,
+            None,
+        );
+        apply_notify_result(
+            &active,
+            &reverse,
+            42,
+            "org.example.A",
+            "2",
+            Ok::<u32, ()>(99),
+            HashMap::new(),
+            None,
+            None,
+        );
+        assert_eq!(active_id(&active, "org.example.A", "1"), Some(42));
+        assert_eq!(active_id(&active, "org.example.A", "2"), Some(99));
+        assert_eq!(reverse.lock().len(), 2);
     }
 
     /// A failed `Notify` leaves the old host notification live, so both maps
@@ -1939,22 +2064,63 @@ mod action_list_tests {
         assert!(platform_data(None).is_empty());
     }
 
+    /// The old `Vec<String>` conversion rejected an `as` icon if any element
+    /// was not a string. The borrowed replacement must keep that invariant,
+    /// including when the bad element is not the first one.
+    #[test]
+    fn themed_icon_rejects_a_malformed_trailing_name() {
+        use zbus::wire::Array;
+
+        let good: Array<'_> = vec![Variant::from("first"), Variant::from("second")].into();
+        assert_eq!(
+            themed_icon_name(&Variant::Array(good)).as_deref(),
+            Some("first")
+        );
+
+        let bad: Array<'_> = vec![Variant::from("first"), Variant::from(42u32)].into();
+        assert_eq!(
+            themed_icon_name(&Variant::Array(bad)),
+            None,
+            "a malformed trailing name must reject the whole icon"
+        );
+
+        let empty: Array<'_> = Vec::<Variant<'_>>::new().into();
+        assert_eq!(themed_icon_name(&Variant::Array(empty)), None);
+    }
+
     /// A token received before a replacement that reuses the host ID belongs
     /// to the old notification and must not activate the new one's action.
     #[test]
     fn a_token_from_a_replaced_notification_is_rejected() {
-        let old = Arc::new(target_for(&PortalNotification {
+        let sound = Arc::new(TempSoundFile {
+            path: std::env::temp_dir().join("xdpg-token-pending-sound.snd"),
+        });
+        let old = Arc::new(NotificationTarget {
+            key: Arc::new(NotifKey::new("org.example.App", "1")),
+            action_targets: HashMap::new(),
             default_action: Some("app.old".into()),
-            ..Default::default()
-        }));
+            sound_file: Some(sound.clone()),
+        });
         let new = Arc::new(target_for(&PortalNotification {
             default_action: Some("app.new".into()),
             ..Default::default()
         }));
 
-        assert!(token_belongs_to(&old, Some(&old)));
-        assert!(!token_belongs_to(&old, Some(&new)));
-        assert!(!token_belongs_to(&old, None));
+        let issued_for = Arc::downgrade(&old);
+        assert!(token_belongs_to(&issued_for, Some(&old)));
+        assert!(!token_belongs_to(&issued_for, Some(&new)));
+        assert!(!token_belongs_to(&issued_for, None));
+
+        // Once the old target is gone the weak identity is stale, even if a
+        // new target happens to be registered at the same host id.
+        drop(old);
+        assert!(issued_for.upgrade().is_none());
+        assert!(!token_belongs_to(&issued_for, Some(&new)));
+        assert_eq!(
+            Arc::strong_count(&sound),
+            1,
+            "a pending Weak token must not pin the retired notification's sound file"
+        );
     }
 
     /// The regression this guards: the list used to be built as a
@@ -1992,6 +2158,42 @@ mod action_list_tests {
         assert_eq!(
             snap.count, 0,
             "inline SmallVec and an empty target map must not allocate, got {snap:?}"
+        );
+    }
+
+    /// Buttons without an `action` are skipped by `build_actions`. Counting
+    /// them when sizing the SmallVec used to force a heap spill even though no
+    /// slots were actually pushed.
+    #[test]
+    fn actionless_buttons_do_not_size_the_action_list() {
+        let n = PortalNotification {
+            buttons: Some(
+                (0..5)
+                    .map(|_| PortalButton {
+                        action: None,
+                        label: None,
+                        target: None,
+                    })
+                    .collect(),
+            ),
+            ..Default::default()
+        };
+
+        let scope = crate::alloc_probe::AllocScope::start();
+        let (actions, targets) = build_actions(&n);
+        let snap = scope.finish();
+        std::hint::black_box(&actions);
+        std::hint::black_box(&targets);
+
+        assert!(actions.is_empty());
+        assert!(targets.is_empty());
+        assert!(
+            !actions.spilled(),
+            "five skipped buttons must not spill the SmallVec"
+        );
+        assert_eq!(
+            snap.count, 0,
+            "no slots were pushed, so nothing may allocate: {snap:?}"
         );
     }
 }

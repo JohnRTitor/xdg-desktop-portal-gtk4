@@ -654,6 +654,19 @@ mod tests {
         );
     }
 
+    /// The `from_utf8` fast path must fall back to lossy decoding for bytes
+    /// that are not valid UTF-8, preserving the old behavior.
+    #[test]
+    fn file_path_deserialize_falls_back_for_invalid_utf8() {
+        use zbus::wire::{self, Endian, serialized::Context};
+
+        let bytes = [0xffu8, 0xfe, b'/', b'x', 0];
+        let ctxt = Context::new(Endian::Little, 0);
+        let encoded = wire::to_bytes(ctxt, &bytes.to_vec()).unwrap();
+        let (path, _): (FilePath, _) = encoded.deserialize().unwrap();
+        assert_eq!(path.0, String::from_utf8_lossy(&bytes[..4]).into_owned());
+    }
+
     #[test]
     fn test_map_final_choices() {
         let c = FinalChoice {

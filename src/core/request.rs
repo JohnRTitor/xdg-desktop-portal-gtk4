@@ -170,14 +170,25 @@ mod tests {
         let handle =
             OwnedObjectPath::try_from("/org/freedesktop/portal/desktop/request/1").unwrap();
 
-        let response: Response<u32> =
-            run_request(server, sm, "test_app", "test_sender", handle, async {
-                Response::success(42)
-            })
-            .await;
+        let response: Response<u32> = run_request(
+            server,
+            sm,
+            "test_app",
+            "test_sender",
+            handle.clone(),
+            async { Response::success(42) },
+        )
+        .await;
 
         assert_eq!(response.0, 0);
         assert_eq!(response.1, 42);
+        // Successfully exported Request objects must be removed again; a
+        // regression that always treated the export as refused would leave a
+        // stale interface on the bus and still return the right response.
+        assert!(
+            server.interface::<_, Request>(&handle).await.is_err(),
+            "a completed request must unexport its Request object"
+        );
     }
 
     #[tokio::test]

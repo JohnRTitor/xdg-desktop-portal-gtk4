@@ -393,6 +393,12 @@ fn is_executable_or_in_path(cmd: &str) -> bool {
     false
 }
 
+/// Sort the MIME index, tie-breaking on spec index (discovery order) so the
+/// first spec found for a MIME stays first even with an unstable sort.
+fn sort_registry_index(index: &mut [(Box<str>, usize)]) {
+    index.sort_unstable_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+}
+
 /// Registry of discovered FreeDesktop thumbnailers.
 ///
 /// A flat, MIME-sorted index into a single boxed slice of specs replaces the
@@ -443,9 +449,7 @@ impl ThumbnailerRegistry {
             }
         }
 
-        // Tie-break on spec index (discovery order) so the first spec for a
-        // MIME stays the one found first, even with an unstable sort.
-        index.sort_unstable_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+        sort_registry_index(&mut index);
         Self {
             index: index.into_boxed_slice(),
             specs: specs.into_boxed_slice(),
@@ -766,9 +770,10 @@ fn check_cancelled(cancel: &ThumbnailCancel) -> Result<(), String> {
 /// Remove a freshly created temporary thumbnailer output and return the standard
 /// cancellation error.
 ///
-/// Every cancel path that can fire after a temp file exists funnels through here,
-/// so the output is never leaked in the private runtime directory. The returned
-/// string is byte-for-byte the same `CANCELLED` value used everywhere else, so
+/// The evince and gdk-pixbuf cancel paths funnel through here; the other
+/// branches unlink their temp files inline before returning `CANCELLED`, so no
+/// output is leaked in the private runtime directory. The returned string is
+/// byte-for-byte the same `CANCELLED` value used everywhere else, so
 /// cancellation semantics are unchanged.
 fn cancelled_after_temp_cleanup(temp_path: &Path) -> String {
     let _ = fs::remove_file(temp_path);
@@ -777,9 +782,10 @@ fn cancelled_after_temp_cleanup(temp_path: &Path) -> String {
 
 /// Sizes whose cached thumbnail is missing or invalid, in generation order.
 ///
-/// Derived from validity checks already performed for the early return, so a
-/// thumbnail is never read from disk twice in one generation pass. Returns
-/// `(count, sizes)`; only `sizes[..count]` is meaningful.
+/// Derived from validity checks already performed for the early return, so the
+/// work list needs no second validation pass. The final post-generation check
+/// still re-validates each produced tier. Returns `(count, sizes)`; only
+/// `sizes[..count]` is meaningful.
 fn sizes_needing_generation(normal_ok: bool, large_ok: bool) -> (usize, [ThumbnailSize; 2]) {
     let mut sizes = [ThumbnailSize::Normal, ThumbnailSize::Large];
     let mut count = 0;
@@ -830,6 +836,24 @@ fn valid_generated_thumbnails(
             .filter(|p| is_thumbnail_valid_for_uri(p.as_path(), file_path, uri))
             .cloned(),
     }
+}
+
+/// Write each tier's own path into a `GFileInfo`. The normal (128px) and large
+/// (256px) cache entries are separate files; setting both attributes to one
+/// path makes GTK upscale the small image for large display.
+fn apply_thumbnail_attributes(info: &gio::FileInfo, thumbnails: &GeneratedThumbnails) {
+    if let Some(path) = thumbnails.normal.as_ref() {
+        let s = path.to_string_lossy();
+        info.set_attribute_byte_string("thumbnail::path", &s);
+        info.set_attribute_boolean("thumbnail::is-valid", true);
+    }
+    if let Some(path) = thumbnails.large.as_ref() {
+        let s = path.to_string_lossy();
+        info.set_attribute_byte_string("thumbnail::path-large", &s);
+        info.set_attribute_boolean("thumbnail::is-valid-large", true);
+    }
+    info.remove_attribute("filechooser::queried");
+    info.remove_attribute("standard::icon");
 }
 
 /// Generate thumbnails directly following the FreeDesktop .thumbnailer spec.
@@ -1525,24 +1549,6 @@ pub fn setup_dialog_thumbnailer(
     let dialog_weak = dialog.downgrade();
     let cancel_loop = cancel.clone();
     context.spawn_local(async move {
-        /// Write each tier's own path. The normal (128px) and large (256px)
-        /// cache entries are separate files; setting both attributes to one
-        /// path makes GTK upscale the small image for large display.
-        fn apply_thumbnail_attributes(info: &gio::FileInfo, thumbnails: &GeneratedThumbnails) {
-            if let Some(path) = thumbnails.normal.as_ref() {
-                let s = path.to_string_lossy();
-                info.set_attribute_byte_string("thumbnail::path", &s);
-                info.set_attribute_boolean("thumbnail::is-valid", true);
-            }
-            if let Some(path) = thumbnails.large.as_ref() {
-                let s = path.to_string_lossy();
-                info.set_attribute_byte_string("thumbnail::path-large", &s);
-                info.set_attribute_boolean("thumbnail::is-valid-large", true);
-            }
-            info.remove_attribute("filechooser::queried");
-            info.remove_attribute("standard::icon");
-        }
-
         // 1. Update any visible widgets
         fn refresh_widgets(
             root: &Widget,
@@ -2164,5 +2170,111 @@ mod tests {
         assert_eq!(large_only.preferred().unwrap(), &large);
 
         let _ = fs::remove_dir_all(&test_dir);
+    }
+
+    /// The registry is an index sorted by (mime, discovery order). Duplicate
+    /// MIME keys must resolve to the first-discovered spec, and an unmatched
+    /// MIME must fall back to its `category/*` spec.
+    #[test]
+    fn registry_lookup_keeps_first_discovery_and_wildcard_fallback() {
+        fn spec(name: &str, mime: &str) -> ThumbnailerSpec {
+            ThumbnailerSpec {
+                name: name.into(),
+                exec: "true".into(),
+                try_exec: None,
+                mime_types: vec![mime.into()].into_boxed_slice(),
+            }
+        }
+
+        let specs = vec![
+            spec("first", "image/png"),
+            spec("second", "image/png"),
+            spec("wild", "image/*"),
+        ]
+        .into_boxed_slice();
+        // Deliberately unsorted: the test must pin the sort and its discovery
+        // order tie-break, not a hand-sorted index. "image/*" sorts before
+        // "image/png" because '*' < 'p'.
+        let mut index = vec![
+            ("image/png".into(), 1usize),
+            ("image/png".into(), 0usize),
+            ("image/*".into(), 2usize),
+        ];
+        sort_registry_index(&mut index);
+        let registry = ThumbnailerRegistry {
+            index: index.into_boxed_slice(),
+            specs,
+        };
+
+        assert_eq!(
+            &*registry.find_thumbnailer("image/png").unwrap().name,
+            "first",
+            "duplicate MIME entries must resolve to the first discovered spec"
+        );
+        assert_eq!(
+            &*registry.find_thumbnailer("image/jpeg").unwrap().name,
+            "wild",
+            "an unmatched MIME must use the category wildcard"
+        );
+        assert!(registry.find_thumbnailer("text/plain").is_none());
+    }
+
+    /// Pins the actual attribute writes, not just the GeneratedThumbnails
+    /// values: the original bug was writing one path into both attributes.
+    #[test]
+    fn thumbnail_attributes_use_each_tiers_own_path() {
+        let normal = PathBuf::from("/cache/normal.png");
+        let large = PathBuf::from("/cache/large.png");
+
+        let info = gio::FileInfo::new();
+        // Pre-set the two stale-state attributes so their removal is observable.
+        info.set_attribute_boolean("filechooser::queried", true);
+        info.set_attribute_string("standard::icon", "image-missing");
+        apply_thumbnail_attributes(
+            &info,
+            &GeneratedThumbnails {
+                normal: Some(normal.clone()),
+                large: Some(large.clone()),
+            },
+        );
+        assert_eq!(
+            info.attribute_byte_string("thumbnail::path").as_deref(),
+            Some(normal.to_str().unwrap())
+        );
+        assert_eq!(
+            info.attribute_byte_string("thumbnail::path-large")
+                .as_deref(),
+            Some(large.to_str().unwrap())
+        );
+        assert_ne!(
+            info.attribute_byte_string("thumbnail::path"),
+            info.attribute_byte_string("thumbnail::path-large"),
+            "the two tiers must never alias one file"
+        );
+        assert!(info.boolean("thumbnail::is-valid"));
+        assert!(info.boolean("thumbnail::is-valid-large"));
+        assert!(
+            !info.has_attribute("filechooser::queried"),
+            "the stale queried flag must be cleared"
+        );
+        assert!(
+            !info.has_attribute("standard::icon"),
+            "the stale generic icon must be cleared"
+        );
+
+        let info = gio::FileInfo::new();
+        apply_thumbnail_attributes(
+            &info,
+            &GeneratedThumbnails {
+                normal: Some(normal),
+                large: None,
+            },
+        );
+        assert!(
+            info.attribute_byte_string("thumbnail::path-large")
+                .is_none(),
+            "a tier that was not produced must not publish a path"
+        );
+        assert!(!info.boolean("thumbnail::is-valid-large"));
     }
 }

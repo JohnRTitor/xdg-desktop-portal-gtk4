@@ -315,6 +315,28 @@ mod tests {
         assert_eq!(data, None);
     }
 
+    /// The borrowed themed-icon parser must keep the old `Vec<String>`
+    /// conversion's invariant: one bad name rejects the whole icon, even if a
+    /// valid name came first.
+    #[test]
+    fn test_parse_icon_themed_rejects_malformed_trailing_name() {
+        use zbus::wire::{Array, Structure};
+
+        let bad_names: Array<'_> = vec![Variant::from("icon1"), Variant::from(42u32)].into();
+        let v = OwnedVariant::try_from(Variant::Structure(
+            Structure::builder()
+                .add_field("themed")
+                .append_field(Variant::Array(bad_names))
+                .build()
+                .unwrap(),
+        ))
+        .unwrap();
+
+        let (name, data) = parse_icon(&v);
+        assert_eq!(name, None);
+        assert_eq!(data, None);
+    }
+
     #[test]
     fn test_parse_icon_themed_empty() {
         let empty_vec: Vec<String> = vec![];

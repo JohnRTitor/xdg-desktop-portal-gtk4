@@ -303,7 +303,8 @@ impl Print {
 mod tests {
     use {super::*, zbus::Type};
 
-    /// Pin the field order of the wire result. Breakdown on 64-bit:
+    /// Pin the total size of the wire result (a reorder that keeps the size
+    /// unchanged is deliberately not caught). Breakdown on 64-bit:
     /// `settings` + `page_setup` (2 × 48) + `token` (4) +
     /// `supported_output_file_formats` (24) + two `Option<bool>` (1 each),
     /// rounded up to 128 by alignment.
