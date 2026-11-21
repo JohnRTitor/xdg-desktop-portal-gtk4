@@ -14,5 +14,12 @@ pub fn set_wayland_parent(widget: &impl IsA<Widget>, parent_window: &str) {
         tracing::debug!("Tried to set Wayland parent, but surface is not WaylandToplevel");
         return;
     };
-    toplevel.set_transient_for_exported(parent_window);
+    // A false return means GDK could not export the handle, leaving the dialog
+    // unparented; that is worth recording instead of silently ignoring it.
+    if !toplevel.set_transient_for_exported(parent_window) {
+        tracing::debug!(
+            parent_window,
+            "Failed to set exported Wayland transient parent"
+        );
+    }
 }

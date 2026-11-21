@@ -40,15 +40,23 @@ where
     let notify = Arc::new(Notify::new());
     let cancel_notify = Arc::new(Notify::new());
 
-    let request_exported = server
-        .at(
-            &handle,
-            Request {
-                notify: notify.clone(),
-            },
-        )
-        .await
-        .is_ok();
+    // `at` reports success as `Ok(None)`. `Ok(Some(iface))` means an interface
+    // was already registered at this path and the server was left untouched:
+    // the handed-back interface is *not* ours, so exporting it did not give us
+    // a `Close` listener and cleanup must not remove it. Treating that case as
+    // success would silently drop this request's cancellation path and
+    // unexport another request's interface on completion.
+    let request_exported = matches!(
+        server
+            .at(
+                &handle,
+                Request {
+                    notify: notify.clone(),
+                },
+            )
+            .await,
+        Ok(None)
+    );
 
     let registered =
         session_manager.register(app_id, sender, handle.as_str(), cancel_notify.clone());
@@ -208,5 +216,102 @@ mod tests {
 
         assert_eq!(response.0, 2); // 2 is "other": the request was closed, not user-cancelled
         assert_eq!(response.1, 0); // Default u32
+    }
+
+    /// A duplicate `at` registration is a refusal, not a success: zbus hands
+    /// the interface back as `Ok(Some(_))` and leaves the server untouched.
+    /// This pins the contract that [`run_request`] now relies on when it keys
+    /// its cleanup on `Ok(None)`.
+    #[tokio::test]
+    async fn duplicate_at_leaves_the_first_interface_serving() {
+        let Ok(conn) = zbus::Connection::session().await else {
+            return;
+        };
+        let server = conn.object_server();
+        let handle =
+            OwnedObjectPath::try_from("/org/freedesktop/portal/desktop/request/duplicate").unwrap();
+
+        let first_notify = Arc::new(Notify::new());
+        let first = server
+            .at(
+                &handle,
+                Request {
+                    notify: first_notify.clone(),
+                },
+            )
+            .await
+            .expect("the first registration must succeed");
+        assert!(first.is_none(), "first registration returns Ok(None)");
+
+        let duplicate = server
+            .at(
+                &handle,
+                Request {
+                    notify: Arc::new(Notify::new()),
+                },
+            )
+            .await
+            .expect("a duplicate is not an error, it is Ok(Some(iface))");
+        assert!(
+            duplicate.is_some(),
+            "a duplicate registration is handed back"
+        );
+
+        let served = server
+            .interface::<_, Request>(&handle)
+            .await
+            .expect("the first interface must still be served");
+        assert!(
+            Arc::ptr_eq(&served.get().await.notify, &first_notify),
+            "the refused duplicate must not displace the first interface"
+        );
+    }
+
+    /// The bug this guards: `run_request` used to treat `Ok(Some(_))` as a
+    /// successful export, so on a reused path it would drop this request's
+    /// `Close` listener and then remove the *other* request's interface during
+    /// cleanup. The pre-existing interface must survive a `run_request` that
+    /// could not export its own.
+    #[tokio::test]
+    async fn run_request_on_a_duplicate_path_does_not_remove_the_first_interface() {
+        let Ok(conn) = zbus::Connection::session().await else {
+            return;
+        };
+        let server = conn.object_server();
+        let sm = crate::core::session_manager::SessionManager::new(conn.clone(), 10);
+        let handle =
+            OwnedObjectPath::try_from("/org/freedesktop/portal/desktop/request/dup_run").unwrap();
+
+        let first_notify = Arc::new(Notify::new());
+        assert!(
+            server
+                .at(
+                    &handle,
+                    Request {
+                        notify: first_notify.clone(),
+                    },
+                )
+                .await
+                .expect("the first registration must succeed")
+                .is_none()
+        );
+
+        let response: Response<u32> = run_request(
+            server,
+            sm,
+            "test_app",
+            "test_sender",
+            handle.clone(),
+            async { Response::success(42) },
+        )
+        .await;
+        assert_eq!(response.0, 0);
+        assert_eq!(response.1, 42);
+
+        let served = server
+            .interface::<_, Request>(&handle)
+            .await
+            .expect("run_request cleanup must not remove an interface it did not export");
+        assert!(Arc::ptr_eq(&served.get().await.notify, &first_notify));
     }
 }

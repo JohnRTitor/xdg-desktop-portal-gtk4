@@ -18,10 +18,10 @@ pub fn set_x11_parent(widget: &impl IsA<Widget>, parent_xid: u64) {
         return;
     };
 
-    let display = x11_surface
-        .display()
-        .downcast::<X11Display>()
-        .expect("GTK guarantees that an X11Surface is always associated with an X11Display");
+    let Ok(display) = x11_surface.display().downcast::<X11Display>() else {
+        tracing::debug!("Tried to set X11 parent, but surface display is not X11Display");
+        return;
+    };
 
     // Safely look up the GDK surface representation from the raw parent XID
     let Some(parent_surface) = X11Surface::lookup_for_display(&display, parent_xid) else {

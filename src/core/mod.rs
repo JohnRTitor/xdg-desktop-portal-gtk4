@@ -16,7 +16,8 @@
 //!
 //! - All `zbus` interfaces implemented in this crate must execute their methods
 //!   without blocking the Tokio worker threads.
-//! - The `Portal` struct is the anchor. Its destruction unregisters the D-Bus name.
+//! - The `Portal` struct owns a `Connection` handle. The D-Bus name is unregistered when the
+//!   last handle (including clones held by spawned tasks) drops at runtime teardown.
 //!
 use {
     crate::gui::UiProxy,
@@ -76,9 +77,11 @@ pub enum PortalError {
 
 /// The core portal state, holding the main D-Bus connection.
 ///
-/// This struct acts as the central anchor for the D-Bus lifecycle. When this is dropped,
-/// the underlying zbus `Connection` and `ObjectServer` are torn down, which unregisters
-/// our D-Bus name.
+/// This struct owns one handle to the underlying zbus `Connection`. The
+/// `SessionManager` and several portals keep clones in spawned tasks, so the
+/// D-Bus name is only unregistered when the last `Connection` handle drops as
+/// the Tokio runtime shuts down; dropping a `Portal` alone does not tear the
+/// connection down.
 pub struct Portal {
     _session: Connection,
 }

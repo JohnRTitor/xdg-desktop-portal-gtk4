@@ -209,6 +209,16 @@ fn register_tracked(
     object_path: &str,
     cancel: CancellableSender,
 ) -> Result<(), SessionError> {
+    // A zero limit must reject even the very first registration. Without this
+    // early check the `None` branch below would insert a count of 1: the
+    // budget check inside the `Some((key, count))` branch only sees apps that
+    // are already tracked, so a zero limit would be bypassed by every new app.
+    if max_sessions_per_app == 0 {
+        return Err(SessionError::LimitExceeded {
+            app_id: app_id.into(),
+        });
+    }
+
     // `Arc<str>: Borrow<str>`, so `get_key_value` finds an app that is already
     // counted without allocating. Only a genuinely new app pays for its key;
     // everything else is a refcount bump on the existing one.
@@ -404,6 +414,36 @@ mod sweep_tests {
             state.app_sessions.get("app"),
             Some(&3),
             "an unrelated count must be untouched"
+        );
+    }
+
+    #[test]
+    fn zero_limit_rejects_every_registration_and_leaves_state_empty() {
+        let mut state = SessionManagerState::default();
+        for (sender, object_path) in [(":1", "/r1"), (":2", "/r2")] {
+            let result = register_tracked(
+                &mut state,
+                0,
+                "app",
+                sender,
+                object_path,
+                Arc::new(Notify::new()),
+            );
+            assert!(
+                matches!(
+                    result,
+                    Err(SessionError::LimitExceeded { ref app_id }) if app_id.as_ref() == "app"
+                ),
+                "a zero limit must reject even the first registration"
+            );
+        }
+        assert!(
+            state.sender_objects.is_empty(),
+            "a rejected request must not be tracked against its sender"
+        );
+        assert!(
+            state.app_sessions.is_empty(),
+            "a rejected request must not consume a budget slot"
         );
     }
 

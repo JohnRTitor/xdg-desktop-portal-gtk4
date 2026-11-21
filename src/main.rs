@@ -29,9 +29,11 @@ async fn portal_worker(
     // We listen for a shutdown signal sent at the very end of `main()`.
     let _ = shutdown_rx.await;
 
-    // Explicitly drop the portal here.
-    // This ensures the zbus `ObjectServer` and `Connection` are dropped on the Tokio
-    // thread, unregistering our D-Bus name gracefully before the process exits.
+    // Drop our `Portal` handle here. It owns one of several clones of the
+    // underlying zbus `Connection`: the `SessionManager` and several portals
+    // hold their own clones in spawned tasks. The D-Bus name is therefore
+    // unregistered when the last of those handles goes away as this Tokio
+    // runtime is torn down, not by this drop alone.
     drop(portal);
 }
 fn main() {
