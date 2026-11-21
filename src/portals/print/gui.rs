@@ -151,22 +151,32 @@ fn glib_to_owned(value: &glib::Variant) -> Option<OwnedVariant> {
     } else {
         value.clone()
     };
-    let ty = inner.type_().to_string();
-    match ty.as_str() {
-        "s" => {
-            let s = inner.get::<String>()?;
-            OwnedVariant::try_from(Variant::from(s.as_str())).ok()
-        }
-        "d" => Some(OwnedVariant::from(inner.get::<f64>()?)),
-        "b" => Some(OwnedVariant::from(inner.get::<bool>()?)),
-        "y" => Some(OwnedVariant::from(inner.get::<u8>()?)),
-        "n" => Some(OwnedVariant::from(inner.get::<i16>()?)),
-        "q" => Some(OwnedVariant::from(inner.get::<u16>()?)),
-        "i" => Some(OwnedVariant::from(inner.get::<i32>()?)),
-        "u" => Some(OwnedVariant::from(inner.get::<u32>()?)),
-        "x" => Some(OwnedVariant::from(inner.get::<i64>()?)),
-        "t" => Some(OwnedVariant::from(inner.get::<u64>()?)),
-        _ => None,
+    // Match the borrowed type directly: `type_().to_string()` allocated a
+    // `String` for every entry of every `a{sv}` dict round-tripped through GTK.
+    let ty = inner.type_();
+    if ty == glib::VariantTy::STRING {
+        let s = inner.get::<String>()?;
+        OwnedVariant::try_from(Variant::from(s.as_str())).ok()
+    } else if ty == glib::VariantTy::DOUBLE {
+        Some(OwnedVariant::from(inner.get::<f64>()?))
+    } else if ty == glib::VariantTy::BOOLEAN {
+        Some(OwnedVariant::from(inner.get::<bool>()?))
+    } else if ty == glib::VariantTy::BYTE {
+        Some(OwnedVariant::from(inner.get::<u8>()?))
+    } else if ty == glib::VariantTy::INT16 {
+        Some(OwnedVariant::from(inner.get::<i16>()?))
+    } else if ty == glib::VariantTy::UINT16 {
+        Some(OwnedVariant::from(inner.get::<u16>()?))
+    } else if ty == glib::VariantTy::INT32 {
+        Some(OwnedVariant::from(inner.get::<i32>()?))
+    } else if ty == glib::VariantTy::UINT32 {
+        Some(OwnedVariant::from(inner.get::<u32>()?))
+    } else if ty == glib::VariantTy::INT64 {
+        Some(OwnedVariant::from(inner.get::<i64>()?))
+    } else if ty == glib::VariantTy::UINT64 {
+        Some(OwnedVariant::from(inner.get::<u64>()?))
+    } else {
+        None
     }
 }
 
@@ -175,23 +185,27 @@ fn glib_to_owned(value: &glib::Variant) -> Option<OwnedVariant> {
 /// Entries with an unsupported value type are skipped individually: dropping
 /// the whole dict because of one key would discard every valid setting too.
 fn variant_to_owned_dict(variant: &glib::Variant) -> HashMap<String, OwnedVariant> {
-    variant
-        .iter()
-        .filter_map(|entry| {
-            // A dict entry is `{sv}`, which is not the same type as `(sv)` to
-            // GVariant even though their binary layouts match. Read the two
-            // children directly instead of asking for a tuple.
-            let key = entry.child_value(0).get::<String>()?;
-            let value = entry.child_value(1);
-            match glib_to_owned(&value) {
-                Some(owned) => Some((key, owned)),
-                None => {
-                    tracing::warn!(%key, ?value, "Ignoring unsupported value from GTK print dict");
-                    None
-                }
+    // Every child is a `{sv}` entry, so the child count is an upper bound on
+    // the number of keys we can keep. Size the map once up front.
+    let mut result = HashMap::with_capacity(variant.n_children());
+    for entry in variant.iter() {
+        // A dict entry is `{sv}`, which is not the same type as `(sv)` to
+        // GVariant even though their binary layouts match. Read the two
+        // children directly instead of asking for a tuple.
+        let Some(key) = entry.child_value(0).get::<String>() else {
+            continue;
+        };
+        let value = entry.child_value(1);
+        match glib_to_owned(&value) {
+            Some(owned) => {
+                result.insert(key, owned);
             }
-        })
-        .collect()
+            None => {
+                tracing::warn!(%key, ?value, "Ignoring unsupported value from GTK print dict");
+            }
+        }
+    }
+    result
 }
 
 /// Inverse of [`variant_to_owned_dict`]: rebuild the `a{sv}` `glib::Variant`
@@ -205,7 +219,7 @@ fn owned_dict_to_variant(dict: &HashMap<String, OwnedVariant>) -> glib::Variant 
     let builder = glib::VariantDict::new(None::<&glib::Variant>);
     for (key, value) in dict {
         match to_variant_entry(key, value) {
-            Some((key, variant)) => builder.insert_value(&key, &variant),
+            Some((key, variant)) => builder.insert_value(key, &variant),
             None => tracing::warn!(%key, ?value, "Ignoring invalid print setting entry"),
         }
     }
@@ -216,11 +230,13 @@ fn owned_dict_to_variant(dict: &HashMap<String, OwnedVariant>) -> glib::Variant 
 /// from the dict loop lets tests verify the empty-key guard directly: GLib
 /// would reject an empty key on its own, so outcome-only tests cannot tell
 /// whether our guard is still there.
-fn to_variant_entry(key: &str, value: &OwnedVariant) -> Option<(String, glib::Variant)> {
+fn to_variant_entry<'a>(key: &'a str, value: &OwnedVariant) -> Option<(&'a str, glib::Variant)> {
     if key.is_empty() {
         return None;
     }
-    Some((key.to_string(), owned_to_glib(value)?))
+    // `VariantDict::insert_value` borrows the key, so hand it straight back
+    // instead of allocating a `String` per entry only to borrow it again.
+    Some((key, owned_to_glib(value)?))
 }
 
 pub struct PrintResult {
@@ -372,10 +388,14 @@ impl JobFd {
 }
 
 pub struct ExecutePrintUi {
-    pub token: u32,
     /// The application submitting the job. A token is only valid for the
     /// application that obtained it from `PreparePrint`.
+    ///
+    /// Listed first so the two 4-byte fields pack into the `String`'s trailing
+    /// slots: declaration order costs 40 bytes with 8 bytes of padding, while
+    /// this order is exactly 32 bytes.
     pub app_id: String,
+    pub token: u32,
     /// An owned duplicate of the fd supplied with `Print`. GTK does not close
     /// descriptors handed to `set_source_fd`, so this copy is closed by the
     /// job's completion callback.
@@ -463,6 +483,15 @@ mod tests {
     /// `claim_token` with a plain payload. The ownership logic does not look at
     /// the payload, so this covers the same branches the real caller hits.
     type Jobs = HashMap<u32, (Arc<str>, u32)>;
+
+    /// `app_id` first removes the padding the previous field order left behind:
+    /// `String` (24) + `u32` (4) + `OwnedFd` (4) pack into exactly 32 bytes,
+    /// down from 40. Pin it so a careless field reorder cannot silently grow it.
+    #[test]
+    #[cfg(target_pointer_width = "64")]
+    fn execute_print_ui_has_no_tail_padding() {
+        assert_eq!(std::mem::size_of::<ExecutePrintUi>(), 32);
+    }
 
     fn jobs_with(token: u32, owner: &str, payload: u32) -> Jobs {
         let mut jobs = Jobs::new();

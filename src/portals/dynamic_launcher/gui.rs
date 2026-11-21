@@ -37,7 +37,7 @@ impl DynamicLauncherUi {
     }
 
     fn run_impl(
-        self,
+        mut self,
         send: crate::gui::UiDispatcher<Result<DynamicLauncherResult, UiError>>,
         context: MainContext,
         close_on_close: Receiver<()>,
@@ -75,9 +75,10 @@ impl DynamicLauncherUi {
         hbox.set_margin_top(crate::gui::ELEMENT_MARGIN);
         dialog.content_area.append(&hbox);
 
-        if let Some(bytes) = &self.icon_data {
-            // Convert raw bytes to a GTK `BytesIcon`
-            let bytes_glib = glib::Bytes::from(bytes);
+        if let Some(bytes) = self.icon_data.take() {
+            // Hand the owned bytes to `glib::Bytes` without copying. `Bytes::from(&Vec)`
+            // goes through `Bytes::new`, which copies the icon data.
+            let bytes_glib = glib::Bytes::from_owned(bytes);
             let icon = gio::BytesIcon::new(&bytes_glib);
             let image = Image::from_gicon(&icon);
             image.set_pixel_size(64);

@@ -95,8 +95,10 @@ fn owner_changed_options<'a>(
     mimes: &'a gtk_backend::MimeList,
 ) -> HashMap<&'static str, Variant<'a>> {
     let mut options = HashMap::new();
-    // `Box<str>` has no `zbus` `Type` impl, so the array is built from
-    // borrowed `&str`s pointing into the list rather than from owned copies.
+    // `Box<str>` *does* implement zbus `Type`. The problem is the conversion:
+    // building an array from `Vec<T>` requires `T: Type + Into<Variant>`, and
+    // `Box<str>` has no `Into<Variant>` impl (unlike `&str`). So the array is
+    // built from borrowed `&str`s pointing into the list, not owned copies.
     options.insert(
         "mime_types",
         Variant::from(mimes.iter().map(|m| m.as_ref()).collect::<Vec<&str>>()),
@@ -109,15 +111,19 @@ fn owner_changed_options<'a>(
 ///
 /// The inverse of [`owner_changed_options`]'s mime encoding.
 fn parse_mime_types(options: &HashMap<&str, Variant<'_>>) -> gtk_backend::MimeList {
-    let mut mimes = gtk_backend::MimeList::new();
     if let Some(Variant::Array(arr)) = options.get("mime_types") {
+        // At most one mime type per array element, so the array length is a
+        // safe upper bound and the buffer never needs to grow.
+        let mut mimes = gtk_backend::MimeList::with_capacity(arr.len());
         for i in 0..arr.len() {
             if let Ok(Some(Variant::Str(s))) = arr.get::<Variant<'_>>(i) {
                 mimes.push(s.as_str().into());
             }
         }
+        mimes
+    } else {
+        gtk_backend::MimeList::new()
     }
-    mimes
 }
 
 /// Number of live serial counters. Used by the tests to assert on growth.

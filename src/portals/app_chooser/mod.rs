@@ -65,8 +65,11 @@
 //!
 //! ## Backend Interaction
 //!
-//! This portal does not interact with the host's desktop file database (MIME database) directly.
-//! It relies entirely on the host daemon passing it the strings (e.g., `org.gnome.Gedit.desktop`).
+//! The choice list itself comes from the host daemon as desktop-file IDs (e.g.,
+//! `org.gnome.Gedit.desktop`); the portal does not decide which apps can handle a file. The GUI
+//! in `gui.rs` does, however, consult the host's desktop-file/MIME database through GIO's `AppInfo`
+//! (`AppInfo::all()` and `AppInfo::recommended_for_type`) to resolve each ID into a display name
+//! and icon for the rows.
 //!
 //! ## Specification Notes
 //!
@@ -77,7 +80,8 @@
 //! ## Extension Guide
 //!
 //! - **UI Refinements:** If GTK adds better widgets for App Choosers, update `gui.rs`. Currently,
-//!   it manually extracts icons and names from the provided `.desktop` strings.
+//!   it resolves each provided `.desktop` ID through GIO `AppInfo` to obtain its icon and display
+//!   name before building the rows.
 //! - **Remembering Choices:** The spec includes options for remembering the user's choice. Currently,
 //!   this portal delegates the actual saving of that choice back to the host daemon (by simply returning
 //!   the choice).

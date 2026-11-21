@@ -20,14 +20,14 @@ use {
 #[derive(Debug, thiserror::Error)]
 pub enum SessionError {
     #[error("Too many sessions for app {app_id}")]
-    LimitExceeded { app_id: String },
+    LimitExceeded { app_id: Box<str> },
 }
 
 type CancellableSender = Arc<Notify>;
 
 /// A request tracked against its app, kept alongside the sender's request list.
 struct TrackedRequest {
-    object_path: String,
+    object_path: Box<str>,
     app_id: Arc<str>,
     cancel: CancellableSender,
 }
@@ -39,7 +39,7 @@ pub(crate) struct SessionManagerState {
     /// Each request records its object path, the app ID, and a cancellation
     /// sender. This allows us to instantly notify the specific request task to
     /// abort when the sender disconnects.
-    sender_objects: HashMap<String, Vec<TrackedRequest>>,
+    sender_objects: HashMap<Box<str>, Vec<TrackedRequest>>,
 
     // Maps an application ID (e.g., "org.gnome.TextEditor") to the number of active sessions.
     // Used to enforce rate-limiting / spam prevention (max_sessions_per_app).
@@ -138,7 +138,7 @@ impl SessionManager {
         let (held, sender_is_empty) = match state.sender_objects.get_mut(sender) {
             Some(objects) => {
                 let before = objects.len();
-                objects.retain(|req| req.object_path != object_path);
+                objects.retain(|req| req.object_path.as_ref() != object_path);
                 (objects.len() != before, objects.is_empty())
             }
             None => (false, false),
@@ -274,6 +274,15 @@ impl SessionManagerState {
 #[cfg(test)]
 mod tests {
     use {super::*, zbus::Connection};
+
+    /// Pins the owned-string result of using `Box<str>` for the object path.
+    /// On 64-bit that is 16 bytes, plus 16 for the `Arc<str>` app ID (also a
+    /// fat pointer) and 8 for the thin `Arc<Notify>`; no padding is needed.
+    #[test]
+    #[cfg(target_pointer_width = "64")]
+    fn tracked_request_is_compact() {
+        assert_eq!(std::mem::size_of::<TrackedRequest>(), 40);
+    }
 
     #[tokio::test]
     async fn test_session_manager_register_unregister() {

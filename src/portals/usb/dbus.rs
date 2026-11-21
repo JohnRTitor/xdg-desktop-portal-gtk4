@@ -53,9 +53,13 @@ impl<'a> UdevProperties<'a> {
         match self {
             Self::Flat(map) => map.get(key).and_then(|value| as_str(value)),
             Self::Nested(dict) => {
-                // `Dict::get` would need an owned key, so scan for the borrowed
-                // one instead. A device's property dictionary holds a few dozen
-                // entries and this runs at most seven times per device, which is
+                // `Dict::get<'d, K, V>(&'d self, key: &'k K)` carries a `'d: 'k + 'v`
+                // bound that ties the (short) borrow of the dictionary to its
+                // (long) key/value data lifetimes, so it cannot look up a
+                // transient borrowed key on data borrowed from the message.
+                // Scan for the borrowed key instead, which keeps the lookup
+                // allocation-free. A device's property dictionary holds a few
+                // dozen entries and this runs at most seven times per device,
                 // cheaper than deep-copying the dictionary to index it by hash.
                 dict.iter()
                     .find(|(k, _)| as_str(k).is_some_and(|k| k == key))
@@ -195,15 +199,16 @@ impl UsbPortal {
         options: HashMap<String, OwnedVariant>,
         #[zbus(object_server)] server: &zbus::ObjectServer,
     ) -> Result<Response<UsbResults>, fdo::Error> {
+        // Borrow the sender from the message; `run_request` only needs `&str`
+        // and never moves it into a spawned task, so no owned String is needed.
         let sender = header
             .sender()
-            .map(|s| String::from(s.as_str()))
             .ok_or_else(|| fdo::Error::Failed("Missing sender".into()))?;
         Ok(run_request(
             server,
             self.session_manager.clone(),
             &app_id,
-            &sender,
+            sender.as_str(),
             handle,
             self.acquire_devices_impl(app_id.clone(), parent_window, devices, options),
         )

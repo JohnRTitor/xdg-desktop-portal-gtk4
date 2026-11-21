@@ -23,7 +23,7 @@
 //! The portal displays a native GTK file chooser dialog and returns the selected URIs.
 //!
 //! **Implementation Mapping:**
-//! Implemented in `dbus.rs` by the `FileChooser` struct. The UI rendering relies on `gtk4::FileChooserNative`,
+//! Implemented in `dbus.rs` by the `FileChooser` struct. The UI rendering uses a `gtk4::FileChooserDialog`,
 //! wrapped by `FileChooserUi` in `gui.rs`.
 //!
 //! ## Request Lifecycle
@@ -44,7 +44,7 @@
 //!    - If the user cancels, `Response::cancelled()` is returned.
 //! 7. **Cleanup:** `run_request` handles the D-Bus Request object lifecycle.
 //!
-//! **Ownership:** `run_request` owns the D-Bus request state. The GTK thread owns the `FileChooserNative`
+//! **Ownership:** `run_request` owns the D-Bus request state. The GTK thread owns the `FileChooserDialog`
 //! widget.
 //!
 //! ## Session Management
@@ -54,9 +54,11 @@
 //! ## GTK Integration
 //!
 //! - **Thread Transition:** Execution moves to the GTK main thread via `UiProxy` to construct the dialog.
-//! - **Native Dialogs:** This portal uses `gtk4::FileChooserNative` instead of a standard `gtk4::Dialog`.
-//!   Native choosers integrate better with the host environment (e.g., they can use the KDE chooser on
-//!   a KDE desktop even if GTK is driving the portal).
+//! - **Dialog Choice:** This portal uses `gtk4::FileChooserDialog`, a real `GtkWindow`, rather than
+//!   `gtk4::FileChooserNative`. Constructing a window directly is what lets the UI attach response and
+//!   filter handlers, set modal/default-response state, inject filters and the spec's custom choices
+//!   (such as the read-only toggle), bind to the caller's parent window, and delay destruction to work
+//!   around GTK4 FileChooserWidget teardown bugs. See `gui.rs`.
 //!
 //! ## Backend Interaction
 //!

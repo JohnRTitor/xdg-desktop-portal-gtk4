@@ -90,7 +90,10 @@ impl AccountUi {
         user_name_entry.set_text(&self.user_name);
         vbox.append(&user_name_entry);
 
-        let icon_file = self.icon_file.clone();
+        // `self` is owned and `icon_file` is not read again below, so move it
+        // out rather than cloning. The later uses only touch `parent_window`
+        // and `activation_token`, which are separate fields.
+        let icon_file = self.icon_file;
 
         let window = dialog.window.clone();
 

@@ -1,7 +1,7 @@
 use {
     gtk4::gio::{Settings, SettingsSchemaSource},
     parking_lot::RwLock,
-    std::{collections::HashMap, sync::Arc, time::Duration},
+    std::{collections::HashMap, ffi::OsStr, sync::Arc, time::Duration},
     zbus::{OwnedVariant, Variant, fdo, interface, object_server::SignalEmitter},
 };
 
@@ -14,6 +14,14 @@ use crate::{
 
 #[cfg(test)]
 use crate::portals::settings::aggregator::NS_FREEDESKTOP_APPEARANCE;
+
+/// Basenames of the config targets watched through the parent `~/.config` monitor.
+///
+/// Kept as `&str` literals because `OsStr::new` is not a `const fn`. Converting
+/// one to `&OsStr` at the comparison site is a zero-cost reinterpretation, so
+/// this allocates nothing on every file-monitor event -- unlike building three
+/// owned `OsString`s inside the callback.
+const RELEVANT_CONFIG_NAMES: [&str; 3] = ["gtk-3.0", "gtk-4.0", "kdeglobals"];
 
 /// Does `namespace` satisfy any of the caller's `patterns`?
 ///
@@ -164,11 +172,6 @@ impl SettingsPortal {
                     if let Ok(monitor) = config_dir_file
                         .monitor_directory(gio::FileMonitorFlags::NONE, gio::Cancellable::NONE)
                     {
-                        let relevant_names = [
-                            std::ffi::OsString::from("gtk-3.0"),
-                            std::ffi::OsString::from("gtk-4.0"),
-                            std::ffi::OsString::from("kdeglobals"),
-                        ];
                         monitor.set_rate_limit(100);
                         monitor.connect_changed({
                             let tx = tx_main.clone();
@@ -176,8 +179,13 @@ impl SettingsPortal {
                                 let is_relevant = [Some(file), other_file]
                                     .into_iter()
                                     .flatten()
-                                    .filter_map(|f| f.basename())
-                                    .any(|name| relevant_names.iter().any(|n| n == &name));
+                                    .any(|f| {
+                                        f.basename().as_deref().is_some_and(|name| {
+                                            RELEVANT_CONFIG_NAMES
+                                                .iter()
+                                                .any(|n| name == OsStr::new(*n))
+                                        })
+                                    });
 
                                 if is_relevant {
                                     let _ = tx.try_send(());

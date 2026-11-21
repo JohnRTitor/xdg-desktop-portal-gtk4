@@ -40,7 +40,8 @@
 //!    the host OS to launch the default mail application. It also passes `activation_token` to GIO
 //!    to ensure the launched mail client is brought to the foreground.
 //! 7. **Response Generation:** It returns a successful `Response` object (with an empty dictionary,
-//!    per specification) or a cancelled response if launching fails.
+//!    per specification) or `Response::other()` if launching fails. No dialog is shown, so there is
+//!    no user cancellation to report.
 //! 8. **Cleanup:** `run_request` handles exporting and unexporting the request object.
 //!
 //! **Ownership:** Request tracking is owned by the `run_request` helper. The `Email` struct keeps
@@ -62,7 +63,7 @@
 //! The backend component for this portal is the host's `gio` application launching system.
 //! - **Request Flow:** The portal translates D-Bus options into a `mailto:` URI string and asks GIO to launch it.
 //! - **Failure Handling:** If GIO fails to find or launch a default application, the portal logs the error
-//!   and returns a cancelled response to the caller.
+//!   and returns `Response::other()` to the caller; no user interaction was cancelled.
 //!
 //! ## Specification Notes
 //!

@@ -64,8 +64,9 @@
 //! ## GTK Integration
 //!
 //! - **Thread Transition:** Execution moves to the GTK main thread via `UiProxy` to construct the dialog.
-//! - **Image Handling:** In `gui.rs`, raw byte arrays representing icons are safely loaded into
-//!   `gdk::Texture` objects via `gdk_pixbuf::Pixbuf` for display in the dialog.
+//! - **Image Handling:** In `gui.rs`, raw byte arrays representing icons are passed to
+//!   `gio::BytesIcon` (backed by `glib::Bytes`) for display in the dialog; named icons use
+//!   `gtk4::Image::from_icon_name`.
 //!
 //! ## Backend Interaction
 //!
@@ -83,7 +84,7 @@
 //! ## Extension Guide
 //!
 //! - **Trusted Apps List:** If new software centers emerge that should be allowed to bypass the
-//!   UI (e.g., a new immutable OS app store), add their IDs to the `allowed_ids` array in
+//!   UI (e.g., a new immutable OS app store), add their IDs to the inline `matches!` list in
 //!   `request_install_token`.
 //! - **Editable Icons:** The spec defines an `editable_icon` option. Currently, `gui.rs` only
 //!   supports editing the *name*. If GTK adds a good image-chooser widget, `gui.rs` could be
@@ -91,7 +92,8 @@
 //!
 //! ## Cross-Portal Consistency
 //!
-//! - **Icon Parsing:** Shares similar variant-unpacking logic (`parse_icon`) with the `Notification` portal.
+//! - **Icon Parsing:** `parse_icon` is local to this portal; it unpacks the `icon_v` variant
+//!   directly and does not share code with the `Notification` portal.
 //! - **Request Handling:** Uses the standard `run_request` wrapper.
 //!
 //! ## Maintenance Notes

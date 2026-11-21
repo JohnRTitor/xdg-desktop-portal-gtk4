@@ -69,8 +69,9 @@ impl Access {
         options: AccessDialogOptions,
     ) -> Response<AccessResults> {
         let choices = options.choices.map(|c| {
-            c.into_iter()
-                .map(|ch| GuiChoice {
+            let mut mapped = Vec::with_capacity(c.len());
+            mapped.extend(c.into_iter().map(|ch| {
+                GuiChoice {
                     id: ch.0,
                     label: ch.1,
                     variants: ch
@@ -82,14 +83,15 @@ impl Access {
                         })
                         .collect(),
                     default: ch.3,
-                })
-                .collect()
+                }
+            }));
+            mapped
         });
 
         let res = AccessUi {
             app_id,
             parent_window,
-            activation_token: options.activation_token.clone(),
+            activation_token: options.activation_token,
             title,
             subtitle,
             body,
@@ -136,10 +138,13 @@ impl Access {
         options: AccessDialogOptions,
         #[zbus(object_server)] server: &ObjectServer,
     ) -> Result<Response<AccessResults>, fdo::Error> {
+        // `Header::sender()` borrows from the message, which outlives this
+        // method, so hand the borrowed `&str` straight to `run_request` instead
+        // of allocating a `String` for it.
         let sender = header
             .sender()
-            .map(|s| String::from(s.as_str()))
-            .ok_or_else(|| fdo::Error::Failed("Missing sender".into()))?;
+            .ok_or_else(|| fdo::Error::Failed("Missing sender".into()))?
+            .as_str();
         // Run the request concurrently with a cancellation listener.
         // If the frontend calls `Close()` on the request object path, `run_request`
         // will return `Response::other()` and drop the future.
@@ -147,7 +152,7 @@ impl Access {
             server,
             self.session_manager.clone(),
             &app_id,
-            &sender,
+            sender,
             handle,
             self.access_dialog_impl(
                 app_id.clone(),

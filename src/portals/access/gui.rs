@@ -173,7 +173,10 @@ impl AccessUi {
                     let mut group = None::<CheckButton>;
                     let mut variants_for_choice = Vec::new();
 
-                    for variant in &choice.variants {
+                    // Iterate the variants by value: `choice` is consumed below
+                    // anyway, and `variant.id` can then be moved into the result
+                    // tuple instead of paying for a clone per radio button.
+                    for variant in choice.variants {
                         let radio = if let Some(ref g) = group {
                             CheckButton::builder()
                                 .label(&variant.label)
@@ -192,7 +195,7 @@ impl AccessUi {
                         }
 
                         dialog.content_area.append(&radio);
-                        variants_for_choice.push((variant.id.clone(), radio));
+                        variants_for_choice.push((variant.id, radio));
                     }
                     radio_choices.push((choice.id, variants_for_choice));
                 }
@@ -353,5 +356,45 @@ mod final_choice_tests {
     fn an_empty_radio_group_contributes_nothing() {
         let out = build_final_choices(true, std::iter::empty::<(&str, bool)>(), [("m", [])]);
         assert_eq!(pairs(out), Some(vec![]));
+    }
+}
+
+#[cfg(test)]
+mod allocation_tests {
+    use super::*;
+
+    /// The radio-button loop in `run_impl` used to iterate `&choice.variants`
+    /// and clone every `variant.id` into the widget-state tuple, even though the
+    /// `Choice` was consumed right after. It now iterates the variants by value
+    /// and moves the id through. This pins the property that change relies on:
+    /// moving an owned id into the result tuple is free, while cloning it costs
+    /// one allocation per variant.
+    #[test]
+    fn moving_a_variant_id_into_the_result_does_not_allocate() {
+        let variant = ChoiceVariant {
+            id: "variant-id".to_owned(),
+            label: "Variant label".to_owned(),
+        };
+
+        let clone_scope = crate::alloc_probe::AllocScope::start();
+        let cloned = variant.id.clone();
+        let clone_snap = clone_scope.finish();
+        std::hint::black_box(&cloned);
+
+        let move_scope = crate::alloc_probe::AllocScope::start();
+        let moved = variant.id;
+        let move_snap = move_scope.finish();
+        std::hint::black_box(&moved);
+
+        assert_eq!(cloned, "variant-id");
+        assert_eq!(moved, "variant-id");
+        assert_eq!(
+            clone_snap.count, 1,
+            "cloning an owned variant id copies the string, got {clone_snap:?}"
+        );
+        assert_eq!(
+            move_snap.count, 0,
+            "moving the id into the result must not allocate, got {move_snap:?}"
+        );
     }
 }

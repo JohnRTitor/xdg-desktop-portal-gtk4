@@ -21,13 +21,6 @@ pub(crate) const LABEL_MAX_WIDTH_CHARS: i32 = 50;
 pub(crate) const DEFAULT_DIALOG_WIDTH: i32 = 420;
 pub(crate) const DEFAULT_DIALOG_HEIGHT: i32 = 400;
 
-use {gtk4::glib, tokio::sync::mpsc};
-
-pub struct GuiDispatcher {
-    pub context: glib::MainContext,
-    pub sender: mpsc::UnboundedSender<Box<dyn FnOnce() + Send>>,
-}
-
 pub trait PortalDispatcher<T> {
     fn dispatch(&self, data: T) -> Result<(), T>;
 }

@@ -329,14 +329,16 @@ impl Inhibit {
         let notify = Arc::new(Notify::new());
         let cancel_notify = Arc::new(Notify::new());
 
-        let sender = match header.sender() {
-            Some(s) => String::from(s.as_str()),
-            None => return Ok(2),
+        // The register/unregister calls below only need `&str`, so borrow the
+        // sender from the message. Only the spawned cleanup task needs an owned
+        // copy, which is made once at the bottom of this method.
+        let Some(sender) = header.sender() else {
+            return Ok(2);
         };
 
         if let Err(e) = self.session_manager.register(
             &app_id,
-            &sender,
+            sender.as_str(),
             session_handle.as_str(),
             cancel_notify.clone(),
         ) {
@@ -348,7 +350,7 @@ impl Inhibit {
         if let Err(e) = server.at(session_handle.clone(), session).await {
             tracing::error!("Failed to export monitor session: {}", e);
             self.session_manager
-                .unregister(&app_id, &sender, session_handle.as_str());
+                .unregister(&app_id, sender.as_str(), session_handle.as_str());
             return Ok(2); // Returning 2 as general error for create_monitor according to xdp-gtk
         }
 
@@ -361,7 +363,9 @@ impl Inhibit {
         let monitors_clone = self.active_monitors.clone();
         let session_manager_clone = self.session_manager.clone();
         let app_id_clone = app_id.clone();
-        let sender_clone = sender.clone();
+        // The cleanup task outlives this method, so it needs an owned name;
+        // this is the only allocation on the sender path now.
+        let sender_owned = sender.as_str().to_owned();
         let server_clone = server.clone();
 
         tokio::spawn(async move {
@@ -373,7 +377,7 @@ impl Inhibit {
             monitors_clone.lock().remove(&handle_clone);
             session_manager_clone.unregister(
                 &app_id_clone,
-                &sender_clone,
+                &sender_owned,
                 session_handle_clone.as_str(),
             );
 
@@ -707,6 +711,13 @@ mod monitor_tests {
         assert_eq!(
             snap.count, 1,
             "64 monitors must cost one Vec allocation, got {snap:?}"
+        );
+        // Pin the documented 1536 -> 512 byte claim: the single Vec holds 64
+        // one-pointer `Arc<OwnedObjectPath>` elements (64 * 8 = 512), not 64
+        // bare path buffers (which measured 1536).
+        assert_eq!(
+            snap.bytes, 512,
+            "the fan-out Vec must hold 64 pointers (512 bytes), got {snap:?}"
         );
     }
 

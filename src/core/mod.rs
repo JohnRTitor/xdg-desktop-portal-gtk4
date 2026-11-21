@@ -63,15 +63,15 @@ pub(crate) const DBUS_PATH: &str = "/org/freedesktop/portal/desktop";
 #[derive(Debug, Error)]
 pub enum PortalError {
     #[error("Could not connect to session bus")]
-    Connection(#[source] zbus::Error),
+    Connection(#[source] Box<zbus::Error>),
     #[error("Could not acquire name {}", NAME)]
-    AcquireName(#[source] zbus::Error),
+    AcquireName(#[source] Box<zbus::Error>),
     #[error("Could not add an interface")]
-    AddInterface(#[source] zbus::Error),
+    AddInterface(#[source] Box<zbus::Error>),
     #[error("Could create dbus proxy")]
-    CreateDbusProxy(#[source] zbus::Error),
+    CreateDbusProxy(#[source] Box<zbus::Error>),
     #[error("Could subscribe to name-lost events")]
-    SubscribeNameLost(#[source] zbus::Error),
+    SubscribeNameLost(#[source] Box<zbus::Error>),
 }
 
 /// The core portal state, holding the main D-Bus connection.
@@ -96,7 +96,7 @@ impl Portal {
     ) -> Result<Self, PortalError> {
         let session = Connection::session()
             .await
-            .map_err(PortalError::Connection)?;
+            .map_err(|e| PortalError::Connection(Box::new(e)))?;
 
         let session_manager =
             crate::core::session_manager::SessionManager::new(session.clone(), 10);
@@ -125,7 +125,7 @@ impl Portal {
                     .object_server()
                     .at(DBUS_PATH, $interface)
                     .await
-                    .map_err(PortalError::AddInterface)?;
+                    .map_err(|e| PortalError::AddInterface(Box::new(e)))?;
             };
         }
         #[cfg(feature = "file_chooser")]
@@ -161,10 +161,10 @@ impl Portal {
 
         let mut name_lost_iterator = zbus::fdo::DBusProxy::new(&session)
             .await
-            .map_err(PortalError::CreateDbusProxy)?
+            .map_err(|e| PortalError::CreateDbusProxy(Box::new(e)))?
             .receive_name_lost()
             .await
-            .map_err(PortalError::SubscribeNameLost)?;
+            .map_err(|e| PortalError::SubscribeNameLost(Box::new(e)))?;
 
         // Spawn a background task on Tokio to listen for name lost events.
         // If another process acquires our D-Bus name (e.g., another instance started with --replace),
@@ -187,8 +187,22 @@ impl Portal {
         session
             .request_name_with_flags(NAME, flags)
             .await
-            .map_err(PortalError::AcquireName)?;
+            .map_err(|e| PortalError::AcquireName(Box::new(e)))?;
         tracing::info!("Portal ready on {NAME}");
         Ok(Self { _session: session })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Five variants holding only a thin `Box<zbus::Error>` still need an
+    /// explicit discriminant (a single non-null niche cannot encode five
+    /// states), so the boxed error is 8 bytes plus an 8-byte tag on 64-bit.
+    #[test]
+    #[cfg(target_pointer_width = "64")]
+    fn portal_error_boxes_the_source() {
+        assert_eq!(std::mem::size_of::<PortalError>(), 16);
     }
 }

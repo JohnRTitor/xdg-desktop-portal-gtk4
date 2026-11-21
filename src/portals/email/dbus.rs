@@ -128,7 +128,34 @@ fn append_recipients(url: &mut String, key: &str, addrs: &[String]) {
 }
 
 fn build_mailto_url(options: &ComposeEmailOptions) -> String {
-    let mut url = String::from("mailto:");
+    // Capacity hint from the raw option lengths plus the fixed keys and
+    // separators. Escaping can still grow individual values (which `String`
+    // absorbs through normal growth), but this avoids repeated reallocations in
+    // the common all-ASCII case. It does not touch the escaping logic below.
+    let list_len = |list: &Option<Vec<String>>| -> usize {
+        list.as_ref()
+            .map_or(0, |items| items.iter().map(String::len).sum())
+    };
+    let capacity = "mailto:?".len()
+        + options.address.as_ref().map_or(0, String::len)
+        + list_len(&options.addresses)
+        + "cc=".len() * usize::from(options.cc.is_some())
+        + list_len(&options.cc)
+        + "bcc=".len() * usize::from(options.bcc.is_some())
+        + list_len(&options.bcc)
+        + "subject=".len() * usize::from(options.subject.is_some())
+        + options.subject.as_ref().map_or(0, String::len)
+        + "body=".len() * usize::from(options.body.is_some())
+        + options.body.as_ref().map_or(0, String::len)
+        + options.attachments.as_ref().map_or(0, |items| {
+            items
+                .iter()
+                .map(|s| "attachment=".len() + s.len())
+                .sum::<usize>()
+        })
+        + 16; // comma separators and trailing '&'
+    let mut url = String::with_capacity(capacity);
+    url.push_str("mailto:");
     let mut addrs_iter = options
         .address
         .as_deref()
@@ -198,15 +225,16 @@ impl Email {
         options: ComposeEmailOptions,
         #[zbus(object_server)] server: &ObjectServer,
     ) -> Result<Response<EmailResults>, fdo::Error> {
+        // Borrow the sender from the message; `run_request` only needs `&str`
+        // and never moves it into a spawned task, so no owned String is needed.
         let sender = header
             .sender()
-            .map(|s| String::from(s.as_str()))
             .ok_or_else(|| fdo::Error::Failed("Missing sender".into()))?;
         Ok(run_request(
             server,
             self.session_manager.clone(),
             &app_id,
-            &sender,
+            sender.as_str(),
             handle,
             self.compose_email_impl(app_id.clone(), parent_window, options),
         )

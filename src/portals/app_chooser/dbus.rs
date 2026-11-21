@@ -151,15 +151,18 @@ impl AppChooser {
         options: ChooseApplicationOptions,
         #[zbus(object_server)] server: &ObjectServer,
     ) -> Result<Response<ChooseApplicationResults>, fdo::Error> {
+        // `Header::sender()` borrows from the message, which outlives this
+        // method, so hand the borrowed `&str` straight to `run_request` instead
+        // of allocating a `String` for it.
         let sender = header
             .sender()
-            .map(|s| String::from(s.as_str()))
-            .ok_or_else(|| fdo::Error::Failed("Missing sender".into()))?;
+            .ok_or_else(|| fdo::Error::Failed("Missing sender".into()))?
+            .as_str();
         Ok(run_request(
             server,
             self.session_manager.clone(),
             &app_id,
-            &sender,
+            sender,
             handle.clone(),
             self.choose_application_impl(handle, app_id.clone(), parent_window, choices, options),
         )

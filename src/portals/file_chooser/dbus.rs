@@ -55,9 +55,14 @@ impl<'de> Deserialize<'de> for FilePath {
         let bytes = <Vec<u8>>::deserialize(deserializer)?;
         let c_string = CString::from_vec_with_nul(bytes)
             .map_err(|_| serde::de::Error::custom("Bytes are not nul-terminated"))?;
-        Ok(Self(
-            String::from_utf8_lossy(&c_string.into_bytes()).into_owned(),
-        ))
+        // Valid UTF-8 is the common case: `String::from_utf8` reuses the byte
+        // buffer with no second allocation. `from_utf8_lossy().into_owned()`
+        // copied it unconditionally. Only pay for the lossy replacement path
+        // when the bytes genuinely are not valid UTF-8.
+        Ok(Self(match String::from_utf8(c_string.into_bytes()) {
+            Ok(s) => s,
+            Err(e) => String::from_utf8_lossy(e.as_bytes()).into_owned(),
+        }))
     }
 }
 
@@ -165,7 +170,7 @@ impl FileChooser {
             choices: options.choices.map(map_choices),
             save: false,
             parent_window,
-            activation_token: options.activation_token.clone(),
+            activation_token: options.activation_token,
             app_id,
         }
         .run(&self.proxy)
@@ -209,7 +214,7 @@ impl FileChooser {
             choices: options.choices.map(map_choices),
             save: true,
             parent_window,
-            activation_token: options.activation_token.clone(),
+            activation_token: options.activation_token,
             app_id,
         }
         .run(&self.proxy)
@@ -278,7 +283,7 @@ impl FileChooser {
             choices: options.choices.map(map_choices),
             save: true,
             parent_window,
-            activation_token: options.activation_token.clone(),
+            activation_token: options.activation_token,
             app_id,
         }
         .run(&self.proxy)
@@ -297,6 +302,9 @@ impl FileChooser {
         for file in files {
             let mut path = base.join(&file.0);
             if path.exists() {
+                // These must stay owned: `set_file_name` below mutates `path`
+                // while `stem`/`ext` are still live, so a `Cow` borrowing from
+                // `path` (what `to_string_lossy` would give) cannot be held here.
                 let stem = path
                     .file_stem()
                     .unwrap_or_default()
@@ -371,15 +379,18 @@ impl FileChooser {
         options: OpenFileOptions,
         #[zbus(object_server)] server: &ObjectServer,
     ) -> Result<Response<OpenFileResults>, fdo::Error> {
+        // `sender()` borrows from `header`, which lives for the whole method, so
+        // pass that `&str` straight through instead of allocating an owned copy.
+        // `run_request` only needs the borrow for `register`/`unregister`, both of
+        // which copy it into owned storage before any spawned work runs.
         let sender = header
             .sender()
-            .map(|s| String::from(s.as_str()))
             .ok_or_else(|| fdo::Error::Failed("Missing sender".into()))?;
         Ok(run_request(
             server,
             self.session_manager.clone(),
             &app_id,
-            &sender,
+            sender.as_str(),
             handle,
             self.open_file_impl(app_id.clone(), parent_window, title, options),
         )
@@ -398,15 +409,18 @@ impl FileChooser {
         options: SaveFileOptions,
         #[zbus(object_server)] server: &ObjectServer,
     ) -> Result<Response<SaveFileResults>, fdo::Error> {
+        // `sender()` borrows from `header`, which lives for the whole method, so
+        // pass that `&str` straight through instead of allocating an owned copy.
+        // `run_request` only needs the borrow for `register`/`unregister`, both of
+        // which copy it into owned storage before any spawned work runs.
         let sender = header
             .sender()
-            .map(|s| String::from(s.as_str()))
             .ok_or_else(|| fdo::Error::Failed("Missing sender".into()))?;
         Ok(run_request(
             server,
             self.session_manager.clone(),
             &app_id,
-            &sender,
+            sender.as_str(),
             handle,
             self.save_file_impl(app_id.clone(), parent_window, title, options),
         )
@@ -425,15 +439,18 @@ impl FileChooser {
         options: SaveFilesOptions,
         #[zbus(object_server)] server: &ObjectServer,
     ) -> Result<Response<SaveFilesResults>, fdo::Error> {
+        // `sender()` borrows from `header`, which lives for the whole method, so
+        // pass that `&str` straight through instead of allocating an owned copy.
+        // `run_request` only needs the borrow for `register`/`unregister`, both of
+        // which copy it into owned storage before any spawned work runs.
         let sender = header
             .sender()
-            .map(|s| String::from(s.as_str()))
             .ok_or_else(|| fdo::Error::Failed("Missing sender".into()))?;
         Ok(run_request(
             server,
             self.session_manager.clone(),
             &app_id,
-            &sender,
+            sender.as_str(),
             handle,
             self.save_files_impl(app_id.clone(), parent_window, title, options),
         )
@@ -442,35 +459,33 @@ impl FileChooser {
 }
 
 fn map_filters(f: Vec<FileFilter>) -> Vec<Filter> {
-    f.into_iter().map(map_filter).collect()
+    let mut out = Vec::with_capacity(f.len());
+    out.extend(f.into_iter().map(map_filter));
+    out
 }
 
 fn map_filter(f: FileFilter) -> Filter {
+    // `flat_map` drops unknown kinds, so the input length is an upper bound;
+    // reserve it once instead of letting the `Vec` grow on each appended element.
+    let mut elements = Vec::with_capacity(f.1.len());
+    elements.extend(f.1.into_iter().flat_map(|(kind, value)| match kind {
+        0 => Some(FilterKind::Glob(value)),
+        1 => Some(FilterKind::Mime(value)),
+        _ => None,
+    }));
     Filter {
         name: f.0,
-        elements: f
-            .1
-            .into_iter()
-            .flat_map(|(kind, value)| match kind {
-                0 => Some(FilterKind::Glob(value)),
-                1 => Some(FilterKind::Mime(value)),
-                _ => None,
-            })
-            .collect(),
+        elements,
     }
 }
 
 fn unmap_filter(f: Filter) -> FileFilter {
-    (
-        f.name,
-        f.elements
-            .into_iter()
-            .map(|f| match f {
-                FilterKind::Glob(v) => (0, v),
-                FilterKind::Mime(v) => (1, v),
-            })
-            .collect(),
-    )
+    let mut elements = Vec::with_capacity(f.elements.len());
+    elements.extend(f.elements.into_iter().map(|f| match f {
+        FilterKind::Glob(v) => (0, v),
+        FilterKind::Mime(v) => (1, v),
+    }));
+    (f.name, elements)
 }
 
 fn map_cstr(f: FilePath) -> String {
@@ -478,27 +493,29 @@ fn map_cstr(f: FilePath) -> String {
 }
 
 fn map_choices(c: Vec<Choice>) -> Vec<file_chooser::Choice> {
-    c.into_iter().map(map_choice).collect()
+    let mut out = Vec::with_capacity(c.len());
+    out.extend(c.into_iter().map(map_choice));
+    out
 }
 
 fn map_choice(c: Choice) -> file_chooser::Choice {
+    let mut variants = Vec::with_capacity(c.2.len());
+    variants.extend(c.2.into_iter().map(|c| ChoiceVariant {
+        id: c.0,
+        label: c.1,
+    }));
     file_chooser::Choice {
         id: c.0,
         label: c.1,
         default: c.3,
-        variants: c
-            .2
-            .into_iter()
-            .map(|c| ChoiceVariant {
-                id: c.0,
-                label: c.1,
-            })
-            .collect(),
+        variants,
     }
 }
 
 fn map_final_choices(c: Vec<FinalChoice>) -> Vec<(String, String)> {
-    c.into_iter().map(map_final_choice).collect()
+    let mut out = Vec::with_capacity(c.len());
+    out.extend(c.into_iter().map(map_final_choice));
+    out
 }
 
 fn map_final_choice(c: FinalChoice) -> (String, String) {
@@ -513,6 +530,17 @@ mod tests {
         tokio::sync::mpsc::unbounded_channel,
         zbus::{Connection, Type},
     };
+
+    /// Six fieldless variants plus `Ui(UiError)`. `UiError` is a 1-byte enum
+    /// with spare discriminant values, which the compiler uses as a niche to
+    /// tag the outer enum, so the whole thing packs into a single byte. Pin it
+    /// so an accidental widening (a pointer-bearing variant, a `#[repr]` change)
+    /// is caught rather than silently growing every `Response` path.
+    #[test]
+    #[cfg(target_pointer_width = "64")]
+    fn save_files_error_is_one_byte() {
+        assert_eq!(std::mem::size_of::<SaveFilesError>(), 1);
+    }
 
     #[test]
     fn test_map_filter_glob() {
@@ -573,6 +601,57 @@ mod tests {
     fn test_map_cstr() {
         let path = FilePath("hello".into());
         assert_eq!(map_cstr(path), "hello");
+    }
+
+    /// `FilePath::deserialize` used to call
+    /// `String::from_utf8_lossy(..).into_owned()`, copying the decoded byte
+    /// buffer into a second `String` on every request even for valid UTF-8.
+    /// The fast path must reuse that buffer. Compare directly against the old
+    /// lossy conversion on the same bytes: it pays for one extra `String`
+    /// allocation that the `from_utf8` path no longer makes. (`CString::into_bytes`
+    /// itself shrinks the decoded `Vec` to a boxed slice, which the counting
+    /// shim records once in both paths, so comparing against a bare `Vec<u8>`
+    /// deserialization would be off by one.)
+    #[test]
+    fn file_path_deserialize_reuses_the_byte_buffer() {
+        use {
+            crate::alloc_probe::AllocScope,
+            std::ffi::CString,
+            zbus::wire::{self, Endian, serialized::Context},
+        };
+
+        let path_bytes: Vec<u8> = b"/home/user/document.txt\0".to_vec();
+        let ctxt = Context::new(Endian::Little, 0);
+        let encoded = wire::to_bytes(ctxt, &path_bytes).unwrap();
+
+        // Warm up zbus's lazy state before measuring.
+        let _: (FilePath, _) = encoded.deserialize().unwrap();
+
+        let path_scope = AllocScope::start();
+        let (path, _): (FilePath, _) = encoded.deserialize().unwrap();
+        let path_snap = path_scope.finish();
+
+        let lossy_scope = AllocScope::start();
+        let (lossy_bytes, _): (Vec<u8>, _) = encoded.deserialize().unwrap();
+        let lossy = String::from_utf8_lossy(
+            &CString::from_vec_with_nul(lossy_bytes)
+                .unwrap()
+                .into_bytes(),
+        )
+        .into_owned();
+        let lossy_snap = lossy_scope.finish();
+
+        std::hint::black_box(&path);
+        std::hint::black_box(&lossy);
+
+        assert_eq!(path.0, "/home/user/document.txt");
+        assert_eq!(path.0, lossy);
+        assert_eq!(
+            lossy_snap.count,
+            path_snap.count + 1,
+            "the old lossy path copied the buffer into a second String: \
+             got {path_snap:?} vs lossy {lossy_snap:?}"
+        );
     }
 
     #[test]

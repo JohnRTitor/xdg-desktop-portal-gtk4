@@ -22,7 +22,17 @@ pub struct SettingsState {
 
 impl SettingsState {
     pub fn get(&self, ns: &str, key: &str) -> Option<OwnedVariant> {
-        self.namespaces.get(ns).and_then(|m| m.get(key).cloned())
+        self.get_ref(ns, key).cloned()
+    }
+
+    /// Borrow a value instead of cloning it.
+    ///
+    /// Inspection-only callers (diffing a reload, resolving derived appearance
+    /// keys) only read the `Variant`, so cloning the whole `OwnedVariant` there
+    /// is wasted work. Callers that must retain the value past the borrow --
+    /// notably `SettingsPortal::read` -- use [`Self::get`] instead.
+    pub fn get_ref(&self, ns: &str, key: &str) -> Option<&OwnedVariant> {
+        self.namespaces.get(ns).and_then(|m| m.get(key))
     }
 
     /// Inserts `val` under `namespaces[ns][key]`.
@@ -86,8 +96,8 @@ impl SettingsAggregator {
             let old_state = self.state.read();
             for (ns, keys) in &new_state.namespaces {
                 for (key, new_val) in keys {
-                    if let Some(old_val) = old_state.get(ns, key) {
-                        if old_val != *new_val {
+                    if let Some(old_val) = old_state.get_ref(ns, key) {
+                        if *old_val != *new_val {
                             changes.push((ns.clone(), key.clone(), new_val.clone()));
                         }
                     } else {
@@ -241,14 +251,14 @@ impl SettingsAggregator {
 
     fn resolve_appearance(state: &mut SettingsState) {
         let mut color_scheme_val = 0u32;
-        if let Some(cs) = state.get(NS_GNOME_DESKTOP_INTERFACE, KEY_COLOR_SCHEME) {
-            if let Variant::Str(s) = &*cs {
+        if let Some(cs) = state.get_ref(NS_GNOME_DESKTOP_INTERFACE, KEY_COLOR_SCHEME) {
+            if let Variant::Str(s) = &**cs {
                 color_scheme_val = map_color_scheme(s.as_str());
             }
-        } else if let Some(pref_dark) = state.get(
+        } else if let Some(pref_dark) = state.get_ref(
             NS_GNOME_DESKTOP_INTERFACE,
             "gtk-application-prefer-dark-theme",
-        ) && let Variant::Bool(b) = &*pref_dark
+        ) && let Variant::Bool(b) = &**pref_dark
         {
             color_scheme_val = if *b { 1 } else { 2 };
         }
@@ -260,8 +270,8 @@ impl SettingsAggregator {
         );
 
         let mut contrast_val = 0u32;
-        if let Some(hc) = state.get(NS_GNOME_DESKTOP_INTERFACE, "gtk-theme-name")
-            && let Variant::Str(s) = &*hc
+        if let Some(hc) = state.get_ref(NS_GNOME_DESKTOP_INTERFACE, "gtk-theme-name")
+            && let Variant::Str(s) = &**hc
             && s.as_str().contains("HighContrast")
         {
             contrast_val = 1;
@@ -274,8 +284,8 @@ impl SettingsAggregator {
         );
 
         let mut reduced_motion_val = 0u32;
-        if let Some(ea) = state.get(NS_GNOME_DESKTOP_INTERFACE, "gtk-enable-animations")
-            && let Variant::Bool(b) = &*ea
+        if let Some(ea) = state.get_ref(NS_GNOME_DESKTOP_INTERFACE, "gtk-enable-animations")
+            && let Variant::Bool(b) = &**ea
         {
             reduced_motion_val = if *b { 0 } else { 1 };
         }

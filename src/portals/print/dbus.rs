@@ -4,15 +4,21 @@
 /// margins. Flattening those to strings (or dropping them) made the dialog fail
 /// to apply the caller's page setup, so keep the original variants intact.
 fn to_owned_dict(dict: HashMap<String, Variant<'_>>) -> HashMap<String, OwnedVariant> {
-    dict.into_iter()
-        .filter_map(|(k, v)| match v.try_into_owned() {
-            Ok(owned) => Some((k, owned)),
+    // Every input entry can yield at most one output entry, so the source
+    // length is an exact capacity bound. Convert in place rather than through
+    // a filter/collect that would grow the map repeatedly.
+    let mut result = HashMap::with_capacity(dict.len());
+    for (k, v) in dict {
+        match v.try_into_owned() {
+            Ok(owned) => {
+                result.insert(k, owned);
+            }
             Err(e) => {
                 tracing::warn!(key = %k, error = %e, "Ignoring unsupported print option value");
-                None
             }
-        })
-        .collect()
+        }
+    }
+    result
 }
 
 use {
@@ -94,10 +100,15 @@ impl Print {
         page_setup: HashMap<String, Variant<'_>>,
         options: PreparePrintOptions,
     ) -> Response<PreparePrintResults> {
+        // Destructure once: nothing else reads `options`, so the token can be
+        // moved straight into the UI task instead of cloned.
+        let PreparePrintOptions {
+            activation_token, ..
+        } = options;
         let res = PrintUi {
             app_id,
             parent_window,
-            activation_token: options.activation_token.clone(),
+            activation_token,
             title,
             settings: to_owned_dict(settings),
             page_setup: to_owned_dict(page_setup),
@@ -291,6 +302,16 @@ impl Print {
 #[cfg(test)]
 mod tests {
     use {super::*, zbus::Type};
+
+    /// Pin the field order of the wire result. Breakdown on 64-bit:
+    /// `settings` + `page_setup` (2 × 48) + `token` (4) +
+    /// `supported_output_file_formats` (24) + two `Option<bool>` (1 each),
+    /// rounded up to 128 by alignment.
+    #[test]
+    #[cfg(target_pointer_width = "64")]
+    fn prepare_print_results_size_is_pinned() {
+        assert_eq!(std::mem::size_of::<PreparePrintResults>(), 128);
+    }
 
     #[test]
     fn test_prepare_print_options_signature() {

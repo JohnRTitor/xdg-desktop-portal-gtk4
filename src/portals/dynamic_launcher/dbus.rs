@@ -80,7 +80,9 @@ impl DynamicLauncher {
         let res = DynamicLauncherUi {
             app_id,
             parent_window,
-            activation_token: options.activation_token.clone(),
+            // `options` is consumed here; no field is read again below, so move
+            // the token rather than cloning the String.
+            activation_token: options.activation_token,
             name,
             // The contract defaults `editable_name` to true; the name field is
             // the whole point of the dialog. Defaulting it to false left the
@@ -140,9 +142,11 @@ impl DynamicLauncher {
         options: PrepareInstallOptions,
         #[zbus(object_server)] server: &ObjectServer,
     ) -> Result<Response<PrepareInstallResults>, fdo::Error> {
+        // `Header::sender()` borrows from the message, which outlives this
+        // async method; `run_request` only takes `&str` and never moves it into
+        // a spawned task, so no owned String is needed here.
         let sender = header
             .sender()
-            .map(|s| String::from(s.as_str()))
             .ok_or_else(|| fdo::Error::Failed("Missing sender".into()))?;
         let icon_owned = match OwnedVariant::try_from(icon_v) {
             Ok(v) => v,
@@ -157,7 +161,7 @@ impl DynamicLauncher {
             server,
             self.session_manager.clone(),
             &app_id,
-            &sender,
+            sender.as_str(),
             handle,
             self.prepare_install_impl(app_id.clone(), parent_window, name, icon_owned, options),
         )
@@ -210,7 +214,11 @@ fn parse_icon(icon_v: &OwnedVariant) -> (Option<String>, Option<Vec<u8>>) {
         return (Some(s.into()), None);
     }
 
-    let Ok(structure) = zbus::Structure::try_from(&**icon_v) else {
+    // Use the borrowed `TryFrom<&Variant>` impls. The owned/cloning impls
+    // (`Structure::try_from(&Variant)` and `Variant::try_from(&Variant)`) deep
+    // copy every field of the icon, which is wasted when we only read one name
+    // or the byte payload.
+    let Ok(structure) = <&zbus::Structure>::try_from(&**icon_v) else {
         return (None, None);
     };
 
@@ -223,22 +231,53 @@ fn parse_icon(icon_v: &OwnedVariant) -> (Option<String>, Option<Vec<u8>>) {
         return (None, None);
     };
 
-    match type_str {
-        "bytes" => {
-            let bytes = <Variant>::try_from(&fields[1])
-                .ok()
-                .and_then(|v| <Vec<u8>>::try_from(v).ok());
-            (None, bytes)
+    // `Vec<T>::try_from(Array)` unwraps one level of `Variant::Variant` per
+    // element, so keep doing that here to preserve the previous behaviour while
+    // borrowing the elements instead of cloning the whole array.
+    fn unwrap_one<'b, 'a>(v: &'b Variant<'a>) -> &'b Variant<'a> {
+        match v {
+            Variant::Variant(inner) => inner,
+            other => other,
         }
-        "themed" => {
-            let names = <Variant>::try_from(&fields[1])
-                .ok()
-                .and_then(|v| <Vec<String>>::try_from(v).ok());
-            if let Some(name) = names.and_then(|n| n.first().cloned()) {
-                return (Some(name), None);
+    }
+
+    // `fields[1]` is already a `Variant`; matching on the borrowed value avoids
+    // the deep-cloning `Variant::try_from` call entirely.
+    match &fields[1] {
+        Variant::Array(a) => match type_str {
+            "bytes" => {
+                // The payload is `ay`. Borrow each `Variant::U8` element and
+                // collect straight into the `Vec<u8>` we have to return.
+                let bytes: Option<Vec<u8>> = a
+                    .inner()
+                    .iter()
+                    .map(|v| match unwrap_one(v) {
+                        Variant::U8(b) => Some(*b),
+                        _ => None,
+                    })
+                    .collect();
+                (None, bytes)
             }
-            (None, None)
-        }
+            "themed" => {
+                // The old `<Vec<String>>::try_from` validated every name, so
+                // keep that invariant, but clone only the one we actually use
+                // instead of materialising a throwaway `Vec<String>`.
+                let mut first: Option<&str> = None;
+                for v in a.inner() {
+                    let Ok(s) = <&str>::try_from(unwrap_one(v)) else {
+                        return (None, None);
+                    };
+                    if first.is_none() {
+                        first = Some(s);
+                    }
+                }
+                match first {
+                    Some(name) => (Some(name.to_owned()), None),
+                    None => (None, None),
+                }
+            }
+            _ => (None, None),
+        },
         _ => (None, None),
     }
 }

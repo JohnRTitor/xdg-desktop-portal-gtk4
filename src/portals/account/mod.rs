@@ -59,8 +59,8 @@
 //!
 //! A UI is mandatory because sharing user profile data requires explicit consent.
 //!
-//! - **Thread Transition:** Execution moves to the GTK main thread via `UiProxy::send` to construct
-//!   and show the `adw::MessageDialog` (or similar access dialog).
+//! - **Thread Transition:** Execution moves to the GTK main thread via `UiProxy` to construct
+//!   and show the `CustomDialog` access dialog.
 //! - **Confinement:** The dialog widget and its signal handlers remain confined to the GTK thread.
 //! - **Return:** When the user clicks "Allow" or "Deny", the response is sent back over a oneshot
 //!   channel, returning control to the Tokio async runtime to construct the D-Bus reply.

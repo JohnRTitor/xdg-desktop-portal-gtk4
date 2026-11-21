@@ -4,7 +4,11 @@ use {
     futures_util::stream::StreamExt,
     gtk4::gio::Cancellable,
     parking_lot::Mutex,
-    std::{collections::HashMap, sync::Arc},
+    smallvec::SmallVec,
+    std::{
+        collections::HashMap,
+        sync::{Arc, LazyLock},
+    },
     tokio::task::spawn_blocking,
     zbus::{
         Connection, DeserializeDict, ObjectServer, OwnedVariant, Structure, Type, Variant,
@@ -14,6 +18,33 @@ use {
 
 /// Subdirectory of `$XDG_RUNTIME_DIR` that staged notification sounds live in.
 const TEMP_SOUND_SUBDIR: &str = "xdg-desktop-portal-gtk4-sounds";
+
+/// The fixed set of notification features this backend advertises.
+///
+/// Built once. Property reads are frequent and the value never changes, so
+/// rebuilding ten owned keys and ten owned variants on every read was pure
+/// waste. zbus still serialises the returned reference on each read, but the
+/// map and its values are now shared.
+static SUPPORTED_OPTIONS: LazyLock<HashMap<String, OwnedVariant>> = LazyLock::new(|| {
+    let mut options = HashMap::with_capacity(10);
+    if let Ok(true_val) = OwnedVariant::try_from(Variant::Bool(true)) {
+        for key in [
+            "body",
+            "icon",
+            "buttons",
+            "priority",
+            "default-action",
+            "default-action-target",
+            "markup-body",
+            "category",
+            "display-hint",
+            "sound",
+        ] {
+            options.insert(key.to_owned(), true_val.clone());
+        }
+    }
+    options
+});
 
 pub struct TempSoundFile {
     pub path: std::path::PathBuf,
@@ -385,7 +416,10 @@ impl Notification {
         let body = body_ref;
 
         let mut icon_name = String::new();
-        let mut hints = HashMap::new();
+        // At most eight hints are ever inserted: desktop-entry, urgency,
+        // category, transient, resident, suppress-sound, sound-file and
+        // image-data. Size once instead of growing on the common path.
+        let mut hints = HashMap::with_capacity(8);
         hints.insert("desktop-entry", Variant::from(app_id.as_str()));
 
         let priority = notification.priority.as_deref().unwrap_or("normal");
@@ -488,7 +522,7 @@ impl Notification {
             let v_ref = std::ops::Deref::deref(v);
             if let Ok(s) = <&str>::try_from(v_ref) {
                 icon_name = s.into();
-            } else if let Ok(structure) = <Structure>::try_from(v_ref) {
+            } else if let Ok(structure) = <&Structure>::try_from(v_ref) {
                 let fields = structure.fields();
                 if fields.len() == 2
                     && let Ok(icon_type) = <&str>::try_from(&fields[0])
@@ -501,10 +535,14 @@ impl Notification {
                     };
                     match icon_type {
                         "themed" => {
-                            if let Ok(names) = <Vec<String>>::try_from(payload.clone())
-                                && let Some(first) = names.first()
+                            // The icon payload is an `as`. Borrow that array
+                            // instead of materialising a whole `Vec<String>`
+                            // just to read its first element, and copy only the
+                            // one name we actually keep.
+                            if let Ok(array) = <&zbus::wire::Array>::try_from(payload)
+                                && let Ok(Some(first)) = array.get::<&str>(0)
                             {
-                                icon_name = first.clone();
+                                icon_name = first.to_owned();
                             }
                         }
                         "file-descriptor" => {
@@ -560,7 +598,19 @@ impl Notification {
                             }
                         }
                         "bytes" => {
-                            if let Ok(byte_array) = <Vec<u8>>::try_from(payload.clone()) {
+                            // The payload is an `ay`. Copy its bytes out of the
+                            // borrowed array into an exactly-sized buffer; the
+                            // `Bytes::from_owned` below then hands that single
+                            // allocation to GLib without a further copy.
+                            let byte_array: Option<Vec<u8>> = (|| {
+                                let array = <&zbus::wire::Array>::try_from(payload).ok()?;
+                                let mut bytes = Vec::with_capacity(array.len());
+                                for byte in array.inner() {
+                                    bytes.push(u8::try_from(byte).ok()?);
+                                }
+                                Some(bytes)
+                            })();
+                            if let Some(byte_array) = byte_array {
                                 let image_data = spawn_blocking(move || {
                                     use {
                                         gdk_pixbuf::Pixbuf,
@@ -685,29 +735,35 @@ impl Notification {
     }
 
     #[zbus(property, name = "SupportedOptions")]
-    fn supported_options(&self) -> HashMap<String, OwnedVariant> {
-        let mut options = HashMap::new();
-        if let Ok(true_val) = OwnedVariant::try_from(Variant::Bool(true)) {
-            options.insert("body".into(), true_val.clone());
-            options.insert("icon".into(), true_val.clone());
-            options.insert("buttons".into(), true_val.clone());
-            options.insert("priority".into(), true_val.clone());
-            options.insert("default-action".into(), true_val.clone());
-            options.insert("default-action-target".into(), true_val.clone());
-            options.insert("markup-body".into(), true_val.clone());
-            options.insert("category".into(), true_val.clone());
-            options.insert("display-hint".into(), true_val.clone());
-            options.insert("sound".into(), true_val);
-        }
-        options
+    fn supported_options(&self) -> &'static HashMap<String, OwnedVariant> {
+        &SUPPORTED_OPTIONS
     }
 }
 
-/// How many `&str` slots [`build_actions`] will push, so the vector is sized
+/// How many `&str` slots [`build_actions`] will push, so the list is sized
 /// once. Each action contributes an id and a label.
 fn actions_capacity(notification: &PortalNotification) -> usize {
     let buttons = notification.buttons.as_ref().map_or(0, Vec::len);
     2 * (usize::from(notification.default_action.is_some()) + buttons)
+}
+
+/// Exact number of targets [`build_actions`] will insert.
+///
+/// Counting first keeps the common "no targets" case allocation-free: sizing
+/// the map by the number of actions would allocate even when nothing is ever
+/// inserted. A button only contributes when it has both an id and a target,
+/// and the default action only contributes when it is present and targeted.
+fn targets_capacity(notification: &PortalNotification) -> usize {
+    let default = usize::from(
+        notification.default_action.is_some() && notification.default_action_target.is_some(),
+    );
+    let buttons = notification.buttons.as_ref().map_or(0, |buttons| {
+        buttons
+            .iter()
+            .filter(|button| button.action.is_some() && button.target.is_some())
+            .count()
+    });
+    default + buttons
 }
 
 /// Builds the FDO action list and the per-action target map.
@@ -728,14 +784,17 @@ fn actions_capacity(notification: &PortalNotification) -> usize {
 /// from the caller's options -- and then dropped the whole vector after taking
 /// `&str` from it, so every action cost two allocations that lived only long
 /// enough to be reborrowed. `notification` outlives the `Notify` call, so the
-/// borrows are valid for as long as the caller needs them.
+/// borrows are valid for as long as the caller needs them. A [`SmallVec`] keeps
+/// the common case (a default action plus a few buttons) entirely on the stack.
 ///
 /// The targets are still cloned: they are `OwnedVariant`s that must outlive this
 /// function, since they are stored in the reverse map and read later by the
 /// `ActionInvoked` listener.
-fn build_actions(notification: &PortalNotification) -> (Vec<&str>, HashMap<String, OwnedVariant>) {
-    let mut actions = Vec::with_capacity(actions_capacity(notification));
-    let mut targets = HashMap::new();
+fn build_actions(
+    notification: &PortalNotification,
+) -> (SmallVec<[&str; 8]>, HashMap<String, OwnedVariant>) {
+    let mut actions: SmallVec<[&str; 8]> = SmallVec::with_capacity(actions_capacity(notification));
+    let mut targets = HashMap::with_capacity(targets_capacity(notification));
 
     if notification.default_action.is_some() {
         actions.push("default");
@@ -790,10 +849,14 @@ fn action_route<'a>(
 /// keys the reference implementation uses: `activation-token` for current GTK
 /// and Qt, `desktop-startup-id` for GTK before 4.10.
 fn platform_data(activation_token: Option<String>) -> HashMap<&'static str, Variant<'static>> {
-    let mut data = HashMap::new();
+    let mut data = HashMap::with_capacity(2);
     if let Some(token) = activation_token {
-        data.insert("desktop-startup-id", Variant::from(token.clone()));
-        data.insert("activation-token", Variant::from(token));
+        // `Variant::from(String)` owns its text through a refcounted `Str`, so
+        // cloning the variant shares one allocation instead of copying the
+        // token into a second `String`. Both keys need the same value.
+        let token = Variant::from(token);
+        data.insert("desktop-startup-id", token.clone());
+        data.insert("activation-token", token);
     }
     data
 }
@@ -876,10 +939,13 @@ fn dispatch_action(
 ) {
     let (name, action_target) = action_route(target, action_key);
     let name = String::from(name);
-    let parameter: Vec<Variant<'static>> = action_target
-        .map(|t| Variant::from(t.clone()))
-        .into_iter()
-        .collect();
+    // At most one target is sent. Push conditionally rather than routing a
+    // 0/1-element iterator through `collect`.
+    let mut parameter: Vec<Variant<'static>> =
+        Vec::with_capacity(usize::from(action_target.is_some()));
+    if let Some(t) = action_target {
+        parameter.push(Variant::from(t.clone()));
+    }
     let platform_data = platform_data(activation_token);
 
     // `app_id` and `portal_id` are `Arc<str>`, so the task gets refcount bumps
@@ -1470,7 +1536,7 @@ mod action_list_tests {
     fn the_default_action_is_reported_under_the_reserved_id() {
         let n = notification_with_default_action();
         let (actions, targets) = build_actions(&n);
-        assert_eq!(actions, vec!["default", ""]);
+        assert_eq!(&actions[..], &["default", ""]);
         assert_eq!(targets.len(), 1);
         assert_eq!(targets["default"], owned("t"));
     }
@@ -1482,7 +1548,7 @@ mod action_list_tests {
             ..Default::default()
         };
         let (actions, targets) = build_actions(&n);
-        assert_eq!(actions, vec!["default", ""]);
+        assert_eq!(&actions[..], &["default", ""]);
         assert!(
             targets.is_empty(),
             "an action with no target must not get an empty entry"
@@ -1505,8 +1571,8 @@ mod action_list_tests {
         let (actions, _) = build_actions(&n);
         assert_eq!(actions.len() % 2, 0, "ids and labels must pair up");
         assert_eq!(
-            actions,
-            vec!["default", "", "reply", "reply", "archive", "Archive"]
+            &actions[..],
+            &["default", "", "reply", "reply", "archive", "Archive"]
         );
     }
 
@@ -1517,7 +1583,7 @@ mod action_list_tests {
             ..Default::default()
         };
         let (actions, _) = build_actions(&n);
-        assert_eq!(actions, vec!["app.reply", "Reply"]);
+        assert_eq!(&actions[..], &["app.reply", "Reply"]);
     }
 
     /// An absent label falls back to the id, which keeps the list correctly
@@ -1529,7 +1595,7 @@ mod action_list_tests {
             ..Default::default()
         };
         let (actions, _) = build_actions(&n);
-        assert_eq!(actions, vec!["app.reply", "app.reply"]);
+        assert_eq!(&actions[..], &["app.reply", "app.reply"]);
     }
 
     /// A button the server reports back by id must have an id to report.
@@ -1546,7 +1612,7 @@ mod action_list_tests {
             ..Default::default()
         };
         let (actions, _) = build_actions(&n);
-        assert_eq!(actions, vec!["app.reply", "Reply"]);
+        assert_eq!(&actions[..], &["app.reply", "Reply"]);
     }
 
     /// The specification names the key `target`. The previous code read
@@ -1611,6 +1677,10 @@ mod action_list_tests {
     #[test]
     fn platform_data_carries_the_token_under_both_keys() {
         let data = platform_data(Some("token-1".into()));
+        assert!(
+            data.capacity() >= 2,
+            "both keys are known up front, so the map must be pre-sized"
+        );
         assert_eq!(data["activation-token"], Variant::from("token-1"));
         assert_eq!(data["desktop-startup-id"], Variant::from("token-1"));
         assert!(platform_data(None).is_empty());
@@ -1620,7 +1690,8 @@ mod action_list_tests {
     /// `Vec<String>`, allocating one `String` per id and per label -- including
     /// for labels, which were already `&str` -- and the whole vector was then
     /// dropped after reborrowing it as `Vec<&str>`. Two buttons with no labels
-    /// and no targets must now cost only the `Vec` itself.
+    /// and no targets now fit entirely in the `SmallVec`'s inline buffer, so
+    /// building the list costs zero heap allocations.
     #[test]
     fn building_the_list_does_not_allocate_a_string_per_action() {
         let n = PortalNotification {
@@ -1640,12 +1711,16 @@ mod action_list_tests {
 
         assert_eq!(actions.len(), 6, "three actions, id and label each");
         assert!(
+            !actions.spilled(),
+            "six &str slots fit inline in [&str; 8], so no heap spill is allowed"
+        );
+        assert!(
             targets.is_empty(),
             "no targets were requested, so none may be cloned"
         );
         assert_eq!(
-            snap.count, 1,
-            "only the result Vec may allocate, got {snap:?}"
+            snap.count, 0,
+            "inline SmallVec and an empty target map must not allocate, got {snap:?}"
         );
     }
 }
