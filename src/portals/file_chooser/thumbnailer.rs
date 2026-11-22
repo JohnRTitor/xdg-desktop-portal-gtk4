@@ -194,24 +194,26 @@ fn is_png_data_metadata_valid(
         if chunk_end > png_data.len() {
             break;
         }
-        if chunk_type == b"tEXt" && len >= 2 {
-            let payload = &png_data[pos + 8..pos + 8 + len];
-            if let Some(null_pos) = payload.iter().position(|&b| b == 0) {
-                let keyword = &payload[..null_pos];
-                let text = &payload[null_pos + 1..];
-                if keyword == b"Thumb::URI" {
-                    found_uri = text == expected_uri.as_bytes();
-                } else if keyword == b"Thumb::MTime"
-                    && let Ok(s) = std::str::from_utf8(text)
-                {
-                    let secs = s.split('.').next().and_then(|s| s.parse::<u64>().ok());
-                    found_mtime = secs
-                        .map(|s| s.abs_diff(expected_mtime_secs) <= 1)
-                        .unwrap_or(false);
+        match chunk_type {
+            b"tEXt" if len >= 2 => {
+                let payload = &png_data[pos + 8..pos + 8 + len];
+                if let Some(null_pos) = payload.iter().position(|&b| b == 0) {
+                    let keyword = &payload[..null_pos];
+                    let text = &payload[null_pos + 1..];
+                    match keyword {
+                        b"Thumb::URI" => found_uri = text == expected_uri.as_bytes(),
+                        b"Thumb::MTime" if let Ok(s) = std::str::from_utf8(text) => {
+                            let secs = s.split('.').next().and_then(|s| s.parse::<u64>().ok());
+                            found_mtime = secs
+                                .map(|s| s.abs_diff(expected_mtime_secs) <= 1)
+                                .unwrap_or(false);
+                        }
+                        _ => {}
+                    }
                 }
             }
-        } else if chunk_type == b"IEND" {
-            break;
+            b"IEND" => break,
+            _ => {}
         }
         pos = chunk_end;
     }

@@ -234,12 +234,10 @@ enum AppSource {
 /// some, only those may be offered. Otherwise prefer the recommendation, and fall
 /// back to every installed application.
 fn choose_source(choices: &[String], has_recommendation: bool) -> AppSource {
-    if !choices.is_empty() {
-        AppSource::All
-    } else if has_recommendation {
-        AppSource::Recommended
-    } else {
-        AppSource::All
+    match (choices.is_empty(), has_recommendation) {
+        (false, _) => AppSource::All,
+        (true, true) => AppSource::Recommended,
+        (true, false) => AppSource::All,
     }
 }
 

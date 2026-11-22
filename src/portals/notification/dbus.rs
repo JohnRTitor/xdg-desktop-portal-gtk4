@@ -11,8 +11,8 @@ use {
     },
     tokio::task::spawn_blocking,
     zbus::{
-        Connection, DeserializeDict, ObjectServer, OwnedVariant, Structure, Type, Variant,
-        interface, object_server::SignalEmitter,
+        Connection, DeserializeDict, ObjectServer, OwnedVariant, Type, Variant, interface,
+        object_server::SignalEmitter,
     },
 };
 
@@ -513,60 +513,62 @@ impl Notification {
                 Variant::Variant(v) => v.as_ref(),
                 other => other,
             };
-            if let Ok(sound_str) = <&str>::try_from(inner) {
-                if sound_str == "silent" {
+            match inner {
+                Variant::Str(s) if s.as_str() == "silent" => {
                     hints.insert("suppress-sound", Variant::from(true));
                 }
-            } else if let Variant::Fd(fd) = inner {
-                use std::{io::Read, os::fd::AsFd};
-                if let Ok(owned_fd) = fd.as_fd().try_clone_to_owned() {
-                    let mut file = std::fs::File::from(owned_fd);
+                Variant::Fd(fd) => {
+                    use std::{io::Read, os::fd::AsFd};
+                    if let Ok(owned_fd) = fd.as_fd().try_clone_to_owned() {
+                        let mut file = std::fs::File::from(owned_fd);
 
-                    // Only ever write below a directory we own, with `0700`, and
-                    // create the file with `O_EXCL`.
-                    //
-                    // In a shared `/tmp` a predictable sound path is a symlink
-                    // attack: a local attacker pre-creates the directory or the
-                    // file as a link to something the user owns, and the portal
-                    // -- running as the user -- truncates the target.
-                    // `$XDG_RUNTIME_DIR` is 0700 by definition, so requiring it
-                    // removes the shared-directory case; `O_EXCL` removes the
-                    // pre-created-file case even inside a private directory.
-                    let Some(mut path) = temp_sound_dir() else {
-                        tracing::warn!(
-                            "XDG_RUNTIME_DIR is unset; refusing to stage a notification sound file"
-                        );
-                        return;
-                    };
+                        // Only ever write below a directory we own, with `0700`, and
+                        // create the file with `O_EXCL`.
+                        //
+                        // In a shared `/tmp` a predictable sound path is a symlink
+                        // attack: a local attacker pre-creates the directory or the
+                        // file as a link to something the user owns, and the portal
+                        // -- running as the user -- truncates the target.
+                        // `$XDG_RUNTIME_DIR` is 0700 by definition, so requiring it
+                        // removes the shared-directory case; `O_EXCL` removes the
+                        // pre-created-file case even inside a private directory.
+                        let Some(mut path) = temp_sound_dir() else {
+                            tracing::warn!(
+                                "XDG_RUNTIME_DIR is unset; refusing to stage a notification sound file"
+                            );
+                            return;
+                        };
 
-                    let timestamp = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_micros();
-                    path.push(format!(
-                        "{}_{}.snd",
-                        app_id.replace(['.', '-'], "_"),
-                        timestamp
-                    ));
+                        let timestamp = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_micros();
+                        path.push(format!(
+                            "{}_{}.snd",
+                            app_id.replace(['.', '-'], "_"),
+                            timestamp
+                        ));
 
-                    let bytes = spawn_blocking(move || {
-                        let mut data = Vec::new();
-                        if file.read_to_end(&mut data).is_ok() {
-                            return Some(data);
+                        let bytes = spawn_blocking(move || {
+                            let mut data = Vec::new();
+                            if file.read_to_end(&mut data).is_ok() {
+                                return Some(data);
+                            }
+                            None
+                        })
+                        .await
+                        .unwrap_or(None);
+
+                        if let Some(data) = bytes
+                            && write_exclusive(&path, &data).await.is_ok()
+                        {
+                            sound_file = Some(Arc::new(TempSoundFile { path }));
                         }
-                        None
-                    })
-                    .await
-                    .unwrap_or(None);
-
-                    if let Some(data) = bytes
-                        && write_exclusive(&path, &data).await.is_ok()
-                    {
-                        sound_file = Some(Arc::new(TempSoundFile { path }));
+                    } else {
+                        tracing::error!("Failed to dup sound fd");
                     }
-                } else {
-                    tracing::error!("Failed to dup sound fd");
                 }
+                _ => {}
             }
         }
 
@@ -578,65 +580,112 @@ impl Notification {
 
         if let Some(v) = notification.icon.as_ref() {
             let v_ref = std::ops::Deref::deref(v);
-            if let Ok(s) = <&str>::try_from(v_ref) {
-                icon_name = s.into();
-            } else if let Ok(structure) = <&Structure>::try_from(v_ref) {
-                let fields = structure.fields();
-                if fields.len() == 2
-                    && let Ok(icon_type) = <&str>::try_from(&fields[0])
-                {
-                    // The icon format is (sv) — the payload in fields[1] is wrapped
-                    // in a variant. Unwrap it so we can extract the actual value.
-                    let payload = match &fields[1] {
-                        Variant::Variant(inner) => inner.as_ref(),
-                        other => other,
-                    };
-                    match icon_type {
-                        "themed" => {
-                            if let Some(name) = themed_icon_name(payload) {
-                                icon_name = name;
+            match v_ref {
+                Variant::Str(s) => icon_name = s.as_str().into(),
+                Variant::Structure(structure) => {
+                    let fields = structure.fields();
+                    if fields.len() == 2
+                        && let Ok(icon_type) = <&str>::try_from(&fields[0])
+                    {
+                        // The icon format is (sv) — the payload in fields[1] is wrapped
+                        // in a variant. Unwrap it so we can extract the actual value.
+                        let payload = match &fields[1] {
+                            Variant::Variant(inner) => inner.as_ref(),
+                            other => other,
+                        };
+                        match icon_type {
+                            "themed" => {
+                                if let Some(name) = themed_icon_name(payload) {
+                                    icon_name = name;
+                                }
                             }
-                        }
-                        "file-descriptor" => {
-                            // Note: xdg-desktop-portal drops raw "file" icon paths for security.
-                            // Apps sending "bytes" arrays will have their bytes written to a memfd
-                            // by the host portal, which forwards it to us here as "file-descriptor".
-                            if let Variant::Fd(fd) = payload {
-                                use std::os::fd::AsFd;
-                                if let Ok(owned_fd) = fd.as_fd().try_clone_to_owned() {
-                                    let mut file = std::fs::File::from(owned_fd);
+                            "file-descriptor" => {
+                                // Note: xdg-desktop-portal drops raw "file" icon paths for security.
+                                // Apps sending "bytes" arrays will have their bytes written to a memfd
+                                // by the host portal, which forwards it to us here as "file-descriptor".
+                                if let Variant::Fd(fd) = payload {
+                                    use std::os::fd::AsFd;
+                                    if let Ok(owned_fd) = fd.as_fd().try_clone_to_owned() {
+                                        let mut file = std::fs::File::from(owned_fd);
+                                        let image_data = spawn_blocking(move || {
+                                            use {
+                                                gdk_pixbuf::Pixbuf,
+                                                gtk4::{gio::MemoryInputStream, glib::Bytes},
+                                                std::io::Read,
+                                            };
+                                            let mut data = Vec::new();
+                                            if file.read_to_end(&mut data).is_ok() {
+                                                // `from_owned` hands the buffer's
+                                                // contents to GLib instead of
+                                                // memcpy'ing them out. `read_to_end`
+                                                // over-allocates, so the retained
+                                                // allocation can be larger than the
+                                                // image.
+                                                let bytes = Bytes::from_owned(data);
+                                                let stream = MemoryInputStream::from_bytes(&bytes);
+                                                if let Ok(pixbuf) =
+                                                    Pixbuf::from_stream(&stream, Cancellable::NONE)
+                                                {
+                                                    return OwnedVariant::try_from(Variant::new((
+                                                        pixbuf.width(),
+                                                        pixbuf.height(),
+                                                        pixbuf.rowstride(),
+                                                        pixbuf.has_alpha(),
+                                                        pixbuf.bits_per_sample(),
+                                                        pixbuf.n_channels(),
+                                                        Variant::from(
+                                                            pixbuf.read_pixel_bytes().as_ref(),
+                                                        ),
+                                                    )))
+                                                    .ok();
+                                                }
+                                            }
+                                            None
+                                        })
+                                        .await
+                                        .unwrap_or(None);
+
+                                        if let Some(image_data) = image_data {
+                                            hints.insert("image-data", Variant::from(image_data));
+                                        }
+                                    }
+                                }
+                            }
+                            "bytes" => {
+                                // The payload is an `ay`. Copy its bytes out of the
+                                // borrowed array into an exactly-sized buffer; the
+                                // `Bytes::from_owned` below then hands that single
+                                // allocation to GLib without a further copy.
+                                let byte_array: Option<Vec<u8>> = (|| {
+                                    let array = <&zbus::wire::Array>::try_from(payload).ok()?;
+                                    let mut bytes = Vec::with_capacity(array.len());
+                                    for byte in array.inner() {
+                                        bytes.push(u8::try_from(byte).ok()?);
+                                    }
+                                    Some(bytes)
+                                })(
+                                );
+                                if let Some(byte_array) = byte_array {
                                     let image_data = spawn_blocking(move || {
                                         use {
                                             gdk_pixbuf::Pixbuf,
                                             gtk4::{gio::MemoryInputStream, glib::Bytes},
-                                            std::io::Read,
                                         };
-                                        let mut data = Vec::new();
-                                        if file.read_to_end(&mut data).is_ok() {
-                                            // `from_owned` hands the buffer's
-                                            // contents to GLib instead of
-                                            // memcpy'ing them out. `read_to_end`
-                                            // over-allocates, so the retained
-                                            // allocation can be larger than the
-                                            // image.
-                                            let bytes = Bytes::from_owned(data);
-                                            let stream = MemoryInputStream::from_bytes(&bytes);
-                                            if let Ok(pixbuf) =
-                                                Pixbuf::from_stream(&stream, Cancellable::NONE)
-                                            {
-                                                return OwnedVariant::try_from(Variant::new((
-                                                    pixbuf.width(),
-                                                    pixbuf.height(),
-                                                    pixbuf.rowstride(),
-                                                    pixbuf.has_alpha(),
-                                                    pixbuf.bits_per_sample(),
-                                                    pixbuf.n_channels(),
-                                                    Variant::from(
-                                                        pixbuf.read_pixel_bytes().as_ref(),
-                                                    ),
-                                                )))
-                                                .ok();
-                                            }
+                                        let bytes = Bytes::from_owned(byte_array);
+                                        let stream = MemoryInputStream::from_bytes(&bytes);
+                                        if let Ok(pixbuf) =
+                                            Pixbuf::from_stream(&stream, Cancellable::NONE)
+                                        {
+                                            return OwnedVariant::try_from(Variant::new((
+                                                pixbuf.width(),
+                                                pixbuf.height(),
+                                                pixbuf.rowstride(),
+                                                pixbuf.has_alpha(),
+                                                pixbuf.bits_per_sample(),
+                                                pixbuf.n_channels(),
+                                                Variant::from(pixbuf.read_pixel_bytes().as_ref()),
+                                            )))
+                                            .ok();
                                         }
                                         None
                                     })
@@ -648,55 +697,11 @@ impl Notification {
                                     }
                                 }
                             }
+                            _ => {}
                         }
-                        "bytes" => {
-                            // The payload is an `ay`. Copy its bytes out of the
-                            // borrowed array into an exactly-sized buffer; the
-                            // `Bytes::from_owned` below then hands that single
-                            // allocation to GLib without a further copy.
-                            let byte_array: Option<Vec<u8>> = (|| {
-                                let array = <&zbus::wire::Array>::try_from(payload).ok()?;
-                                let mut bytes = Vec::with_capacity(array.len());
-                                for byte in array.inner() {
-                                    bytes.push(u8::try_from(byte).ok()?);
-                                }
-                                Some(bytes)
-                            })();
-                            if let Some(byte_array) = byte_array {
-                                let image_data = spawn_blocking(move || {
-                                    use {
-                                        gdk_pixbuf::Pixbuf,
-                                        gtk4::{gio::MemoryInputStream, glib::Bytes},
-                                    };
-                                    let bytes = Bytes::from_owned(byte_array);
-                                    let stream = MemoryInputStream::from_bytes(&bytes);
-                                    if let Ok(pixbuf) =
-                                        Pixbuf::from_stream(&stream, Cancellable::NONE)
-                                    {
-                                        return OwnedVariant::try_from(Variant::new((
-                                            pixbuf.width(),
-                                            pixbuf.height(),
-                                            pixbuf.rowstride(),
-                                            pixbuf.has_alpha(),
-                                            pixbuf.bits_per_sample(),
-                                            pixbuf.n_channels(),
-                                            Variant::from(pixbuf.read_pixel_bytes().as_ref()),
-                                        )))
-                                        .ok();
-                                    }
-                                    None
-                                })
-                                .await
-                                .unwrap_or(None);
-
-                                if let Some(image_data) = image_data {
-                                    hints.insert("image-data", Variant::from(image_data));
-                                }
-                            }
-                        }
-                        _ => {}
                     }
                 }
+                _ => {}
             }
         }
 

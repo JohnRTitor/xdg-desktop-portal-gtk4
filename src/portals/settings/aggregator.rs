@@ -182,19 +182,16 @@ impl SettingsAggregator {
             };
 
             let val_str = val.as_str();
-            let owned = if val_str == "true" {
-                OwnedVariant::try_from(Variant::Bool(true))
-                    .expect("Converting primitive Variant to OwnedVariant is infallible")
-            } else if val_str == "false" {
-                OwnedVariant::try_from(Variant::Bool(false))
-                    .expect("Converting primitive Variant to OwnedVariant is infallible")
-            } else if let Ok(num) = val_str.parse::<i32>() {
-                OwnedVariant::try_from(Variant::I32(num))
-                    .expect("Converting primitive Variant to OwnedVariant is infallible")
-            } else {
-                OwnedVariant::try_from(Variant::Str(val_str.into()))
-                    .expect("Converting primitive Variant to OwnedVariant is infallible")
+            let variant = match val_str {
+                "true" => Variant::Bool(true),
+                "false" => Variant::Bool(false),
+                other => match other.parse::<i32>() {
+                    Ok(num) => Variant::I32(num),
+                    Err(_) => Variant::Str(other.into()),
+                },
             };
+            let owned = OwnedVariant::try_from(variant)
+                .expect("Converting primitive Variant to OwnedVariant is infallible");
             state.insert(NS_GNOME_DESKTOP_INTERFACE, key_str, owned);
         }
     }
@@ -226,17 +223,17 @@ impl SettingsAggregator {
                     continue;
                 };
 
+                // Unlike settings.ini, kdeglobals keeps everything except the
+                // two boolean literals as a string, including numeric-looking
+                // values. Do not add the i32 parsing used above.
                 let val_str = val.as_str();
-                let owned = if val_str == "true" {
-                    OwnedVariant::try_from(Variant::Bool(true))
-                        .expect("Converting primitive Variant to OwnedVariant is infallible")
-                } else if val_str == "false" {
-                    OwnedVariant::try_from(Variant::Bool(false))
-                        .expect("Converting primitive Variant to OwnedVariant is infallible")
-                } else {
-                    OwnedVariant::try_from(Variant::Str(val_str.into()))
-                        .expect("Converting primitive Variant to OwnedVariant is infallible")
+                let variant = match val_str {
+                    "true" => Variant::Bool(true),
+                    "false" => Variant::Bool(false),
+                    other => Variant::Str(other.into()),
                 };
+                let owned = OwnedVariant::try_from(variant)
+                    .expect("Converting primitive Variant to OwnedVariant is infallible");
                 state.insert(&ns, key_str, owned);
             }
         }

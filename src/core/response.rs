@@ -52,10 +52,14 @@ impl<T: Type> Response<T> {
     where
         T: Default,
     {
-        if error.is_user_cancellation() {
-            Self::cancelled()
-        } else {
-            Self::other()
+        // Match the variants explicitly so a new UiError forces a decision
+        // here, rather than silently falling into "other". This must agree
+        // with `is_user_cancellation()`, which the logging in the portals uses.
+        match error {
+            crate::gui::UiError::Rejected => Self::cancelled(),
+            crate::gui::UiError::Closed
+            | crate::gui::UiError::Refused
+            | crate::gui::UiError::Failed => Self::other(),
         }
     }
 }
@@ -115,5 +119,23 @@ mod tests {
         assert_eq!(never_shown.1.0, 0);
         assert_eq!(turned_down.1.0, 0);
         assert_eq!(failed.1.0, 0);
+    }
+
+    /// The explicit match above must stay in step with the helper the portals
+    /// use for their log levels; a new UiError variant triggers the match but
+    /// not this helper, so keep the agreement pinned.
+    #[test]
+    fn response_codes_agree_with_is_user_cancellation() {
+        for error in [
+            crate::gui::UiError::Closed,
+            crate::gui::UiError::Rejected,
+            crate::gui::UiError::Refused,
+            crate::gui::UiError::Failed,
+        ] {
+            let label = format!("{error:?}");
+            let is_cancellation = error.is_user_cancellation();
+            let code = Response::<DummyResult>::from_ui_error(error).0;
+            assert_eq!(code, if is_cancellation { 1 } else { 2 }, "{label}");
+        }
     }
 }

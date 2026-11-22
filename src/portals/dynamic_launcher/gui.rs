@@ -75,23 +75,19 @@ impl DynamicLauncherUi {
         hbox.set_margin_top(crate::gui::ELEMENT_MARGIN);
         dialog.content_area.append(&hbox);
 
-        if let Some(bytes) = self.icon_data.take() {
-            // Hand the owned bytes to `glib::Bytes` without copying. `Bytes::from(&Vec)`
-            // goes through `Bytes::new`, which copies the icon data.
-            let bytes_glib = glib::Bytes::from_owned(bytes);
-            let icon = gio::BytesIcon::new(&bytes_glib);
-            let image = Image::from_gicon(&icon);
-            image.set_pixel_size(64);
-            hbox.append(&image);
-        } else if let Some(icon) = &self.icon_name {
-            let image = Image::from_icon_name(icon);
-            image.set_pixel_size(64);
-            hbox.append(&image);
-        } else {
-            let image = Image::from_icon_name("application-x-executable");
-            image.set_pixel_size(64);
-            hbox.append(&image);
-        }
+        let image: Image = match (self.icon_data.take(), self.icon_name.as_ref()) {
+            (Some(bytes), _) => {
+                // Hand the owned bytes to `glib::Bytes` without copying. `Bytes::from(&Vec)`
+                // goes through `Bytes::new`, which copies the icon data.
+                let bytes_glib = glib::Bytes::from_owned(bytes);
+                let icon = gio::BytesIcon::new(&bytes_glib);
+                Image::from_gicon(&icon)
+            }
+            (None, Some(name)) => Image::from_icon_name(name.as_str()),
+            (None, None) => Image::from_icon_name("application-x-executable"),
+        };
+        image.set_pixel_size(64);
+        hbox.append(&image);
 
         let vbox = Box::new(gtk4::Orientation::Vertical, crate::gui::SMALL_MARGIN);
         hbox.append(&vbox);
