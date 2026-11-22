@@ -46,7 +46,7 @@ use crate::portals::inhibit::dbus::Inhibit;
 use crate::portals::lockdown::dbus::LockdownPortal;
 #[cfg(feature = "notification")]
 use crate::portals::notification::dbus::Notification;
-#[cfg(feature = "print")]
+#[cfg(all(feature = "print", target_os = "linux"))]
 use crate::portals::print::dbus::Print;
 #[cfg(feature = "settings")]
 use crate::portals::settings::dbus::SettingsPortal;
@@ -143,7 +143,7 @@ impl Portal {
         add!(Notification::new(Some(session.clone())).await);
         #[cfg(feature = "dynamic_launcher")]
         add!(DynamicLauncher::new(proxy, session_manager.clone()));
-        #[cfg(feature = "print")]
+        #[cfg(all(feature = "print", target_os = "linux"))]
         add!(Print::new(proxy, session_manager.clone()));
         #[cfg(feature = "inhibit")]
         add!(Inhibit::new(session_manager.clone(), system_conn).await);

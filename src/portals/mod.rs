@@ -18,7 +18,9 @@ pub mod inhibit;
 pub mod lockdown;
 #[cfg(feature = "notification")]
 pub mod notification;
-#[cfg(feature = "print")]
+// GTK's Unix print API (GtkPrintUnixDialog/GtkPrintJob) is only bound on Linux
+// in gtk4-rs, so the print portal cannot be built on other targets.
+#[cfg(all(feature = "print", target_os = "linux"))]
 pub mod print;
 #[cfg(feature = "settings")]
 pub mod settings;

@@ -38,7 +38,7 @@ _More screenshots are available in [`static/screenshots/`](./static/screenshots/
 | `Inhibit`         | Inhibiting session state (like sleep or logout)               |
 | `Lockdown`        | Querying locked-down features                                 |
 | `Notification`    | Displaying desktop notifications                              |
-| `Print`           | Printing documents                                            |
+| `Print`           | Printing documents (Linux only)                               |
 | `Settings`        | Reading desktop settings (such as color-scheme for dark mode) |
 | `USB`             | Managing USB device access                                    |
 
@@ -128,7 +128,7 @@ journalctl --user -u xdg-desktop-portal-gtk4 -f
 
 ## Compilation Features
 
-Portals can be selectively disabled at compile-time to reduce binary size. By default, **all portals** are enabled.
+Portals can be selectively disabled at compile-time to reduce binary size. By default, **all portals available on the target** are enabled: the `Print` portal (GTK's Unix print API) and journald logging require Linux and are compiled out elsewhere.
 
 Disable default features in Cargo to build only what you need:
 

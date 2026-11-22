@@ -44,7 +44,6 @@ load-path = "locales"
 
 [dependencies]
 current_locale = "0.1"
-fastrand = { version = "2", optional = true }
 futures-util = "0.3"
 gdk-pixbuf = { version = "0.22", optional = true }
 gdk4-wayland = "0.11"
@@ -67,10 +66,11 @@ zbus = { version = "6", default-features = false, features = ["comms", "proxy", 
 [dev-dependencies]
 tokio = { version = "1", features = ["time"] }
 
-# journald is Linux-only. The `systemd` feature stays in `default`, but on
-# other targets it activates no dependency and the journald code is compiled
-# out (see src/logging.rs).
+# journald and GTK's Unix print API are Linux-only. The `systemd` and `print`
+# features stay in `default`, but on other targets they activate no dependency
+# and their code is compiled out (see src/logging.rs and src/portals/mod.rs).
 [target.'cfg(target_os = "linux")'.dependencies]
+fastrand = { version = "2", optional = true }
 tracing-journald = { version = "0.3", optional = true }
 
 [features]

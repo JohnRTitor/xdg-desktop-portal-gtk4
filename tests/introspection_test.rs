@@ -124,6 +124,7 @@ const EXPECTED: &[(&str, &[(&str, &[&str])], &[&str])] = &[
         ],
         &["SupportedOptions", "version"],
     ),
+    #[cfg(all(feature = "print", target_os = "linux"))]
     (
         "Print",
         &[
@@ -298,6 +299,7 @@ async fn introspect_backend() -> Option<String> {
             sm()
         )
     );
+    #[cfg(all(feature = "print", target_os = "linux"))]
     at!(xdg_desktop_portal_gtk4::portals::print::dbus::Print::new(
         &proxy,
         sm()

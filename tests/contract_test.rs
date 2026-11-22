@@ -304,6 +304,7 @@ async fn request_close_reports_other_not_cancelled() {
 /// is rejected and the entry is left in place for its rightful owner, so
 /// guessing a token cannot reuse another app's cached settings.
 #[test]
+#[cfg(all(feature = "print", target_os = "linux"))]
 fn print_token_is_bound_to_app_id() {
     use {
         std::sync::Arc,

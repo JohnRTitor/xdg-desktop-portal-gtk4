@@ -1,3 +1,4 @@
+#![cfg(all(feature = "print", target_os = "linux"))] // GTK's Unix print API is Linux-only
 #![allow(clippy::too_many_arguments)] // proxy macro generates 8-arg client methods
 
 mod common;
