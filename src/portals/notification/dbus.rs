@@ -1165,9 +1165,9 @@ mod tests {
 
     #[test]
     fn ensure_private_dir_creates_a_traversable_private_directory() {
-        use {
-            std::os::unix::fs::PermissionsExt,
-            std::sync::atomic::{AtomicU64, Ordering},
+        use std::{
+            os::unix::fs::PermissionsExt,
+            sync::atomic::{AtomicU64, Ordering},
         };
         static NEXT: AtomicU64 = AtomicU64::new(0);
         let dir = std::env::temp_dir().join(format!(
