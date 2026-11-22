@@ -475,7 +475,6 @@ impl Notification {
             .as_deref()
             .unwrap_or(notification.body.as_deref().unwrap_or(""));
 
-        // Zbus notifications signature expects strings
         let title = title_ref;
         let body = body_ref;
 
@@ -1842,7 +1841,6 @@ mod notification_map_tests {
                 "other apps are untouched"
             );
         }
-        // The inner map survives while the app still has live notifications.
         register_notification(
             &active,
             &reverse,

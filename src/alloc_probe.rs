@@ -184,8 +184,8 @@ mod tests {
         assert_eq!(snap.count, 0);
     }
 
-    /// `realloc` is accounted as its growth only, so a `Vec` that settles at its
-    /// final capacity contributes that capacity once, not once per doubling.
+    /// `realloc` is accounted as growth only, so a `Vec` contributes its final
+    /// capacity once, not once per doubling.
     #[test]
     fn realloc_counts_only_growth() {
         let scope = AllocScope::start();
@@ -195,7 +195,6 @@ mod tests {
         }
         let snap = scope.finish();
         assert!(snap.count >= 1, "growth must be counted: {snap:?}");
-        // One initial allocation plus a handful of doublings, never 64.
         assert!(
             snap.count < 16,
             "growth must not be counted per element: {snap:?}"

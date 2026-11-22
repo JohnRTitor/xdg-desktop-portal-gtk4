@@ -225,7 +225,6 @@ impl FileChooserUi {
 
         dialog.show();
         context.spawn_local(async move {
-            // Wait for either the dialog response or the D-Bus request cancellation
             tokio::select! {
                 _ = done_rx.recv() => {}
                 _ = close_on_close => {}
@@ -430,7 +429,6 @@ mod tests {
         assert!(matches!(offered, Cow::Borrowed(_)));
         assert_eq!(offered.len(), 2);
         assert_eq!(selected, Some(1));
-        // The borrowed slice is literally the caller's own storage.
         assert!(std::ptr::eq(offered.as_ptr(), filters.as_ptr()));
     }
 

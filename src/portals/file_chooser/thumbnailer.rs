@@ -540,7 +540,6 @@ impl ThumbnailerRegistry {
         if let Some(spec) = self.spec_for_mime(mime) {
             return Some(spec);
         }
-        // Wildcard check, e.g. "image/*"
         if let Some((category, _)) = mime.split_once('/') {
             let wildcard = format!("{category}/*");
             if let Some(spec) = self.spec_for_mime(&wildcard) {
@@ -630,7 +629,6 @@ fn execute_thumbnailer_command(
         cmd.arg(substituted);
     }
 
-    // Suppress child stdio
     cmd.stdout(std::process::Stdio::null());
     cmd.stderr(std::process::Stdio::null());
 
@@ -906,7 +904,6 @@ fn generate_thumbnail_cancellable(
     // re-hashing every thumbnail a second time.
     let (needs_gen_count, needs_gen_sizes) = sizes_needing_generation(normal_ok, large_ok);
     let needs_gen = &needs_gen_sizes[..needs_gen_count];
-    // Cached lookup by size, used in the per-size generation loops below.
     let cached_target = |size: ThumbnailSize| match size {
         ThumbnailSize::Normal => target_normal.as_ref(),
         ThumbnailSize::Large => target_large.as_ref(),
@@ -1634,7 +1631,6 @@ pub fn setup_dialog_thumbnailer(
         tx,
     });
 
-    // 1. Initial attachment pass
     watcher.attach(dialog.upcast_ref());
 
     // 2. Attach when the dialog is mapped/shown (template children realized)
@@ -1897,7 +1893,6 @@ mod tests {
 
     #[test]
     fn test_png_metadata_injection_and_verification() {
-        // Minimal valid 1x1 PNG
         let minimal_png: [u8; 67] = [
             0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, // PNG signature
             0x00, 0x00, 0x00, 0x0d, // IHDR length (13)
@@ -1923,7 +1918,6 @@ mod tests {
         assert_eq!(&injected[..8], &minimal_png[..8]);
         assert_eq!(&injected[12..16], b"IHDR");
 
-        // Verify with our validator
         assert!(is_png_data_metadata_valid(&injected, uri, mtime));
         assert!(!is_png_data_metadata_valid(
             &injected,
@@ -2103,7 +2097,6 @@ mod tests {
         let _ = fs::create_dir_all(&test_dir);
         let pdf_path = test_dir.join("sample.pdf");
 
-        // Minimal valid 1-page PDF fixture
         let minimal_pdf = b"%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n3 0 obj<</Type/Page/MediaBox[0 0 100 100]/Parent 2 0 R>>endobj\nxref\n0 4\n0000000000 65535 f \n0000000009 00000 n \n0000000052 00000 n \n0000000102 00000 n \ntrailer<</Size 4/Root 1 0 R>>\nstartxref\n178\n%%EOF\n";
         fs::write(&pdf_path, minimal_pdf).unwrap();
 

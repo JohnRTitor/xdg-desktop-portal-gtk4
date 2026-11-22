@@ -78,17 +78,10 @@ impl SettingsAggregator {
     pub fn reload_all(&mut self) -> Vec<(String, String, OwnedVariant)> {
         let mut new_state = SettingsState::default();
 
-        // 1. Read GSettings
         Self::read_gsettings(&mut new_state);
-
-        // 2. Read GTK 3.0 / 4.0 settings.ini
         Self::read_gtk_settings_ini(&mut new_state, "gtk-3.0");
         Self::read_gtk_settings_ini(&mut new_state, "gtk-4.0");
-
-        // 3. Read kdeglobals
         Self::read_kdeglobals(&mut new_state);
-
-        // 4. Resolve org.freedesktop.appearance
         Self::resolve_appearance(&mut new_state);
 
         let mut changes = Vec::new();

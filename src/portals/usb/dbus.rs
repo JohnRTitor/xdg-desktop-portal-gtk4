@@ -265,9 +265,6 @@ mod tests {
         let decoded: HashMap<String, Variant> = encoded.deserialize().unwrap().0;
 
         let _decoded_devices_val = decoded.get("devices").unwrap();
-        // Since signature is a{sv}, devices is returned as Variant.
-        // In UsbResults, devices is `a(sa{sv})`.
-        // Let's just ensure it's not empty and serialization worked.
         assert!(decoded.contains_key("devices"));
     }
 }

@@ -88,7 +88,6 @@ impl DynamicLauncherUi {
             image.set_pixel_size(64);
             hbox.append(&image);
         } else {
-            // Fallback icon if none provided
             let image = Image::from_icon_name("application-x-executable");
             image.set_pixel_size(64);
             hbox.append(&image);

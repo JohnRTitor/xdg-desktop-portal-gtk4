@@ -81,7 +81,7 @@ fn main() {
             );
             std::process::exit(1);
         }
-        Ok(Ok(())) => {} // initialized successfully
+        Ok(Ok(())) => {}
     }
 
     // Now that D-Bus is set up, initialize GTK. Any closures queued by early

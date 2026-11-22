@@ -485,13 +485,10 @@ impl ClipboardPortal {
         let (read_fd, write_fd) = rustix::pipe::pipe()
             .map_err(|e| fdo::Error::Failed(format!("Failed to create pipe: {}", e)))?;
 
-        // Send the read end to the backend provider
         if transfer.fd_sender.send(read_fd).is_err() {
             return Err(fdo::Error::Failed("Backend is no longer listening".into()));
         }
 
-        // Return the write end to the DBus caller so they can stream data directly
-        // to the GTK backend via the pipe.
         Ok(Fd::from(write_fd))
     }
 

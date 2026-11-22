@@ -31,7 +31,6 @@ impl Email {
                 launch_context.setenv("XDG_ACTIVATION_TOKEN", token);
             }
 
-            // We rely on GIO to determine the default application for `mailto:` URIs.
             AppInfo::launch_default_for_uri(url, Some(&launch_context))
         })
     }
@@ -76,8 +75,6 @@ impl Email {
         _parent_window: String,
         options: ComposeEmailOptions,
     ) -> Response<EmailResults> {
-        // The Email portal doesn't show its own UI; instead, it delegates to the host's
-        // default mail client using a `mailto:` URI.
         let url = build_mailto_url(&options);
 
         match (self.launcher)(&url, options.activation_token.as_deref()) {

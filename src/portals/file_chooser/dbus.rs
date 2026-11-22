@@ -378,10 +378,9 @@ impl FileChooser {
         options: OpenFileOptions,
         #[zbus(object_server)] server: &ObjectServer,
     ) -> Result<Response<OpenFileResults>, fdo::Error> {
-        // `sender()` borrows from `header`, which lives for the whole method, so
-        // pass that `&str` straight through instead of allocating an owned copy.
-        // `run_request` only needs the borrow for `register`/`unregister`, both of
-        // which copy it into owned storage before any spawned work runs.
+        // `sender()` borrows from `header`, which lives for the whole method.
+        // `run_request` copies it into owned storage before spawning work, so
+        // pass the borrow through instead of allocating an owned copy.
         let sender = header
             .sender()
             .ok_or_else(|| fdo::Error::Failed("Missing sender".into()))?;
@@ -408,10 +407,8 @@ impl FileChooser {
         options: SaveFileOptions,
         #[zbus(object_server)] server: &ObjectServer,
     ) -> Result<Response<SaveFileResults>, fdo::Error> {
-        // `sender()` borrows from `header`, which lives for the whole method, so
-        // pass that `&str` straight through instead of allocating an owned copy.
-        // `run_request` only needs the borrow for `register`/`unregister`, both of
-        // which copy it into owned storage before any spawned work runs.
+        // As in `open_file`, pass the borrowed sender through: `run_request`
+        // copies it into owned storage before spawning work.
         let sender = header
             .sender()
             .ok_or_else(|| fdo::Error::Failed("Missing sender".into()))?;
@@ -438,10 +435,8 @@ impl FileChooser {
         options: SaveFilesOptions,
         #[zbus(object_server)] server: &ObjectServer,
     ) -> Result<Response<SaveFilesResults>, fdo::Error> {
-        // `sender()` borrows from `header`, which lives for the whole method, so
-        // pass that `&str` straight through instead of allocating an owned copy.
-        // `run_request` only needs the borrow for `register`/`unregister`, both of
-        // which copy it into owned storage before any spawned work runs.
+        // As in `open_file`, pass the borrowed sender through: `run_request`
+        // copies it into owned storage before spawning work.
         let sender = header
             .sender()
             .ok_or_else(|| fdo::Error::Failed("Missing sender".into()))?;

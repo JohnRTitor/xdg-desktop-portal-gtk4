@@ -16,7 +16,6 @@ use {
 /// This struct holds a proxy to the GTK main loop, used to present the generic
 /// access dialog when the system needs to ask the user for permission.
 pub struct Access {
-    // Keep a cloned UI proxy to dispatch GTK tasks.
     proxy: UiProxy,
     session_manager: crate::core::session_manager::SessionManager,
 }

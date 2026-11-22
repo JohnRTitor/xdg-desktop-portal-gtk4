@@ -104,12 +104,10 @@ impl DynamicLauncher {
                 tracing::debug!("PrepareInstall accepted an empty name");
                 Response(3, PrepareInstallResults::default())
             }
-            Ok(res) => {
-                Response::success(PrepareInstallResults {
-                    name: res.name,
-                    icon_v, // pass through
-                })
-            }
+            Ok(res) => Response::success(PrepareInstallResults {
+                name: res.name,
+                icon_v,
+            }),
             Err(e) => {
                 if e.is_user_cancellation() {
                     tracing::debug!(error = %e, "PrepareInstall cancelled by user");

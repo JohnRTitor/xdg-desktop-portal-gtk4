@@ -292,7 +292,6 @@ impl PrintUi {
                 let page_setup_map = variant_to_owned_dict(&d.page_setup().to_gvariant());
 
                 let Some(printer) = d.selected_printer() else {
-                    // Dialog was confirmed but no printer was selected
                     return Err(UiError::Rejected);
                 };
 
@@ -429,7 +428,6 @@ impl ExecutePrintUi {
             }
         };
 
-        // Cancel the eviction timeout since we are now executing the print job
         cached.source_id.remove();
 
         tracing::debug!(

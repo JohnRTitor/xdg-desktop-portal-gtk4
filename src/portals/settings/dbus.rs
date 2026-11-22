@@ -198,7 +198,6 @@ impl SettingsPortal {
                 }));
             }
 
-            // Initial load
             agg.reload_all();
 
             // Event loop: react to change notifications and emit D-Bus signals.

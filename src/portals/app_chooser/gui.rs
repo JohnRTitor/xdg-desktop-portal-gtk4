@@ -249,7 +249,6 @@ fn populate_list_box(
     all_apps: &[AppInfo],
     recommended_apps: &[AppInfo],
 ) {
-    // Clear existing children
     while let Some(child) = list_box.first_child() {
         list_box.remove(&child);
     }

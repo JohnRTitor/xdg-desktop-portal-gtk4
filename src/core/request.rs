@@ -225,7 +225,7 @@ mod tests {
             .await;
 
         assert_eq!(response.0, 2); // 2 is "other": the request was closed, not user-cancelled
-        assert_eq!(response.1, 0); // Default u32
+        assert_eq!(response.1, 0);
     }
 
     /// A duplicate `at` registration is a refusal, not a success: zbus hands

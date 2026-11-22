@@ -70,7 +70,6 @@ impl SessionManager {
         }
     }
 
-    /// Returns the underlying D-Bus connection.
     pub fn connection(&self) -> &Connection {
         &self.conn
     }
@@ -323,21 +322,17 @@ mod tests {
                 .is_ok()
         );
 
-        // Third should fail due to limit
         let res = manager.register("app1", "sender2", "/path3", notify3);
         assert!(matches!(res, Err(SessionError::LimitExceeded { .. })));
 
-        // Unregister one
         manager.unregister("app1", "sender1", "/path1");
 
-        // Now registering should succeed
         assert!(
             manager
                 .register("app1", "sender2", "/path3", notify4)
                 .is_ok()
         );
 
-        // Unregister remaining
         manager.unregister("app1", "sender1", "/path2");
         manager.unregister("app1", "sender2", "/path3");
 
