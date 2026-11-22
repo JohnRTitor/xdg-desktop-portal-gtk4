@@ -381,20 +381,21 @@ fn is_executable_file(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
+/// Search the given `PATH` entries for an executable named `cmd`.
+fn is_executable_in_path_dirs(cmd: &str, path_var: Option<&std::ffi::OsStr>) -> bool {
+    let Some(path_var) = path_var else {
+        return false;
+    };
+    std::env::split_paths(path_var).any(|dir| is_executable_file(&dir.join(cmd)))
+}
+
 /// Resolve a thumbnailer by absolute path, relative path, or `PATH` lookup.
 fn is_executable_or_in_path(cmd: &str) -> bool {
     let p = Path::new(cmd);
     if p.is_absolute() || cmd.contains('/') {
         return is_executable_file(p);
     }
-    if let Some(path_var) = std::env::var_os("PATH") {
-        for dir in std::env::split_paths(&path_var) {
-            if is_executable_file(&dir.join(cmd)) {
-                return true;
-            }
-        }
-    }
-    false
+    is_executable_in_path_dirs(cmd, std::env::var_os("PATH").as_deref())
 }
 
 /// Sort the MIME index, tie-breaking on spec index (discovery order) so the
@@ -1662,6 +1663,12 @@ mod tests {
         assert!(!is_executable_or_in_path(plain.to_str().unwrap()));
         assert!(is_executable_or_in_path(executable.to_str().unwrap()));
         assert!(!is_executable_or_in_path(dir.to_str().unwrap()));
+
+        // The same check applies to bare command names resolved through PATH.
+        let path = dir.as_os_str();
+        assert!(!is_executable_in_path_dirs("plain-thumbnailer", Some(path)));
+        assert!(is_executable_in_path_dirs("exec-thumbnailer", Some(path)));
+        assert!(!is_executable_in_path_dirs("exec-thumbnailer", None));
 
         let _ = fs::remove_dir_all(&dir);
     }

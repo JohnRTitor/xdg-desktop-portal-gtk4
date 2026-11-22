@@ -347,7 +347,7 @@ gdbus call \
 ```
 
 **`QueryEndResponse`**
-Asks the frontend whether the session should end.
+Acknowledges the frontend's answer to a Query End request for a monitor session. This backend never emits Query End, so known handles are accepted and unknown ones rejected.
 ```bash
 gdbus call \
   --session \
@@ -436,7 +436,7 @@ gdbus call \
 ```
 
 **`Print`**
-Submits a document without showing a dialog. Signature: `(handle, app_id, parent_window, title, fd: h, options) -> (response, results)`. The `fd` argument is a Unix file descriptor, which `gdbus call` cannot send; exercise this method through `xdg-desktop-portal` or a D-Bus client with FD-passing support.
+Submits a document using a token from `PreparePrint`; with token `0` the portal presents the print dialog itself before printing. Signature: `(handle, app_id, parent_window, title, fd: h, options) -> (response, results)`. The `fd` argument is a Unix file descriptor, which `gdbus call` cannot send; exercise this method through `xdg-desktop-portal` or a D-Bus client with FD-passing support.
 
 ---
 
@@ -547,9 +547,9 @@ gdbus call \
 ```
 
 **`SelectionWrite` / `SelectionWriteDone`**
-Transfers clipboard content into a caller-provided FD, then commits or aborts it. Both take a Unix FD or a completion flag and are normally driven by `xdg-desktop-portal`; `gdbus call` cannot send the `h` argument of `SelectionWrite`.
+`SelectionWrite` returns a Unix FD that the caller writes clipboard data into; `SelectionWriteDone` then commits or aborts the transfer. The `h` is the returned write end of a pipe created by the portal, not an input argument, so `gdbus call` cannot usefully consume it.
 
-Their signatures are `SelectionWrite(session, serial: u, fd: h)` and `SelectionWriteDone(session, serial: u, success: b)`.
+Their signatures are `SelectionWrite(session, serial: u) -> fd: h` and `SelectionWriteDone(session, serial: u, success: b)`. Drive these through `xdg-desktop-portal` or a D-Bus client with FD-passing support.
 
 #### Signal Monitoring
 ```bash
