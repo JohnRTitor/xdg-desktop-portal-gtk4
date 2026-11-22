@@ -41,7 +41,7 @@
 //!    allows the dialog to present dropdowns or checkboxes) are unpacked.
 //! 4. **GUI Interaction:** The portal packages the data into an `AccessUi` struct and dispatches
 //!    it to the GTK main thread using `UiProxy::run`.
-//! 5. **User Consent:** A modal `adw::MessageDialog` is presented to the user.
+//! 5. **User Consent:** A modal `CustomDialog` is presented to the user.
 //! 6. **Response Generation:**
 //!    - If the user clicks the grant button, the GTK thread gathers any selected options from the
 //!      `Choice` UI elements and returns them over a oneshot channel.
@@ -60,7 +60,7 @@
 //!
 //! A UI is mandatory for this portal.
 //! - **Thread Transition:** Execution moves to the GTK main thread via `UiProxy` to construct
-//!   the `adw::MessageDialog`.
+//!   the `CustomDialog`.
 //! - **Dynamic UI:** `gui.rs` dynamically constructs UI elements based on the `choices` array
 //!   provided in the D-Bus options.
 //! - **Confinement:** The dialog widget and its signal handlers remain confined to the GTK thread.

@@ -5,16 +5,11 @@ use {
     common::*,
     std::collections::HashMap,
     xdg_desktop_portal_gtk4::portals::print::dbus::Print,
-    zbus::{
-        connection::Builder,
-        proxy,
-        zvariant::{Fd, OwnedObjectPath, OwnedValue, Value},
-    },
+    zbus::{Fd, OwnedObjectPath, OwnedVariant, Variant, connection::Builder, proxy},
 };
 
 /// The impl portal returns `Response<T>`, serialized as `(u, a{sv})` — not a
-/// bare `u`. Declaring the wrong return type made the old test pass for the
-/// wrong reason (deserialization failed regardless of what the portal did).
+/// bare `u`. The proxy must declare that type for the reply to deserialize.
 #[proxy(
     interface = "org.freedesktop.impl.portal.Print",
     default_service = "org.freedesktop.impl.portal.desktop.gtk4",
@@ -27,10 +22,10 @@ trait PrintPortal {
         app_id: &str,
         parent_window: &str,
         title: &str,
-        settings: HashMap<&str, Value<'_>>,
-        page_setup: HashMap<&str, Value<'_>>,
-        options: HashMap<&str, Value<'_>>,
-    ) -> zbus::Result<(u32, HashMap<String, OwnedValue>)>;
+        settings: HashMap<&str, Variant<'_>>,
+        page_setup: HashMap<&str, Variant<'_>>,
+        options: HashMap<&str, Variant<'_>>,
+    ) -> zbus::Result<(u32, HashMap<String, OwnedVariant>)>;
 
     fn print(
         &self,
@@ -39,8 +34,8 @@ trait PrintPortal {
         parent_window: &str,
         title: &str,
         fd: Fd<'_>,
-        options: HashMap<&str, Value<'_>>,
-    ) -> zbus::Result<(u32, HashMap<String, OwnedValue>)>;
+        options: HashMap<&str, Variant<'_>>,
+    ) -> zbus::Result<(u32, HashMap<String, OwnedVariant>)>;
 }
 
 #[tokio::test]
@@ -51,13 +46,13 @@ async fn test_print_prepare_print_dummy_ui() -> Result<(), Box<dyn std::error::E
         10,
     );
     let proxy_ui = dummy_proxy();
-    let _conn = Builder::session()?
-        .serve_at("/org/freedesktop/portal/desktop", Print::new(&proxy_ui, sm))?
+    let _conn = Builder::session()
+        .serve_at("/org/freedesktop/portal/desktop", Print::new(&proxy_ui, sm))
         .build()
         .await?;
 
     let proxy = PrintPortalProxy::builder(&client_conn)
-        .destination(_conn.unique_name().unwrap().clone())?
+        .destination(_conn.unique_name().unwrap().clone())
         .build()
         .await?;
 
@@ -94,13 +89,13 @@ async fn test_print_single_call_dummy_ui() -> Result<(), Box<dyn std::error::Err
         10,
     );
     let proxy_ui = dummy_proxy();
-    let _conn = Builder::session()?
-        .serve_at("/org/freedesktop/portal/desktop", Print::new(&proxy_ui, sm))?
+    let _conn = Builder::session()
+        .serve_at("/org/freedesktop/portal/desktop", Print::new(&proxy_ui, sm))
         .build()
         .await?;
 
     let proxy = PrintPortalProxy::builder(&client_conn)
-        .destination(_conn.unique_name().unwrap().clone())?
+        .destination(_conn.unique_name().unwrap().clone())
         .build()
         .await?;
 

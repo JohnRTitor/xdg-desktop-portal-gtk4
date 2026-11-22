@@ -20,14 +20,14 @@ use {
 #[derive(Debug, thiserror::Error)]
 pub enum SessionError {
     #[error("Too many sessions for app {app_id}")]
-    LimitExceeded { app_id: String },
+    LimitExceeded { app_id: Box<str> },
 }
 
 type CancellableSender = Arc<Notify>;
 
 /// A request tracked against its app, kept alongside the sender's request list.
 struct TrackedRequest {
-    object_path: String,
+    object_path: Box<str>,
     app_id: Arc<str>,
     cancel: CancellableSender,
 }
@@ -39,7 +39,7 @@ pub(crate) struct SessionManagerState {
     /// Each request records its object path, the app ID, and a cancellation
     /// sender. This allows us to instantly notify the specific request task to
     /// abort when the sender disconnects.
-    sender_objects: HashMap<String, Vec<TrackedRequest>>,
+    sender_objects: HashMap<Box<str>, Vec<TrackedRequest>>,
 
     // Maps an application ID (e.g., "org.gnome.TextEditor") to the number of active sessions.
     // Used to enforce rate-limiting / spam prevention (max_sessions_per_app).
@@ -70,7 +70,6 @@ impl SessionManager {
         }
     }
 
-    /// Returns the underlying D-Bus connection.
     pub fn connection(&self) -> &Connection {
         &self.conn
     }
@@ -138,7 +137,7 @@ impl SessionManager {
         let (held, sender_is_empty) = match state.sender_objects.get_mut(sender) {
             Some(objects) => {
                 let before = objects.len();
-                objects.retain(|req| req.object_path != object_path);
+                objects.retain(|req| req.object_path.as_ref() != object_path);
                 (objects.len() != before, objects.is_empty())
             }
             None => (false, false),
@@ -209,6 +208,16 @@ fn register_tracked(
     object_path: &str,
     cancel: CancellableSender,
 ) -> Result<(), SessionError> {
+    // A zero limit must reject even the very first registration. Without this
+    // early check the `None` branch below would insert a count of 1: the
+    // budget check inside the `Some((key, count))` branch only sees apps that
+    // are already tracked, so a zero limit would be bypassed by every new app.
+    if max_sessions_per_app == 0 {
+        return Err(SessionError::LimitExceeded {
+            app_id: app_id.into(),
+        });
+    }
+
     // `Arc<str>: Borrow<str>`, so `get_key_value` finds an app that is already
     // counted without allocating. Only a genuinely new app pays for its key;
     // everything else is a refcount bump on the existing one.
@@ -275,11 +284,20 @@ impl SessionManagerState {
 mod tests {
     use {super::*, zbus::Connection};
 
+    /// Pins the owned-string result of using `Box<str>` for the object path.
+    /// On 64-bit: 16 bytes for the path, 16 for the `Arc<str>` app ID and 8 for
+    /// the thin `Arc<Notify>`; no padding is needed.
+    #[test]
+    #[cfg(target_pointer_width = "64")]
+    fn tracked_request_is_compact() {
+        assert_eq!(std::mem::size_of::<TrackedRequest>(), 40);
+    }
+
     #[tokio::test]
     async fn test_session_manager_register_unregister() {
         // NOTE: this test returns early without asserting anything when there is
         // no session bus, so it is green but vacuous outside `dbus-run-session`.
-        // `sweep_tests` above covers the counter bookkeeping without a bus.
+        // The `sweep_tests` below cover the counter bookkeeping without a bus.
         let conn_result = Connection::session().await;
         if conn_result.is_err() {
             println!("SKIPPED test_session_manager_register_unregister: no session bus");
@@ -304,21 +322,17 @@ mod tests {
                 .is_ok()
         );
 
-        // Third should fail due to limit
         let res = manager.register("app1", "sender2", "/path3", notify3);
         assert!(matches!(res, Err(SessionError::LimitExceeded { .. })));
 
-        // Unregister one
         manager.unregister("app1", "sender1", "/path1");
 
-        // Now registering should succeed
         assert!(
             manager
                 .register("app1", "sender2", "/path3", notify4)
                 .is_ok()
         );
 
-        // Unregister remaining
         manager.unregister("app1", "sender1", "/path2");
         manager.unregister("app1", "sender2", "/path3");
 
@@ -395,6 +409,36 @@ mod sweep_tests {
             state.app_sessions.get("app"),
             Some(&3),
             "an unrelated count must be untouched"
+        );
+    }
+
+    #[test]
+    fn zero_limit_rejects_every_registration_and_leaves_state_empty() {
+        let mut state = SessionManagerState::default();
+        for (sender, object_path) in [(":1", "/r1"), (":2", "/r2")] {
+            let result = register_tracked(
+                &mut state,
+                0,
+                "app",
+                sender,
+                object_path,
+                Arc::new(Notify::new()),
+            );
+            assert!(
+                matches!(
+                    result,
+                    Err(SessionError::LimitExceeded { ref app_id }) if app_id.as_ref() == "app"
+                ),
+                "a zero limit must reject even the first registration"
+            );
+        }
+        assert!(
+            state.sender_objects.is_empty(),
+            "a rejected request must not be tracked against its sender"
+        );
+        assert!(
+            state.app_sessions.is_empty(),
+            "a rejected request must not consume a budget slot"
         );
     }
 

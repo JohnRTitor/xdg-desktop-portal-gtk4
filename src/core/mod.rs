@@ -16,7 +16,8 @@
 //!
 //! - All `zbus` interfaces implemented in this crate must execute their methods
 //!   without blocking the Tokio worker threads.
-//! - The `Portal` struct is the anchor. Its destruction unregisters the D-Bus name.
+//! - The `Portal` struct owns a `Connection` handle. The D-Bus name is unregistered when the
+//!   last handle (including clones held by spawned tasks) drops at runtime teardown.
 //!
 use {
     crate::gui::UiProxy,
@@ -63,22 +64,24 @@ pub(crate) const DBUS_PATH: &str = "/org/freedesktop/portal/desktop";
 #[derive(Debug, Error)]
 pub enum PortalError {
     #[error("Could not connect to session bus")]
-    Connection(#[source] zbus::Error),
+    Connection(#[source] Box<zbus::Error>),
     #[error("Could not acquire name {}", NAME)]
-    AcquireName(#[source] zbus::Error),
+    AcquireName(#[source] Box<zbus::Error>),
     #[error("Could not add an interface")]
-    AddInterface(#[source] zbus::Error),
+    AddInterface(#[source] Box<zbus::Error>),
     #[error("Could create dbus proxy")]
-    CreateDbusProxy(#[source] zbus::Error),
+    CreateDbusProxy(#[source] Box<zbus::Error>),
     #[error("Could subscribe to name-lost events")]
-    SubscribeNameLost(#[source] zbus::Error),
+    SubscribeNameLost(#[source] Box<zbus::Error>),
 }
 
 /// The core portal state, holding the main D-Bus connection.
 ///
-/// This struct acts as the central anchor for the D-Bus lifecycle. When this is dropped,
-/// the underlying zbus `Connection` and `ObjectServer` are torn down, which unregisters
-/// our D-Bus name.
+/// This struct owns one handle to the underlying zbus `Connection`. The
+/// `SessionManager` and several portals keep clones in spawned tasks, so the
+/// D-Bus name is only unregistered when the last `Connection` handle drops as
+/// the Tokio runtime shuts down; dropping a `Portal` alone does not tear the
+/// connection down.
 pub struct Portal {
     _session: Connection,
 }
@@ -96,7 +99,7 @@ impl Portal {
     ) -> Result<Self, PortalError> {
         let session = Connection::session()
             .await
-            .map_err(PortalError::Connection)?;
+            .map_err(|e| PortalError::Connection(Box::new(e)))?;
 
         let session_manager =
             crate::core::session_manager::SessionManager::new(session.clone(), 10);
@@ -125,7 +128,7 @@ impl Portal {
                     .object_server()
                     .at(DBUS_PATH, $interface)
                     .await
-                    .map_err(PortalError::AddInterface)?;
+                    .map_err(|e| PortalError::AddInterface(Box::new(e)))?;
             };
         }
         #[cfg(feature = "file_chooser")]
@@ -161,10 +164,10 @@ impl Portal {
 
         let mut name_lost_iterator = zbus::fdo::DBusProxy::new(&session)
             .await
-            .map_err(PortalError::CreateDbusProxy)?
+            .map_err(|e| PortalError::CreateDbusProxy(Box::new(e)))?
             .receive_name_lost()
             .await
-            .map_err(PortalError::SubscribeNameLost)?;
+            .map_err(|e| PortalError::SubscribeNameLost(Box::new(e)))?;
 
         // Spawn a background task on Tokio to listen for name lost events.
         // If another process acquires our D-Bus name (e.g., another instance started with --replace),
@@ -178,17 +181,31 @@ impl Portal {
         });
 
         // Request the D-Bus name.
-        // `AllowReplacement` means another instance can steal the name from us if it specifies `ReplaceExisting`.
-        // `DoNotQueue` means we fail immediately if the name is already taken, instead of waiting in a queue.
-        let mut flags = RequestNameFlags::AllowReplacement | RequestNameFlags::DoNotQueue;
+        // `ALLOW_REPLACEMENT` means another instance can steal the name from us if it specifies `REPLACE_EXISTING`.
+        // `DO_NOT_QUEUE` means we fail immediately if the name is already taken, instead of waiting in a queue.
+        let mut flags = RequestNameFlags::ALLOW_REPLACEMENT | RequestNameFlags::DO_NOT_QUEUE;
         if replace {
-            flags |= RequestNameFlags::ReplaceExisting;
+            flags |= RequestNameFlags::REPLACE_EXISTING;
         }
         session
             .request_name_with_flags(NAME, flags)
             .await
-            .map_err(PortalError::AcquireName)?;
+            .map_err(|e| PortalError::AcquireName(Box::new(e)))?;
         tracing::info!("Portal ready on {NAME}");
         Ok(Self { _session: session })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Five variants holding only a thin `Box<zbus::Error>` still need an
+    /// explicit discriminant, since one non-null niche cannot encode five
+    /// states.
+    #[test]
+    #[cfg(target_pointer_width = "64")]
+    fn portal_error_boxes_the_source() {
+        assert_eq!(std::mem::size_of::<PortalError>(), 16);
     }
 }

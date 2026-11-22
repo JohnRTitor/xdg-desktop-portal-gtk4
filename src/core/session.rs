@@ -1,16 +1,15 @@
 //! D-Bus session implementation.
 //!
 //! A Session represents a long-lived interaction between the sandbox and the portal,
-//! typically used when the application needs continuous access to a resource (e.g.,
-//! screen casting, remote desktop).
+//! typically used when the application needs continuous access to a resource.
 
 use {std::sync::Arc, tokio::sync::Notify, zbus::interface};
 
 /// Represents a portal session on D-Bus.
 ///
-/// Sessions are used by stateful portals (like ScreenCast, RemoteDesktop, etc.)
-/// to manage ongoing interactions. The frontend can close the session, and the backend
-/// can also close it.
+/// Sessions are used by stateful portals (here: Inhibit) to manage ongoing
+/// interactions. The frontend can close the session, and the backend can also
+/// close it.
 ///
 /// # Ownership & Lifecycle
 ///
@@ -24,7 +23,6 @@ use {std::sync::Arc, tokio::sync::Notify, zbus::interface};
 /// If a session needs to clean up GTK resources when closed, it should use the `on_close`
 /// notifier to signal a Tokio task that manages the GTK counterpart.
 pub struct Session {
-    /// The session's object path.
     pub id: Box<str>,
     pub on_close: Option<Arc<Notify>>,
 }
@@ -72,10 +70,8 @@ impl Session {
     ///
     /// The wire name needs the explicit `name = "version"`: `#[zbus(property)]`
     /// otherwise derives it from the Rust fn name and capitalises it, exporting
-    /// `Version`. The frontend reads `version`. `Clipboard` and `Settings` both
-    /// shipped that drift before
-    /// `tests/introspection_test.rs::session_interface_matches_upstream_contract`
-    /// was written to catch it.
+    /// `Version`. The frontend reads `version`; the introspection contract test
+    /// checks the wire name for every portal.
     #[zbus(property, name = "version")]
     fn version(&self) -> u32 {
         1
@@ -107,7 +103,7 @@ mod tests {
     #[tokio::test]
     async fn test_session_close_no_channel() {
         let session = Session::new("test_session_id".into(), None);
-        session.close().await; // Should not panic
+        session.close().await;
     }
 
     /// Pins the returned value only.

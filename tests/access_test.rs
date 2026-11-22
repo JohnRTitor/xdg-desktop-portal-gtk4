@@ -5,11 +5,7 @@ use {
     common::*,
     std::collections::HashMap,
     xdg_desktop_portal_gtk4::portals::access::dbus::Access,
-    zbus::{
-        connection::Builder,
-        proxy,
-        zvariant::{OwnedObjectPath, Value},
-    },
+    zbus::{OwnedObjectPath, Variant, connection::Builder, proxy},
 };
 
 #[proxy(
@@ -26,7 +22,7 @@ trait Access {
         title: &str,
         subtitle: &str,
         body: &str,
-        options: HashMap<&str, Value<'_>>,
+        options: HashMap<&str, Variant<'_>>,
     ) -> zbus::Result<u32>;
 }
 
@@ -38,16 +34,16 @@ async fn test_access_dialog_dummy_ui() -> Result<(), Box<dyn std::error::Error>>
         10,
     );
     let proxy_ui = dummy_proxy();
-    let _conn = Builder::session()?
+    let _conn = Builder::session()
         .serve_at(
             "/org/freedesktop/portal/desktop",
             Access::new(&proxy_ui, sm),
-        )?
+        )
         .build()
         .await?;
 
     let proxy = AccessProxy::builder(&client_conn)
-        .destination(_conn.unique_name().unwrap().clone())?
+        .destination(_conn.unique_name().unwrap().clone())
         .build()
         .await?;
 

@@ -30,10 +30,8 @@ use {
         oneshot::{Sender, channel},
     },
     zbus::{
-        Connection, fdo, interface,
-        message::Header,
+        Connection, Fd, ObjectPath, Variant, fdo, interface, message::Header,
         object_server::SignalEmitter,
-        zvariant::{Fd, ObjectPath, Value},
     },
 };
 
@@ -89,35 +87,42 @@ fn forget_session(session: &str) -> bool {
 
 /// Builds the `SelectionOwnerChanged` options dict.
 ///
-/// Shared by the host-change broadcast and by `RequestClipboard`, which used to
-/// carry two copies of this. The payload depends only on the advertised mime
-/// types, so a caller fanning out to several sessions must build it once and
-/// clone the map rather than rebuilding it per session.
-fn owner_changed_options<'a>(mimes: &'a gtk_backend::MimeList) -> HashMap<&'static str, Value<'a>> {
+/// Shared by the host-change broadcast and by `RequestClipboard`. The payload
+/// depends only on the advertised mime types, so a caller fanning out to several
+/// sessions must build it once and clone the map rather than rebuilding it.
+fn owner_changed_options<'a>(
+    mimes: &'a gtk_backend::MimeList,
+) -> HashMap<&'static str, Variant<'a>> {
     let mut options = HashMap::new();
-    // `Box<str>` has no `zvariant` `Type` impl, so the array is built from
-    // borrowed `&str`s pointing into the list rather than from owned copies.
+    // `Box<str>` *does* implement zbus `Type`. The problem is the conversion:
+    // building an array from `Vec<T>` requires `T: Type + Into<Variant>`, and
+    // `Box<str>` has no `Into<Variant>` impl (unlike `&str`). So the array is
+    // built from borrowed `&str`s pointing into the list, not owned copies.
     options.insert(
         "mime_types",
-        Value::from(mimes.iter().map(|m| m.as_ref()).collect::<Vec<&str>>()),
+        Variant::from(mimes.iter().map(|m| m.as_ref()).collect::<Vec<&str>>()),
     );
-    options.insert("session_is_owner", Value::from(false));
+    options.insert("session_is_owner", Variant::from(false));
     options
 }
 
 /// Extracts the advertised mime types from a `SetSelection` options dict.
 ///
 /// The inverse of [`owner_changed_options`]'s mime encoding.
-fn parse_mime_types(options: &HashMap<&str, Value<'_>>) -> gtk_backend::MimeList {
-    let mut mimes = gtk_backend::MimeList::new();
-    if let Some(Value::Array(arr)) = options.get("mime_types") {
+fn parse_mime_types(options: &HashMap<&str, Variant<'_>>) -> gtk_backend::MimeList {
+    if let Some(Variant::Array(arr)) = options.get("mime_types") {
+        // At most one mime type per array element, so the array length is a
+        // safe upper bound and the buffer never needs to grow.
+        let mut mimes = gtk_backend::MimeList::with_capacity(arr.len());
         for i in 0..arr.len() {
-            if let Ok(Some(Value::Str(s))) = arr.get::<Value<'_>>(i) {
+            if let Ok(Some(Variant::Str(s))) = arr.get::<Variant<'_>>(i) {
                 mimes.push(s.as_str().into());
             }
         }
+        mimes
+    } else {
+        gtk_backend::MimeList::new()
     }
-    mimes
 }
 
 /// Number of live serial counters. Used by the tests to assert on growth.
@@ -206,7 +211,7 @@ impl ClipboardPortal {
 
                 let sessions = sessions_clone.lock().clone();
                 for session in sessions {
-                    let per_session: HashMap<&str, &Value<'_>> =
+                    let per_session: HashMap<&str, &Variant<'_>> =
                         options.iter().map(|(k, v)| (*k, v)).collect();
                     let _ = Self::selection_owner_changed(&emitter, &session, per_session).await;
                 }
@@ -272,7 +277,7 @@ impl ClipboardPortal {
         &self,
         #[zbus(header)] header: Header<'_>,
         session_handle: ObjectPath<'_>,
-        _options: HashMap<&str, Value<'_>>,
+        _options: HashMap<&str, Variant<'_>>,
     ) -> fdo::Result<()> {
         let sender = header
             .sender()
@@ -363,7 +368,7 @@ impl ClipboardPortal {
                 session_handle_owned,
                 options.get("mime_types")
             );
-            let per_session: HashMap<&str, &Value<'_>> =
+            let per_session: HashMap<&str, &Variant<'_>> =
                 options.iter().map(|(k, v)| (*k, v)).collect();
             if let Err(e) =
                 Self::selection_owner_changed(&emitter, &session_handle_owned, per_session).await
@@ -381,7 +386,7 @@ impl ClipboardPortal {
     async fn set_selection(
         &self,
         session_handle: ObjectPath<'_>,
-        options: HashMap<&str, Value<'_>>,
+        options: HashMap<&str, Variant<'_>>,
     ) -> fdo::Result<()> {
         // Same session check as the three read-side methods above, and for the
         // same reason: without it, any app that holds *any* clipboard session
@@ -480,13 +485,10 @@ impl ClipboardPortal {
         let (read_fd, write_fd) = rustix::pipe::pipe()
             .map_err(|e| fdo::Error::Failed(format!("Failed to create pipe: {}", e)))?;
 
-        // Send the read end to the backend provider
         if transfer.fd_sender.send(read_fd).is_err() {
             return Err(fdo::Error::Failed("Backend is no longer listening".into()));
         }
 
-        // Return the write end to the DBus caller so they can stream data directly
-        // to the GTK backend via the pipe.
         Ok(Fd::from(write_fd))
     }
 
@@ -528,7 +530,7 @@ impl ClipboardPortal {
     async fn selection_owner_changed(
         ctxt: &SignalEmitter<'_>,
         session_handle: &ObjectPath<'_>,
-        options: HashMap<&str, &Value<'_>>,
+        options: HashMap<&str, &Variant<'_>>,
     ) -> zbus::Result<()>;
 
     #[zbus(signal)]
@@ -620,9 +622,7 @@ mod tests {
     /// The four session-scoped methods must all reject a handle that never went
     /// through `RequestClipboard`.
     ///
-    /// Regression: `SetSelection` was the only one that did not check. The other
-    /// three already rejected a foreign handle, but `SetSelection` accepted any
-    /// `ObjectPath` at all, so an app holding one clipboard session could name
+    /// Without this check an app holding one clipboard session could name
     /// another app's session and take the host clipboard on its behalf, getting
     /// `SelectionTransfer` signals emitted under a session it does not own. The
     /// portal contract is explicit: "May only be called if clipboard access was
@@ -791,9 +791,8 @@ mod serial_tests {
         assert!(!forget_session(s), "removal is idempotent");
     }
 
-    /// The regression this guards: `next_serial` used to build an owned key for
-    /// `HashMap::entry`, so every clipboard request allocated a session `Arc`
-    /// even when the session already had a counter.
+    /// A warm counter lookup must borrow the session key rather than build an
+    /// owned one for `HashMap::entry`.
     #[test]
     fn a_warm_counter_lookup_does_not_allocate() {
         let _guard = SerialTestGuard::new(&["/test/clipboard/serials/warm"]);
@@ -870,11 +869,9 @@ mod liveness_tests {
         assert!(session_is_active(&live, MINE));
     }
 
-    /// The regression this guards: the `SetSelection` transfer loop outlives
-    /// the call that created it, and a client disconnect removes the session
-    /// from `active_sessions`. Without this check the loop kept broadcasting
-    /// `SelectionTransfer` for a session nobody could answer, disclosing its
-    /// advertised mime types to every other clipboard client on the bus.
+    /// The `SetSelection` transfer loop outlives the call that created it, while
+    /// a disconnect removes the session from `active_sessions`. A stale loop
+    /// must not keep broadcasting `SelectionTransfer` and disclosing mime types.
     #[test]
     fn a_session_removed_by_disconnect_is_not_active() {
         let mut live = sessions(&[MINE]);
@@ -941,43 +938,46 @@ mod payload_tests {
         values.iter().map(|v| (*v).into()).collect()
     }
 
-    /// The `SelectionOwnerChanged` payload is what every clipboard client reads,
-    /// and it is now built in one shared place rather than duplicated per caller.
+    /// The `SelectionOwnerChanged` payload is what every clipboard client reads;
+    /// all callers build it through the same helper.
     #[test]
     fn owner_changed_payload_shape() {
         let list = mimes(&["text/plain", "image/png"]);
         let options = owner_changed_options(&list);
 
         assert_eq!(options.len(), 2, "exactly the two contract keys");
-        assert_eq!(options.get("session_is_owner"), Some(&Value::from(false)));
+        assert_eq!(options.get("session_is_owner"), Some(&Variant::from(false)));
 
-        let Some(Value::Array(array)) = options.get("mime_types") else {
+        let Some(Variant::Array(array)) = options.get("mime_types") else {
             panic!("mime_types must be an array");
         };
         assert_eq!(array.len(), 2);
         assert_eq!(
             array.get(0).ok().flatten(),
-            Some(&Value::from("text/plain"))
+            Some(&Variant::from("text/plain"))
         );
-        assert_eq!(array.get(1).ok().flatten(), Some(&Value::from("image/png")));
+        assert_eq!(
+            array.get(1).ok().flatten(),
+            Some(&Variant::from("image/png"))
+        );
     }
 
     #[test]
     fn mime_order_is_preserved() {
         let list = mimes(&["z/last", "a/first"]);
         let options = owner_changed_options(&list);
-        let Some(Value::Array(array)) = options.get("mime_types") else {
+        let Some(Variant::Array(array)) = options.get("mime_types") else {
             panic!("mime_types must be an array");
         };
-        assert_eq!(array.get(0).ok().flatten(), Some(&Value::from("z/last")));
-        assert_eq!(array.get(1).ok().flatten(), Some(&Value::from("a/first")));
+        assert_eq!(array.get(0).ok().flatten(), Some(&Variant::from("z/last")));
+        assert_eq!(array.get(1).ok().flatten(), Some(&Variant::from("a/first")));
     }
 
     #[test]
     fn empty_mime_list_still_produces_an_array() {
         let list = gtk_backend::MimeList::new();
         let options = owner_changed_options(&list);
-        assert!(matches!(options.get("mime_types"), Some(Value::Array(a)) if a.is_empty()));
+        assert!(matches!(options.get("mime_types"), Some(Variant::Array(a)) if a.is_empty()));
     }
 
     #[test]
@@ -989,22 +989,22 @@ mod payload_tests {
 
     #[test]
     fn parsing_a_missing_or_wrongly_typed_key_yields_an_empty_list() {
-        let empty: HashMap<&str, Value<'_>> = HashMap::new();
+        let empty: HashMap<&str, Variant<'_>> = HashMap::new();
         assert!(parse_mime_types(&empty).is_empty());
 
-        let wrong_type: HashMap<&str, Value<'_>> =
-            HashMap::from([("mime_types", Value::from("text/plain"))]);
+        let wrong_type: HashMap<&str, Variant<'_>> =
+            HashMap::from([("mime_types", Variant::from("text/plain"))]);
         assert!(parse_mime_types(&wrong_type).is_empty());
     }
 
     #[test]
     fn parsing_skips_non_string_elements() {
-        let mixed = Value::from(vec![
-            Value::from("text/plain"),
-            Value::from(42u32),
-            Value::from("image/png"),
+        let mixed = Variant::from(vec![
+            Variant::from("text/plain"),
+            Variant::from(42u32),
+            Variant::from("image/png"),
         ]);
-        let options: HashMap<&str, Value<'_>> = HashMap::from([("mime_types", mixed)]);
+        let options: HashMap<&str, Variant<'_>> = HashMap::from([("mime_types", mixed)]);
         let parsed = parse_mime_types(&options);
         assert_eq!(parsed, mimes(&["text/plain", "image/png"]));
     }

@@ -8,14 +8,13 @@ use {
     std::{collections::HashMap, sync::Arc},
     tokio::sync::mpsc::{Sender, channel},
     zbus::{
-        ObjectServer, fdo, interface,
+        DeserializeDict, ObjectServer, OwnedObjectPath, SerializeDict, Type, fdo, interface,
         message::Header,
-        zvariant::{DeserializeDict, OwnedObjectPath, SerializeDict, Type},
     },
 };
 
 #[derive(DeserializeDict, Type, Debug)]
-#[zvariant(signature = "dict")]
+#[zbus(signature = "dict")]
 #[allow(dead_code)]
 pub struct ChooseApplicationOptions {
     #[allow(dead_code)]
@@ -28,7 +27,7 @@ pub struct ChooseApplicationOptions {
 }
 
 #[derive(SerializeDict, Type, Debug, Default)]
-#[zvariant(signature = "dict")]
+#[zbus(signature = "dict")]
 pub struct ChooseApplicationResults {
     choice: Option<String>,
     activation_token: Option<String>,
@@ -94,10 +93,8 @@ impl AppChooser {
 
         let (update_sender, update_receiver) = channel(CHANNEL_BUFFER_SIZE);
 
-        // The map key and the guard each need their own owned handle, but the
-        // function parameter itself is dead after this point: it was previously
-        // cloned twice and then dropped unused, costing a third `String`
-        // allocation per request.
+        // The map key and the guard each need an owned handle: clone one for the
+        // guard and move the parameter into the map, so no third handle exists.
         let _guard = ActiveDialogGuard {
             active_dialogs: self.active_dialogs.clone(),
             handle: handle.clone(),
@@ -152,15 +149,18 @@ impl AppChooser {
         options: ChooseApplicationOptions,
         #[zbus(object_server)] server: &ObjectServer,
     ) -> Result<Response<ChooseApplicationResults>, fdo::Error> {
+        // `Header::sender()` borrows from the message, which outlives this
+        // method, so hand the borrowed `&str` straight to `run_request` instead
+        // of allocating a `String` for it.
         let sender = header
             .sender()
-            .map(|s| String::from(s.as_str()))
-            .ok_or_else(|| fdo::Error::Failed("Missing sender".into()))?;
+            .ok_or_else(|| fdo::Error::Failed("Missing sender".into()))?
+            .as_str();
         Ok(run_request(
             server,
             self.session_manager.clone(),
             &app_id,
-            &sender,
+            sender,
             handle.clone(),
             self.choose_application_impl(handle, app_id.clone(), parent_window, choices, options),
         )
@@ -210,7 +210,7 @@ mod tests {
         super::*,
         gtk4::glib::MainContext,
         tokio::sync::mpsc::unbounded_channel,
-        zbus::{Connection, zvariant::Type},
+        zbus::{Connection, Type},
     };
 
     #[test]
@@ -281,15 +281,18 @@ mod tests {
     fn test_choose_application_options_deserialize() {
         use {
             std::collections::HashMap,
-            zbus::zvariant::{self, Endian, Value, serialized::Context},
+            zbus::{
+                Variant,
+                wire::{self, Endian, serialized::Context},
+            },
         };
 
         let mut dict = HashMap::new();
-        dict.insert("modal", Value::from(true));
-        dict.insert("uri", Value::from("file:///tmp/test.txt"));
+        dict.insert("modal", Variant::from(true));
+        dict.insert("uri", Variant::from("file:///tmp/test.txt"));
 
-        let ctxt = Context::new_dbus(Endian::Little, 0);
-        let encoded = zvariant::to_bytes(ctxt, &dict).unwrap();
+        let ctxt = Context::new(Endian::Little, 0);
+        let encoded = wire::to_bytes(ctxt, &dict).unwrap();
         let options: ChooseApplicationOptions = encoded.deserialize().unwrap().0;
 
         assert_eq!(options.modal, Some(true));
@@ -300,7 +303,10 @@ mod tests {
     fn test_choose_application_results_serialize() {
         use {
             std::collections::HashMap,
-            zbus::zvariant::{self, Endian, Value, serialized::Context},
+            zbus::{
+                Variant,
+                wire::{self, Endian, serialized::Context},
+            },
         };
 
         let results = ChooseApplicationResults {
@@ -308,13 +314,13 @@ mod tests {
             activation_token: Some("token123".into()),
         };
 
-        let ctxt = Context::new_dbus(Endian::Little, 0);
-        let encoded = zvariant::to_bytes(ctxt, &results).unwrap();
-        let decoded: HashMap<String, Value> = encoded.deserialize().unwrap().0;
+        let ctxt = Context::new(Endian::Little, 0);
+        let encoded = wire::to_bytes(ctxt, &results).unwrap();
+        let decoded: HashMap<String, Variant> = encoded.deserialize().unwrap().0;
 
         assert_eq!(
             decoded.get("choice").unwrap().try_clone().unwrap(),
-            Value::from("app.desktop")
+            Variant::from("app.desktop")
         );
         assert_eq!(
             decoded
@@ -322,7 +328,7 @@ mod tests {
                 .unwrap()
                 .try_clone()
                 .unwrap(),
-            Value::from("token123")
+            Variant::from("token123")
         );
     }
 }

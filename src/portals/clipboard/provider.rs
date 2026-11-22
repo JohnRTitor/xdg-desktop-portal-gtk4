@@ -52,7 +52,7 @@ mod imp {
             let mime_type: Box<str> = mime_type.into();
             let out_stream = stream.clone();
 
-            // We clone the sender so we can use it in the future
+            // The future needs an owned sender, while the provider keeps its own.
             let request_tx = self.request_tx.borrow().clone();
 
             Box::pin(async move {
@@ -63,10 +63,8 @@ mod imp {
                     ));
                 };
 
-                // Create a channel for receiving the file descriptor
                 let (fd_tx, fd_rx) = channel();
 
-                // Send the request for a file descriptor
                 if tx.send((mime_type, fd_tx)).await.is_err() {
                     return Err(glib::Error::new(
                         gio::IOErrorEnum::Failed,
@@ -74,7 +72,6 @@ mod imp {
                     ));
                 }
 
-                // Wait for the file descriptor
                 let fd = fd_rx.await.map_err(|_| {
                     glib::Error::new(
                         gio::IOErrorEnum::Failed,
@@ -82,11 +79,9 @@ mod imp {
                     )
                 })?;
 
-                // Wrap the file descriptor in a File and then an InputStream
                 let file = std::fs::File::from(fd);
                 let in_stream = gio::ReadInputStream::new(file);
 
-                // Asynchronously copy data from the provider to our output stream
                 use gio::prelude::*;
                 out_stream
                     .splice_future(

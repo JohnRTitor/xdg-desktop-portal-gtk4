@@ -6,7 +6,6 @@ pub enum WindowIdentifier {
 }
 
 impl WindowIdentifier {
-    /// Parses a window handle string provided by xdg-desktop-portal.
     pub fn parse(handle: &str) -> Option<Self> {
         if let Some(wayland_handle) = handle.strip_prefix("wayland:") {
             if !wayland_handle.is_empty() {

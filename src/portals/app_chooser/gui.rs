@@ -234,12 +234,10 @@ enum AppSource {
 /// some, only those may be offered. Otherwise prefer the recommendation, and fall
 /// back to every installed application.
 fn choose_source(choices: &[String], has_recommendation: bool) -> AppSource {
-    if !choices.is_empty() {
-        AppSource::All
-    } else if has_recommendation {
-        AppSource::Recommended
-    } else {
-        AppSource::All
+    match (choices.is_empty(), has_recommendation) {
+        (false, _) => AppSource::All,
+        (true, true) => AppSource::Recommended,
+        (true, false) => AppSource::All,
     }
 }
 
@@ -249,7 +247,6 @@ fn populate_list_box(
     all_apps: &[AppInfo],
     recommended_apps: &[AppInfo],
 ) {
-    // Clear existing children
     while let Some(child) = list_box.first_child() {
         list_box.remove(&child);
     }
@@ -417,8 +414,8 @@ mod tests {
     #[test]
     fn duplicates_are_collapsed_even_when_names_interleave() {
         // Two rows share a desktop-file id but carry different names, and a third
-        // row sorts strictly between them. A name-first sort leaves the duplicates
-        // non-adjacent, so `dedup_by` never compares them and keeps both.
+        // row sorts strictly between them. The duplicate id must still collapse:
+        // selection deduplicates by id in the filter pass, not by adjacency.
         //
         // GIO does not currently produce this (the same `.desktop` file reports the
         // same display name, which sorts the duplicates together), so this is a
@@ -441,9 +438,8 @@ mod tests {
 
     #[test]
     fn distinct_ids_with_the_same_name_are_both_kept_in_enumeration_order() {
-        // `sort_by` is stable and the tie-break is the original index, so equal
-        // display names keep `AppInfo::all()`'s order -- which is what the
-        // previous single `sort_by_key` produced.
+        // `sort_unstable_by` is deterministic here because the original index is
+        // the tie-break, so equal display names keep `AppInfo::all()`'s order.
         let rows = entries(&[("a.desktop", "Terminal"), ("b.desktop", "Terminal")]);
         assert_eq!(
             ids(&rows, &select_rows(&rows, &[])),
@@ -514,10 +510,9 @@ mod source_tests {
 mod row_tests {
     use super::*;
 
-    /// The regression this guards: `AppInfo::id()` and `AppInfo::name()` return
-    /// an owned `GString`, and calling `.to_string()` on it allocated a second
-    /// copy of the same text -- once per field, per row, on every dialog open
-    /// and every `UpdateChoices`.
+    /// `AppInfo::id()` and `AppInfo::name()` return an owned `GString`, so
+    /// calling `.to_string()` on it would allocate a second copy of the same
+    /// text once per field, per row, on every dialog open and `UpdateChoices`.
     ///
     /// Measured on an already-owned `GString`, which is what GIO hands back, so
     /// the number cannot be an artefact of constructing one from a literal:

@@ -65,7 +65,7 @@ pub fn setup_window<W: IsA<gtk4::Window> + IsA<Widget>>(
                 // XWayland Fallback:
                 // If the portal is on Wayland, but the client is XWayland (x11 handle),
                 // we open an X11 display explicitly so the dialog runs as an XWayland client,
-                // allowing us to properly use XSetTransientForHint.
+                // so the transient-for hint can be set through GDK's X11 backend.
                 thread_local! {
                     static X11_FALLBACK_DISPLAY: std::cell::RefCell<Option<X11Display>> = const { std::cell::RefCell::new(None) };
                 }

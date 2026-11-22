@@ -12,9 +12,8 @@ use {
     std::{ffi::CString, path::Path},
     thiserror::Error,
     zbus::{
-        ObjectServer, fdo, interface,
+        DeserializeDict, ObjectServer, OwnedObjectPath, SerializeDict, Type, fdo, interface,
         message::Header,
-        zvariant::{DeserializeDict, OwnedObjectPath, SerializeDict, Type},
     },
 };
 
@@ -45,7 +44,7 @@ type Choice = (String, String, Vec<(String, String)>, String);
 type FileFilter = (String, Vec<(u32, String)>);
 
 #[derive(Type, Debug, Default, PartialEq)]
-#[zvariant(signature = "ay")]
+#[zbus(signature = "ay")]
 struct FilePath(String);
 
 impl<'de> Deserialize<'de> for FilePath {
@@ -56,14 +55,18 @@ impl<'de> Deserialize<'de> for FilePath {
         let bytes = <Vec<u8>>::deserialize(deserializer)?;
         let c_string = CString::from_vec_with_nul(bytes)
             .map_err(|_| serde::de::Error::custom("Bytes are not nul-terminated"))?;
-        Ok(Self(
-            String::from_utf8_lossy(&c_string.into_bytes()).into_owned(),
-        ))
+        // Valid UTF-8 is the common case: `String::from_utf8` reuses the byte
+        // buffer with no second allocation. Only pay for the lossy replacement
+        // path when the bytes genuinely are not valid UTF-8.
+        Ok(Self(match String::from_utf8(c_string.into_bytes()) {
+            Ok(s) => s,
+            Err(e) => String::from_utf8_lossy(e.as_bytes()).into_owned(),
+        }))
     }
 }
 
 #[derive(DeserializeDict, Type, Debug, Default)]
-#[zvariant(signature = "dict")]
+#[zbus(signature = "dict")]
 struct OpenFileOptions {
     accept_label: Option<String>,
     modal: Option<bool>,
@@ -77,7 +80,7 @@ struct OpenFileOptions {
 }
 
 #[derive(DeserializeDict, Type, Debug, Default)]
-#[zvariant(signature = "dict")]
+#[zbus(signature = "dict")]
 struct SaveFileOptions {
     accept_label: Option<String>,
     modal: Option<bool>,
@@ -86,13 +89,13 @@ struct SaveFileOptions {
     choices: Option<Vec<Choice>>,
     current_name: Option<String>,
     current_folder: Option<FilePath>,
-    #[zvariant(rename = "current_file")]
+    #[zbus(rename = "current_file")]
     current_file: Option<FilePath>,
     pub activation_token: Option<String>,
 }
 
 #[derive(DeserializeDict, Type, Debug, Default)]
-#[zvariant(signature = "dict")]
+#[zbus(signature = "dict")]
 struct SaveFilesOptions {
     accept_label: Option<String>,
     modal: Option<bool>,
@@ -103,7 +106,7 @@ struct SaveFilesOptions {
 }
 
 #[derive(SerializeDict, Type, Debug, Default)]
-#[zvariant(signature = "dict")]
+#[zbus(signature = "dict")]
 struct OpenFileResults {
     uris: Option<Vec<String>>,
     choices: Option<Vec<(String, String)>>,
@@ -112,7 +115,7 @@ struct OpenFileResults {
 }
 
 #[derive(SerializeDict, Type, Debug, Default)]
-#[zvariant(signature = "dict")]
+#[zbus(signature = "dict")]
 struct SaveFileResults {
     uris: Option<Vec<String>>,
     choices: Option<Vec<(String, String)>>,
@@ -120,7 +123,7 @@ struct SaveFileResults {
 }
 
 #[derive(SerializeDict, Type, Debug, Default)]
-#[zvariant(signature = "dict")]
+#[zbus(signature = "dict")]
 struct SaveFilesResults {
     uris: Option<Vec<String>>,
     choices: Option<Vec<(String, String)>>,
@@ -166,7 +169,7 @@ impl FileChooser {
             choices: options.choices.map(map_choices),
             save: false,
             parent_window,
-            activation_token: options.activation_token.clone(),
+            activation_token: options.activation_token,
             app_id,
         }
         .run(&self.proxy)
@@ -210,7 +213,7 @@ impl FileChooser {
             choices: options.choices.map(map_choices),
             save: true,
             parent_window,
-            activation_token: options.activation_token.clone(),
+            activation_token: options.activation_token,
             app_id,
         }
         .run(&self.proxy)
@@ -279,7 +282,7 @@ impl FileChooser {
             choices: options.choices.map(map_choices),
             save: true,
             parent_window,
-            activation_token: options.activation_token.clone(),
+            activation_token: options.activation_token,
             app_id,
         }
         .run(&self.proxy)
@@ -298,6 +301,9 @@ impl FileChooser {
         for file in files {
             let mut path = base.join(&file.0);
             if path.exists() {
+                // These must stay owned: `set_file_name` below mutates `path`
+                // while `stem`/`ext` are still live, so a `Cow` borrowing from
+                // `path` (what `to_string_lossy` would give) cannot be held here.
                 let stem = path
                     .file_stem()
                     .unwrap_or_default()
@@ -372,15 +378,17 @@ impl FileChooser {
         options: OpenFileOptions,
         #[zbus(object_server)] server: &ObjectServer,
     ) -> Result<Response<OpenFileResults>, fdo::Error> {
+        // `sender()` borrows from `header`, which lives for the whole method.
+        // `run_request` copies it into owned storage before spawning work, so
+        // pass the borrow through instead of allocating an owned copy.
         let sender = header
             .sender()
-            .map(|s| String::from(s.as_str()))
             .ok_or_else(|| fdo::Error::Failed("Missing sender".into()))?;
         Ok(run_request(
             server,
             self.session_manager.clone(),
             &app_id,
-            &sender,
+            sender.as_str(),
             handle,
             self.open_file_impl(app_id.clone(), parent_window, title, options),
         )
@@ -399,15 +407,16 @@ impl FileChooser {
         options: SaveFileOptions,
         #[zbus(object_server)] server: &ObjectServer,
     ) -> Result<Response<SaveFileResults>, fdo::Error> {
+        // As in `open_file`, pass the borrowed sender through: `run_request`
+        // copies it into owned storage before spawning work.
         let sender = header
             .sender()
-            .map(|s| String::from(s.as_str()))
             .ok_or_else(|| fdo::Error::Failed("Missing sender".into()))?;
         Ok(run_request(
             server,
             self.session_manager.clone(),
             &app_id,
-            &sender,
+            sender.as_str(),
             handle,
             self.save_file_impl(app_id.clone(), parent_window, title, options),
         )
@@ -426,15 +435,16 @@ impl FileChooser {
         options: SaveFilesOptions,
         #[zbus(object_server)] server: &ObjectServer,
     ) -> Result<Response<SaveFilesResults>, fdo::Error> {
+        // As in `open_file`, pass the borrowed sender through: `run_request`
+        // copies it into owned storage before spawning work.
         let sender = header
             .sender()
-            .map(|s| String::from(s.as_str()))
             .ok_or_else(|| fdo::Error::Failed("Missing sender".into()))?;
         Ok(run_request(
             server,
             self.session_manager.clone(),
             &app_id,
-            &sender,
+            sender.as_str(),
             handle,
             self.save_files_impl(app_id.clone(), parent_window, title, options),
         )
@@ -443,35 +453,33 @@ impl FileChooser {
 }
 
 fn map_filters(f: Vec<FileFilter>) -> Vec<Filter> {
-    f.into_iter().map(map_filter).collect()
+    let mut out = Vec::with_capacity(f.len());
+    out.extend(f.into_iter().map(map_filter));
+    out
 }
 
 fn map_filter(f: FileFilter) -> Filter {
+    // `flat_map` drops unknown kinds, so the input length is an upper bound;
+    // reserve it once instead of letting the `Vec` grow on each appended element.
+    let mut elements = Vec::with_capacity(f.1.len());
+    elements.extend(f.1.into_iter().flat_map(|(kind, value)| match kind {
+        0 => Some(FilterKind::Glob(value)),
+        1 => Some(FilterKind::Mime(value)),
+        _ => None,
+    }));
     Filter {
         name: f.0,
-        elements: f
-            .1
-            .into_iter()
-            .flat_map(|(kind, value)| match kind {
-                0 => Some(FilterKind::Glob(value)),
-                1 => Some(FilterKind::Mime(value)),
-                _ => None,
-            })
-            .collect(),
+        elements,
     }
 }
 
 fn unmap_filter(f: Filter) -> FileFilter {
-    (
-        f.name,
-        f.elements
-            .into_iter()
-            .map(|f| match f {
-                FilterKind::Glob(v) => (0, v),
-                FilterKind::Mime(v) => (1, v),
-            })
-            .collect(),
-    )
+    let mut elements = Vec::with_capacity(f.elements.len());
+    elements.extend(f.elements.into_iter().map(|f| match f {
+        FilterKind::Glob(v) => (0, v),
+        FilterKind::Mime(v) => (1, v),
+    }));
+    (f.name, elements)
 }
 
 fn map_cstr(f: FilePath) -> String {
@@ -479,27 +487,29 @@ fn map_cstr(f: FilePath) -> String {
 }
 
 fn map_choices(c: Vec<Choice>) -> Vec<file_chooser::Choice> {
-    c.into_iter().map(map_choice).collect()
+    let mut out = Vec::with_capacity(c.len());
+    out.extend(c.into_iter().map(map_choice));
+    out
 }
 
 fn map_choice(c: Choice) -> file_chooser::Choice {
+    let mut variants = Vec::with_capacity(c.2.len());
+    variants.extend(c.2.into_iter().map(|c| ChoiceVariant {
+        id: c.0,
+        label: c.1,
+    }));
     file_chooser::Choice {
         id: c.0,
         label: c.1,
         default: c.3,
-        variants: c
-            .2
-            .into_iter()
-            .map(|c| ChoiceVariant {
-                id: c.0,
-                label: c.1,
-            })
-            .collect(),
+        variants,
     }
 }
 
 fn map_final_choices(c: Vec<FinalChoice>) -> Vec<(String, String)> {
-    c.into_iter().map(map_final_choice).collect()
+    let mut out = Vec::with_capacity(c.len());
+    out.extend(c.into_iter().map(map_final_choice));
+    out
 }
 
 fn map_final_choice(c: FinalChoice) -> (String, String) {
@@ -512,8 +522,19 @@ mod tests {
         super::*,
         gtk4::glib::MainContext,
         tokio::sync::mpsc::unbounded_channel,
-        zbus::{Connection, zvariant::Type},
+        zbus::{Connection, Type},
     };
+
+    /// Six fieldless variants plus `Ui(UiError)`. `UiError` is a 1-byte enum
+    /// with spare discriminant values, which the compiler uses as a niche to
+    /// tag the outer enum, so the whole thing packs into a single byte. Pin it
+    /// so an accidental widening (a pointer-bearing variant, a `#[repr]` change)
+    /// is caught rather than silently growing every `Response` path.
+    #[test]
+    #[cfg(target_pointer_width = "64")]
+    fn save_files_error_is_one_byte() {
+        assert_eq!(std::mem::size_of::<SaveFilesError>(), 1);
+    }
 
     #[test]
     fn test_map_filter_glob() {
@@ -574,6 +595,67 @@ mod tests {
     fn test_map_cstr() {
         let path = FilePath("hello".into());
         assert_eq!(map_cstr(path), "hello");
+    }
+
+    /// The fast path must reuse the decoded byte buffer rather than copy it
+    /// into a second `String`. Compare against the lossy conversion on the same
+    /// bytes: it pays for one extra `String` allocation. (`CString::into_bytes`
+    /// itself shrinks the decoded `Vec` to a boxed slice, which the counting
+    /// shim records once in both paths, so comparing against a bare `Vec<u8>`
+    /// deserialization would be off by one.)
+    #[test]
+    fn file_path_deserialize_reuses_the_byte_buffer() {
+        use {
+            crate::alloc_probe::AllocScope,
+            std::ffi::CString,
+            zbus::wire::{self, Endian, serialized::Context},
+        };
+
+        let path_bytes: Vec<u8> = b"/home/user/document.txt\0".to_vec();
+        let ctxt = Context::new(Endian::Little, 0);
+        let encoded = wire::to_bytes(ctxt, &path_bytes).unwrap();
+
+        // Warm up zbus's lazy state before measuring.
+        let _: (FilePath, _) = encoded.deserialize().unwrap();
+
+        let path_scope = AllocScope::start();
+        let (path, _): (FilePath, _) = encoded.deserialize().unwrap();
+        let path_snap = path_scope.finish();
+
+        let lossy_scope = AllocScope::start();
+        let (lossy_bytes, _): (Vec<u8>, _) = encoded.deserialize().unwrap();
+        let lossy = String::from_utf8_lossy(
+            &CString::from_vec_with_nul(lossy_bytes)
+                .unwrap()
+                .into_bytes(),
+        )
+        .into_owned();
+        let lossy_snap = lossy_scope.finish();
+
+        std::hint::black_box(&path);
+        std::hint::black_box(&lossy);
+
+        assert_eq!(path.0, "/home/user/document.txt");
+        assert_eq!(path.0, lossy);
+        assert_eq!(
+            lossy_snap.count,
+            path_snap.count + 1,
+            "the old lossy path copied the buffer into a second String: \
+             got {path_snap:?} vs lossy {lossy_snap:?}"
+        );
+    }
+
+    /// The `from_utf8` fast path must fall back to lossy decoding for bytes
+    /// that are not valid UTF-8, preserving the old behavior.
+    #[test]
+    fn file_path_deserialize_falls_back_for_invalid_utf8() {
+        use zbus::wire::{self, Endian, serialized::Context};
+
+        let bytes = [0xffu8, 0xfe, b'/', b'x', 0];
+        let ctxt = Context::new(Endian::Little, 0);
+        let encoded = wire::to_bytes(ctxt, &bytes.to_vec()).unwrap();
+        let (path, _): (FilePath, _) = encoded.deserialize().unwrap();
+        assert_eq!(path.0, String::from_utf8_lossy(&bytes[..4]).into_owned());
     }
 
     #[test]
@@ -692,16 +774,19 @@ mod tests {
     fn test_open_file_options_deserialize() {
         use {
             std::collections::HashMap,
-            zbus::zvariant::{self, Endian, Value, serialized::Context},
+            zbus::{
+                Variant,
+                wire::{self, Endian, serialized::Context},
+            },
         };
 
         let mut dict = HashMap::new();
-        dict.insert("modal", Value::from(true));
-        dict.insert("multiple", Value::from(false));
-        dict.insert("directory", Value::from(true));
+        dict.insert("modal", Variant::from(true));
+        dict.insert("multiple", Variant::from(false));
+        dict.insert("directory", Variant::from(true));
 
-        let ctxt = Context::new_dbus(Endian::Little, 0);
-        let encoded = zvariant::to_bytes(ctxt, &dict).unwrap();
+        let ctxt = Context::new(Endian::Little, 0);
+        let encoded = wire::to_bytes(ctxt, &dict).unwrap();
         let options: OpenFileOptions = encoded.deserialize().unwrap().0;
 
         assert_eq!(options.modal, Some(true));
@@ -713,15 +798,18 @@ mod tests {
     fn test_save_file_options_deserialize() {
         use {
             std::collections::HashMap,
-            zbus::zvariant::{self, Endian, Value, serialized::Context},
+            zbus::{
+                Variant,
+                wire::{self, Endian, serialized::Context},
+            },
         };
 
         let mut dict = HashMap::new();
-        dict.insert("modal", Value::from(true));
-        dict.insert("current_name", Value::from("new_file.txt"));
+        dict.insert("modal", Variant::from(true));
+        dict.insert("current_name", Variant::from("new_file.txt"));
 
-        let ctxt = Context::new_dbus(Endian::Little, 0);
-        let encoded = zvariant::to_bytes(ctxt, &dict).unwrap();
+        let ctxt = Context::new(Endian::Little, 0);
+        let encoded = wire::to_bytes(ctxt, &dict).unwrap();
         let options: SaveFileOptions = encoded.deserialize().unwrap().0;
 
         assert_eq!(options.modal, Some(true));
@@ -732,15 +820,18 @@ mod tests {
     fn test_save_files_options_deserialize() {
         use {
             std::collections::HashMap,
-            zbus::zvariant::{self, Endian, Value, serialized::Context},
+            zbus::{
+                Variant,
+                wire::{self, Endian, serialized::Context},
+            },
         };
 
         let mut dict = HashMap::new();
-        dict.insert("modal", Value::from(true));
-        dict.insert("accept_label", Value::from("Save Here"));
+        dict.insert("modal", Variant::from(true));
+        dict.insert("accept_label", Variant::from("Save Here"));
 
-        let ctxt = Context::new_dbus(Endian::Little, 0);
-        let encoded = zvariant::to_bytes(ctxt, &dict).unwrap();
+        let ctxt = Context::new(Endian::Little, 0);
+        let encoded = wire::to_bytes(ctxt, &dict).unwrap();
         let options: SaveFilesOptions = encoded.deserialize().unwrap().0;
 
         assert_eq!(options.modal, Some(true));
@@ -751,7 +842,10 @@ mod tests {
     fn test_open_file_results_serialize() {
         use {
             std::collections::HashMap,
-            zbus::zvariant::{self, Endian, Value, serialized::Context},
+            zbus::{
+                Variant,
+                wire::{self, Endian, serialized::Context},
+            },
         };
 
         let results = OpenFileResults {
@@ -761,16 +855,16 @@ mod tests {
             writable: Some(true),
         };
 
-        let ctxt = Context::new_dbus(Endian::Little, 0);
-        let encoded = zvariant::to_bytes(ctxt, &results).unwrap();
-        let decoded: HashMap<String, Value> = encoded.deserialize().unwrap().0;
+        let ctxt = Context::new(Endian::Little, 0);
+        let encoded = wire::to_bytes(ctxt, &results).unwrap();
+        let decoded: HashMap<String, Variant> = encoded.deserialize().unwrap().0;
 
         let uris_val = decoded.get("uris").unwrap();
         let uris: Vec<String> = uris_val.try_clone().unwrap().try_into().unwrap();
         assert_eq!(uris, vec!["file:///tmp/test.txt".to_owned()]);
         assert_eq!(
             decoded.get("writable").unwrap().try_clone().unwrap(),
-            Value::from(true)
+            Variant::from(true)
         );
     }
 
@@ -778,7 +872,10 @@ mod tests {
     fn test_save_file_results_serialize() {
         use {
             std::collections::HashMap,
-            zbus::zvariant::{self, Endian, Value, serialized::Context},
+            zbus::{
+                Variant,
+                wire::{self, Endian, serialized::Context},
+            },
         };
 
         let results = SaveFileResults {
@@ -787,9 +884,9 @@ mod tests {
             current_filter: None,
         };
 
-        let ctxt = Context::new_dbus(Endian::Little, 0);
-        let encoded = zvariant::to_bytes(ctxt, &results).unwrap();
-        let decoded: HashMap<String, Value> = encoded.deserialize().unwrap().0;
+        let ctxt = Context::new(Endian::Little, 0);
+        let encoded = wire::to_bytes(ctxt, &results).unwrap();
+        let decoded: HashMap<String, Variant> = encoded.deserialize().unwrap().0;
 
         let uris_val = decoded.get("uris").unwrap();
         let uris: Vec<String> = uris_val.try_clone().unwrap().try_into().unwrap();
@@ -800,7 +897,10 @@ mod tests {
     fn test_save_files_results_serialize() {
         use {
             std::collections::HashMap,
-            zbus::zvariant::{self, Endian, Value, serialized::Context},
+            zbus::{
+                Variant,
+                wire::{self, Endian, serialized::Context},
+            },
         };
 
         let results = SaveFilesResults {
@@ -811,9 +911,9 @@ mod tests {
             choices: None,
         };
 
-        let ctxt = Context::new_dbus(Endian::Little, 0);
-        let encoded = zvariant::to_bytes(ctxt, &results).unwrap();
-        let decoded: HashMap<String, Value> = encoded.deserialize().unwrap().0;
+        let ctxt = Context::new(Endian::Little, 0);
+        let encoded = wire::to_bytes(ctxt, &results).unwrap();
+        let decoded: HashMap<String, Variant> = encoded.deserialize().unwrap().0;
 
         let uris_val = decoded.get("uris").unwrap();
         let uris: Vec<String> = uris_val.try_clone().unwrap().try_into().unwrap();

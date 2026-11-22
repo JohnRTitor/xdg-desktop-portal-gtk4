@@ -3,11 +3,7 @@ use {
     common::*,
     std::collections::HashMap,
     xdg_desktop_portal_gtk4::portals::account::dbus::Account,
-    zbus::{
-        connection::Builder,
-        proxy,
-        zvariant::{OwnedObjectPath, Value},
-    },
+    zbus::{OwnedObjectPath, Variant, connection::Builder, proxy},
 };
 
 #[proxy(
@@ -21,7 +17,7 @@ trait Account {
         handle: OwnedObjectPath,
         app_id: &str,
         parent_window: &str,
-        options: HashMap<&str, Value<'_>>,
+        options: HashMap<&str, Variant<'_>>,
     ) -> zbus::Result<u32>;
 }
 
@@ -33,16 +29,16 @@ async fn test_get_user_information_dummy_ui() -> Result<(), Box<dyn std::error::
         10,
     );
     let proxy_ui = dummy_proxy();
-    let _conn = Builder::session()?
+    let _conn = Builder::session()
         .serve_at(
             "/org/freedesktop/portal/desktop",
             Account::new(&proxy_ui, sm),
-        )?
+        )
         .build()
         .await?;
 
     let proxy = AccountProxy::builder(&client_conn)
-        .destination(_conn.unique_name().unwrap().clone())?
+        .destination(_conn.unique_name().unwrap().clone())
         .build()
         .await?;
 

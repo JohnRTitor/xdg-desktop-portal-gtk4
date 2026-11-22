@@ -3,16 +3,22 @@
 /// GTK serialises page setups with doubles for the paper dimensions and all four
 /// margins. Flattening those to strings (or dropping them) made the dialog fail
 /// to apply the caller's page setup, so keep the original variants intact.
-fn to_owned_dict(dict: HashMap<String, Value<'_>>) -> HashMap<String, OwnedValue> {
-    dict.into_iter()
-        .filter_map(|(k, v)| match v.try_into_owned() {
-            Ok(owned) => Some((k, owned)),
+fn to_owned_dict(dict: HashMap<String, Variant<'_>>) -> HashMap<String, OwnedVariant> {
+    // Every input entry can yield at most one output entry, so the source
+    // length is an exact capacity bound. Convert in place rather than through
+    // a filter/collect that would grow the map repeatedly.
+    let mut result = HashMap::with_capacity(dict.len());
+    for (k, v) in dict {
+        match v.try_into_owned() {
+            Ok(owned) => {
+                result.insert(k, owned);
+            }
             Err(e) => {
                 tracing::warn!(key = %k, error = %e, "Ignoring unsupported print option value");
-                None
             }
-        })
-        .collect()
+        }
+    }
+    result
 }
 
 use {
@@ -23,9 +29,8 @@ use {
     },
     std::{collections::HashMap, os::fd::AsFd},
     zbus::{
-        ObjectServer, fdo, interface,
-        message::Header,
-        zvariant::{DeserializeDict, Fd, OwnedObjectPath, OwnedValue, SerializeDict, Type, Value},
+        DeserializeDict, Fd, ObjectServer, OwnedObjectPath, OwnedVariant, SerializeDict, Type,
+        Variant, fdo, interface, message::Header,
     },
 };
 
@@ -51,7 +56,7 @@ impl Print {
 }
 
 #[derive(DeserializeDict, Type, Debug, Default)]
-#[zvariant(signature = "dict")]
+#[zbus(signature = "dict")]
 #[allow(dead_code)]
 struct PreparePrintOptions {
     modal: Option<bool>,
@@ -60,11 +65,11 @@ struct PreparePrintOptions {
 }
 
 #[derive(SerializeDict, Type, Debug, Default)]
-#[zvariant(signature = "dict")]
+#[zbus(signature = "dict")]
 struct PreparePrintResults {
-    settings: HashMap<String, OwnedValue>,
-    #[zvariant(rename = "page-setup")]
-    page_setup: HashMap<String, OwnedValue>,
+    settings: HashMap<String, OwnedVariant>,
+    #[zbus(rename = "page-setup")]
+    page_setup: HashMap<String, OwnedVariant>,
     token: u32,
     supported_output_file_formats: Option<Vec<String>>,
     has_current_page: Option<bool>,
@@ -72,7 +77,7 @@ struct PreparePrintResults {
 }
 
 #[derive(DeserializeDict, Type, Debug, Default)]
-#[zvariant(signature = "dict")]
+#[zbus(signature = "dict")]
 #[allow(dead_code)]
 struct PrintOptions {
     modal: Option<bool>,
@@ -82,7 +87,7 @@ struct PrintOptions {
 }
 
 #[derive(SerializeDict, Type, Debug, Default)]
-#[zvariant(signature = "dict")]
+#[zbus(signature = "dict")]
 struct PrintResults {}
 
 impl Print {
@@ -91,14 +96,19 @@ impl Print {
         app_id: String,
         parent_window: String,
         title: String,
-        settings: HashMap<String, Value<'_>>,
-        page_setup: HashMap<String, Value<'_>>,
+        settings: HashMap<String, Variant<'_>>,
+        page_setup: HashMap<String, Variant<'_>>,
         options: PreparePrintOptions,
     ) -> Response<PreparePrintResults> {
+        // Destructure once: nothing else reads `options`, so the token can be
+        // moved straight into the UI task instead of cloned.
+        let PreparePrintOptions {
+            activation_token, ..
+        } = options;
         let res = PrintUi {
             app_id,
             parent_window,
-            activation_token: options.activation_token.clone(),
+            activation_token,
             title,
             settings: to_owned_dict(settings),
             page_setup: to_owned_dict(page_setup),
@@ -179,7 +189,7 @@ impl Print {
             }
         }
 
-        // zvariant borrows the received fd from the D-Bus message, which zbus
+        // zbus borrows the received fd from the D-Bus message, which zbus
         // closes as soon as this handler returns. GTK's backend reads the fd
         // asynchronously after `send()`, so hand the job its own descriptor and
         // let `ExecutePrintUi` close it once the job is finished. GTK does not
@@ -233,8 +243,8 @@ impl Print {
         app_id: String,
         parent_window: String,
         title: String,
-        settings: HashMap<String, Value<'_>>,
-        page_setup: HashMap<String, Value<'_>>,
+        settings: HashMap<String, Variant<'_>>,
+        page_setup: HashMap<String, Variant<'_>>,
         options: PreparePrintOptions,
         #[zbus(object_server)] server: &ObjectServer,
     ) -> Result<Response<PreparePrintResults>, fdo::Error> {
@@ -291,7 +301,18 @@ impl Print {
 
 #[cfg(test)]
 mod tests {
-    use {super::*, zbus::zvariant::Type};
+    use {super::*, zbus::Type};
+
+    /// Pin the total size of the wire result (a reorder that keeps the size
+    /// unchanged is deliberately not caught). Breakdown on 64-bit:
+    /// `settings` + `page_setup` (2 × 48) + `token` (4) +
+    /// `supported_output_file_formats` (24) + two `Option<bool>` (1 each),
+    /// rounded up to 128 by alignment.
+    #[test]
+    #[cfg(target_pointer_width = "64")]
+    fn prepare_print_results_size_is_pinned() {
+        assert_eq!(std::mem::size_of::<PreparePrintResults>(), 128);
+    }
 
     #[test]
     fn test_prepare_print_options_signature() {
@@ -317,15 +338,18 @@ mod tests {
     fn test_prepare_print_options_deserialize() {
         use {
             std::collections::HashMap,
-            zbus::zvariant::{self, Endian, Value, serialized::Context},
+            zbus::{
+                Variant,
+                wire::{self, Endian, serialized::Context},
+            },
         };
 
         let mut dict = HashMap::new();
-        dict.insert("modal", Value::from(true));
-        dict.insert("accept_label", Value::from("Print It"));
+        dict.insert("modal", Variant::from(true));
+        dict.insert("accept_label", Variant::from("Print It"));
 
-        let ctxt = Context::new_dbus(Endian::Little, 0);
-        let encoded = zvariant::to_bytes(ctxt, &dict).unwrap();
+        let ctxt = Context::new(Endian::Little, 0);
+        let encoded = wire::to_bytes(ctxt, &dict).unwrap();
         let options: PreparePrintOptions = encoded.deserialize().unwrap().0;
 
         assert_eq!(options.modal, Some(true));
@@ -336,14 +360,17 @@ mod tests {
     fn test_print_options_deserialize() {
         use {
             std::collections::HashMap,
-            zbus::zvariant::{self, Endian, Value, serialized::Context},
+            zbus::{
+                Variant,
+                wire::{self, Endian, serialized::Context},
+            },
         };
 
         let mut dict = HashMap::new();
-        dict.insert("token", Value::from(12345u32));
+        dict.insert("token", Variant::from(12345u32));
 
-        let ctxt = Context::new_dbus(Endian::Little, 0);
-        let encoded = zvariant::to_bytes(ctxt, &dict).unwrap();
+        let ctxt = Context::new(Endian::Little, 0);
+        let encoded = wire::to_bytes(ctxt, &dict).unwrap();
         let options: PrintOptions = encoded.deserialize().unwrap().0;
 
         assert_eq!(options.token, Some(12345));
@@ -353,23 +380,26 @@ mod tests {
     fn test_prepare_print_results_serialize() {
         use {
             std::collections::HashMap,
-            zbus::zvariant::{self, Endian, Value, serialized::Context},
+            zbus::{
+                Variant,
+                wire::{self, Endian, serialized::Context},
+            },
         };
 
         let results = PreparePrintResults {
             token: 999,
             has_current_page: Some(true),
-            page_setup: HashMap::from([("MarginTop".to_string(), OwnedValue::from(11.0f64))]),
+            page_setup: HashMap::from([("MarginTop".to_string(), OwnedVariant::from(11.0f64))]),
             ..Default::default()
         };
 
-        let ctxt = Context::new_dbus(Endian::Little, 0);
-        let encoded = zvariant::to_bytes(ctxt, &results).unwrap();
-        let decoded: HashMap<String, Value> = encoded.deserialize().unwrap().0;
+        let ctxt = Context::new(Endian::Little, 0);
+        let encoded = wire::to_bytes(ctxt, &results).unwrap();
+        let decoded: HashMap<String, Variant> = encoded.deserialize().unwrap().0;
 
         assert_eq!(
             decoded.get("token").unwrap().try_clone().unwrap(),
-            Value::from(999u32)
+            Variant::from(999u32)
         );
         assert_eq!(
             decoded
@@ -377,27 +407,26 @@ mod tests {
                 .unwrap()
                 .try_clone()
                 .unwrap(),
-            Value::from(true)
+            Variant::from(true)
         );
         let page_setup = decoded.get("page-setup").unwrap().try_clone().unwrap();
-        let Value::Dict(dict) = page_setup else {
+        let Variant::Dict(dict) = page_setup else {
             panic!("page-setup must be a dict");
         };
         let key = String::from("MarginTop");
-        let margin: Value = dict.get(&key).unwrap().unwrap();
-        assert_eq!(margin, Value::from(11.0f64));
+        let margin: Variant = dict.get(&key).unwrap().unwrap();
+        assert_eq!(margin, Variant::from(11.0f64));
     }
 
-    /// This is the exact site of the reported bug: the old `flatten_dict`
-    /// kept only strings, so GTK's double-valued margins never reached the
-    /// dialog. Guard the conversion itself, not just its downstream users.
+    /// Guard the conversion itself, not just its downstream users: dropping
+    /// non-string values here would silently lose GTK's double-valued margins.
     #[test]
     fn to_owned_dict_preserves_non_string_values() {
         let dict = HashMap::from([
-            ("Name".to_string(), Value::from("iso_a4_210x297mm")),
-            ("MarginTop".to_string(), Value::from(11.0f64)),
-            ("Width".to_string(), Value::from(210.0f64)),
-            ("Collate".to_string(), Value::from(true)),
+            ("Name".to_string(), Variant::from("iso_a4_210x297mm")),
+            ("MarginTop".to_string(), Variant::from(11.0f64)),
+            ("Width".to_string(), Variant::from(210.0f64)),
+            ("Collate".to_string(), Variant::from(true)),
         ]);
 
         let owned = to_owned_dict(dict);

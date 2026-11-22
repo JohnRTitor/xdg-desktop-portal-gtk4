@@ -49,6 +49,60 @@ Useful when debugging with `ps -L`, `gdb`, or similar. Thread names are chosen b
 - Prefer iterator chains (`.map().filter().collect()`) over manual for-loops allocating into a `Vec`.
 - For formatting, always use: `cargo fmt -- --config imports_granularity=One,unstable_features=true`
 
+## Memory & allocation discipline
+
+Allocation work is measured, not guessed. `src/alloc_probe.rs` provides the
+test-only `#[global_allocator]` shim and `AllocScope`; use it for any change
+that claims to reduce allocations. Pin layout changes with `size_of` tests
+following `src/core/session.rs` and `src/gui/windowing/window_identifier.rs`.
+Run the suite under `dbus-run-session -- cargo test --all-features`: without a
+session bus the D-Bus tests silently skip. Do not introduce a custom
+allocator, arena, jemalloc or mimalloc — the allocation rate is the problem,
+not the allocator.
+
+Patterns that apply here:
+
+- **Borrow at the D-Bus edge.** `Header::sender()` borrows for the whole
+  handler; pass `&str` into `run_request` instead of copying a `String`. Move
+  write-once fields (activation tokens, owned GUI strings) out of options
+  structs rather than cloning them; `SessionManager` makes the one owned copy
+  it needs for its key.
+- **Box state that never grows.** `Box<str>` / `Box<[T]>` for request paths,
+  sender keys, registry specs and MIME lists drops the capacity word and its
+  slack. `Box<str>` implements zbus `Type`, but has no `Into<Variant>`, so
+  arrays built via `Variant::from(Vec<T>)` still need `&str`.
+- **Borrow zbus values instead of cloning them.** `<&Structure>` and borrowed
+  `Array` conversions replace `Structure::try_from` / `Vec<T>::try_from` when
+  only one field or the first element is read. Keep one-level
+  `Variant::Variant` unwrapping and whole-value rejection on malformed
+  elements if that was the old behavior.
+- **Keep small buffers on the stack.** `smallvec` is a direct dependency:
+  use `SmallVec<[T; N]>` for short internal lists (notification actions),
+  `Cow` for borrow-or-own (file filters), and `with_capacity` when the upper
+  bound is known. A capacity hint that over-counts skipped items can force a
+  heap spill.
+- **Cache repeated construction.** `SupportedOptions` is a `LazyLock`, not a
+  HashMap rebuilt on every property read. Hoist key strings and config names
+  out of signal and file-monitor callbacks.
+- **Reuse borrowed state in hot paths.** `SettingsState::get_ref` avoids
+  cloning `OwnedVariant` on every reload diff; only the wire reply needs an
+  owned clone. Reuse thumbnail paths and URIs across tiers instead of
+  recomputing MD5 and `fs::read` several times per file.
+- **Avoid copying bytes.** `Bytes::from_owned` over `Bytes::from(&Vec)`,
+  `String::from_utf8` with a lossy fallback, a compile-time CRC table, and one
+  exact-size buffer for PNG tEXt chunks. Guard `String::replace` with a
+  `contains` check when the common case has no match.
+- **Watch layout.** Box large rare enum variants, narrow integers only where
+  the domain allows, and reorder fields to remove padding. Pin results with
+  `#[cfg(target_pointer_width = "64")] size_of` tests. Remember `Arc<str>` is
+  a fat pointer (16 bytes), not 8.
+
+Never trade correctness for an allocation: keep validation semantics, wire
+signatures and existing assertions intact. Use `Weak` when an identity marker
+must not own its target (activation tokens), and check `Arc::ptr_eq` only
+after upgrading. Changes to host ids, icon arrays or mailto URLs need a test
+that fails on revert.
+
 ## Logging
 
 - Use `tracing` (`error!`, `warn!`, `debug!`, `info!`, `instrument`) for all logging.

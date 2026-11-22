@@ -1,10 +1,8 @@
 //! Scoped allocation counting.
 //!
-//! This mirrors the benchmarking method used for Cloudflare's 1.1.1.1 DNS cache
-//! work, where each layout change was validated against a custom
-//! [`GlobalAlloc`] shim rather than by inspection: the shim records the number
-//! and total size of allocations, so a reduction is *measured* instead of
-//! asserted.
+//! Each layout change is validated against a custom [`GlobalAlloc`] shim rather
+//! than by inspection: the shim records the number and total size of
+//! allocations, so a reduction is *measured* instead of asserted.
 //!
 //! Counting is opt-in through [`AllocScope`]. Outside a scope the shim costs one
 //! thread-local read per allocation, so the rest of the test suite is unaffected.
@@ -186,8 +184,8 @@ mod tests {
         assert_eq!(snap.count, 0);
     }
 
-    /// `realloc` is accounted as its growth only, so a `Vec` that settles at its
-    /// final capacity contributes that capacity once, not once per doubling.
+    /// `realloc` is accounted as growth only, so a `Vec` contributes its final
+    /// capacity once, not once per doubling.
     #[test]
     fn realloc_counts_only_growth() {
         let scope = AllocScope::start();
@@ -197,7 +195,6 @@ mod tests {
         }
         let snap = scope.finish();
         assert!(snap.count >= 1, "growth must be counted: {snap:?}");
-        // One initial allocation plus a handful of doublings, never 64.
         assert!(
             snap.count < 16,
             "growth must not be counted per element: {snap:?}"

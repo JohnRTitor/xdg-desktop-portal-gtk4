@@ -1,6 +1,6 @@
 use {
     std::collections::HashMap,
-    zbus::{Connection, proxy, zvariant::OwnedValue},
+    zbus::{Connection, OwnedVariant, proxy},
 };
 mod common;
 use {common::*, xdg_desktop_portal_gtk4::portals::settings::dbus::SettingsPortal};
@@ -11,11 +11,11 @@ use {common::*, xdg_desktop_portal_gtk4::portals::settings::dbus::SettingsPortal
     default_path = "/org/freedesktop/portal/desktop"
 )]
 trait Settings {
-    fn read(&self, namespace: &str, key: &str) -> zbus::Result<OwnedValue>;
+    fn read(&self, namespace: &str, key: &str) -> zbus::Result<OwnedVariant>;
     fn read_all(
         &self,
         namespaces: &[&str],
-    ) -> zbus::Result<HashMap<String, HashMap<String, OwnedValue>>>;
+    ) -> zbus::Result<HashMap<String, HashMap<String, OwnedVariant>>>;
 
     #[zbus(property, name = "version")]
     fn version(&self) -> zbus::Result<u32>;
@@ -34,7 +34,7 @@ async fn test_settings_read_unknown_namespace() -> Result<(), Box<dyn std::error
 
     let client_conn = Connection::session().await?;
     let proxy = SettingsProxy::builder(&client_conn)
-        .destination(_conn.unique_name().unwrap().clone())?
+        .destination(_conn.unique_name().unwrap().clone())
         .build()
         .await?;
 
@@ -57,14 +57,14 @@ async fn test_settings_read_all_empty_namespaces() -> Result<(), Box<dyn std::er
 
     let client_conn = Connection::session().await?;
     let proxy = SettingsProxy::builder(&client_conn)
-        .destination(_conn.unique_name().unwrap().clone())?
+        .destination(_conn.unique_name().unwrap().clone())
         .build()
         .await?;
 
     let res = proxy.read_all(&[]).await?;
-    // It shouldn't crash. It might be empty if schemas are not installed.
-    // Just asserting it successfully returns a HashMap.
-    assert!(res.is_empty() || !res.is_empty());
+    // An empty request returns every populated namespace. Which ones are
+    // populated depends on the host, but an empty map is never sent.
+    assert!(res.values().all(|keys| !keys.is_empty()));
 
     Ok(())
 }
@@ -82,15 +82,16 @@ async fn test_settings_read_all_wildcard_namespaces() -> Result<(), Box<dyn std:
 
     let client_conn = Connection::session().await?;
     let proxy = SettingsProxy::builder(&client_conn)
-        .destination(_conn.unique_name().unwrap().clone())?
+        .destination(_conn.unique_name().unwrap().clone())
         .build()
         .await?;
 
     // Use a wildcard to read all under org.freedesktop.*
     let res = proxy.read_all(&["org.freedesktop.*"]).await?;
 
-    // Depending on the environment, it may or may not return keys, but it shouldn't error.
-    assert!(res.is_empty() || !res.is_empty());
+    // Matching is a prefix match on `org.freedesktop.`; which namespaces are
+    // populated depends on the host, but none outside the prefix may leak in.
+    assert!(res.keys().all(|ns| ns.starts_with("org.freedesktop.")));
 
     Ok(())
 }
@@ -108,7 +109,7 @@ async fn test_settings_portal_properties() -> Result<(), Box<dyn std::error::Err
 
     let client_conn = Connection::session().await?;
     let proxy = SettingsProxy::builder(&client_conn)
-        .destination(_conn.unique_name().unwrap().clone())?
+        .destination(_conn.unique_name().unwrap().clone())
         .build()
         .await?;
 

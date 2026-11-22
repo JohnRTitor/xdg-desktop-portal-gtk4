@@ -59,8 +59,8 @@
 //!
 //! A UI is mandatory because sharing user profile data requires explicit consent.
 //!
-//! - **Thread Transition:** Execution moves to the GTK main thread via `UiProxy::send` to construct
-//!   and show the `adw::MessageDialog` (or similar access dialog).
+//! - **Thread Transition:** Execution moves to the GTK main thread via `UiProxy` to construct
+//!   and show the `CustomDialog` access dialog.
 //! - **Confinement:** The dialog widget and its signal handlers remain confined to the GTK thread.
 //! - **Return:** When the user clicks "Allow" or "Deny", the response is sent back over a oneshot
 //!   channel, returning control to the Tokio async runtime to construct the D-Bus reply.
@@ -77,9 +77,9 @@
 //! ## Specification Notes
 //!
 //! - **Image URI:** The specification mandates that the `image` field in the result dictionary must
-//!   be a valid `file://` URI. `AccountsService` often returns a raw absolute path (e.g.,
-//!   `/var/lib/AccountsService/icons/user`). The implementation explicitly checks for a leading `/`
-//!   and prepends `file://` to comply with the spec.
+//!   be a valid `file://` URI. `AccountsService` sometimes returns a raw absolute path (e.g.,
+//!   `/var/lib/AccountsService/icons/user`); `dbus.rs` prepends `file://` to such values. The GUI
+//!   path already converts the selected icon with `glib::filename_to_uri`.
 //!
 //! ## Extension Guide
 //!

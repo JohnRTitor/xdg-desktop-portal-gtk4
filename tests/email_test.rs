@@ -3,11 +3,7 @@ use {
     parking_lot::Mutex,
     std::{collections::HashMap, sync::Arc},
     xdg_desktop_portal_gtk4::portals::email::dbus::Email,
-    zbus::{
-        connection::Builder,
-        proxy,
-        zvariant::{OwnedObjectPath, OwnedValue, Value},
-    },
+    zbus::{OwnedObjectPath, OwnedVariant, Variant, connection::Builder, proxy},
 };
 
 #[proxy(
@@ -21,8 +17,8 @@ trait EmailPortal {
         handle: OwnedObjectPath,
         app_id: &str,
         parent_window: &str,
-        options: HashMap<&str, Value<'_>>,
-    ) -> zbus::Result<(u32, HashMap<String, OwnedValue>)>;
+        options: HashMap<&str, Variant<'_>>,
+    ) -> zbus::Result<(u32, HashMap<String, OwnedVariant>)>;
 }
 
 #[tokio::test]
@@ -35,7 +31,7 @@ async fn test_compose_email_dummy_ui() -> Result<(), Box<dyn std::error::Error>>
 
     let launched = Arc::new(Mutex::new(None));
     let launched_by_launcher = Arc::clone(&launched);
-    let _conn = Builder::session()?
+    let _conn = Builder::session()
         .serve_at(
             "/org/freedesktop/portal/desktop",
             Email::with_launcher(sm, move |url, activation_token| {
@@ -43,19 +39,19 @@ async fn test_compose_email_dummy_ui() -> Result<(), Box<dyn std::error::Error>>
                     Some((url.to_owned(), activation_token.map(str::to_owned)));
                 Ok(())
             }),
-        )?
+        )
         .build()
         .await?;
 
     let proxy = EmailPortalProxy::builder(&client_conn)
-        .destination(_conn.unique_name().unwrap().clone())?
+        .destination(_conn.unique_name().unwrap().clone())
         .build()
         .await?;
 
     let path = OwnedObjectPath::try_from("/org/freedesktop/portal/desktop/request/3").unwrap();
     let mut options = HashMap::new();
-    options.insert("subject", Value::from("Hello"));
-    options.insert("activation_token", Value::from("token-1"));
+    options.insert("subject", Variant::from("Hello"));
+    options.insert("activation_token", Variant::from("token-1"));
     let (response, results) = proxy
         .compose_email(path, "app_id", "window", options)
         .await?;

@@ -3,9 +3,8 @@ use {
     gtk4::{gio, gio::AppInfo, glib, prelude::AppLaunchContextExt},
     std::sync::Arc,
     zbus::{
-        ObjectServer, fdo, interface,
+        DeserializeDict, ObjectServer, OwnedObjectPath, SerializeDict, Type, fdo, interface,
         message::Header,
-        zvariant::{DeserializeDict, OwnedObjectPath, SerializeDict, Type},
     },
 };
 
@@ -32,7 +31,6 @@ impl Email {
                 launch_context.setenv("XDG_ACTIVATION_TOKEN", token);
             }
 
-            // We rely on GIO to determine the default application for `mailto:` URIs.
             AppInfo::launch_default_for_uri(url, Some(&launch_context))
         })
     }
@@ -54,7 +52,7 @@ impl Email {
 }
 
 #[derive(DeserializeDict, Type, Debug, Default)]
-#[zvariant(signature = "dict")]
+#[zbus(signature = "dict")]
 struct ComposeEmailOptions {
     address: Option<String>,
     addresses: Option<Vec<String>>,
@@ -67,7 +65,7 @@ struct ComposeEmailOptions {
 }
 
 #[derive(SerializeDict, Type, Debug, Default)]
-#[zvariant(signature = "dict")]
+#[zbus(signature = "dict")]
 struct EmailResults {}
 
 impl Email {
@@ -77,8 +75,6 @@ impl Email {
         _parent_window: String,
         options: ComposeEmailOptions,
     ) -> Response<EmailResults> {
-        // The Email portal doesn't show its own UI; instead, it delegates to the host's
-        // default mail client using a `mailto:` URI.
         let url = build_mailto_url(&options);
 
         match (self.launcher)(&url, options.activation_token.as_deref()) {
@@ -105,12 +101,7 @@ impl Email {
 /// dropping the other. So a caller CC'ing two people reached the user's mail
 /// client with one of them missing.
 ///
-/// This is why every pre-existing test here passed a single address: with one
-/// recipient a repeated key and a comma-joined value are the same string, so
-/// the shape of the bug is invisible until a second address is present.
-///
-/// The addresses are still percent-escaped, which the reference does not do.
-/// That is deliberate: a raw `&` in an address would otherwise terminate the
+/// The addresses are still percent-escaped: a raw `&` would terminate the
 /// parameter and let the address inject query fields of its own.
 fn append_recipients(url: &mut String, key: &str, addrs: &[String]) {
     use std::fmt::Write;
@@ -129,18 +120,51 @@ fn append_recipients(url: &mut String, key: &str, addrs: &[String]) {
 }
 
 fn build_mailto_url(options: &ComposeEmailOptions) -> String {
-    let mut url = String::from("mailto:");
+    // Capacity hint from the raw option lengths plus the fixed keys and
+    // separators. Escaping can still grow individual values (which `String`
+    // absorbs through normal growth), but this avoids repeated reallocations in
+    // the common all-ASCII case. It does not touch the escaping logic below.
+    let list_len = |list: &Option<Vec<String>>| -> usize {
+        list.as_ref()
+            .map_or(0, |items| items.iter().map(String::len).sum())
+    };
+    let capacity = "mailto:?".len()
+        + options.address.as_ref().map_or(0, String::len)
+        + list_len(&options.addresses)
+        + "cc=".len() * usize::from(options.cc.is_some())
+        + list_len(&options.cc)
+        + "bcc=".len() * usize::from(options.bcc.is_some())
+        + list_len(&options.bcc)
+        + "subject=".len() * usize::from(options.subject.is_some())
+        + options.subject.as_ref().map_or(0, String::len)
+        + "body=".len() * usize::from(options.body.is_some())
+        + options.body.as_ref().map_or(0, String::len)
+        + options.attachments.as_ref().map_or(0, |items| {
+            items
+                .iter()
+                .map(|s| "attachment=".len() + s.len())
+                .sum::<usize>()
+        })
+        + 16; // comma separators and trailing '&'
+    let mut url = String::with_capacity(capacity);
+    url.push_str("mailto:");
     let mut addrs_iter = options
         .address
         .as_deref()
         .into_iter()
         .chain(options.addresses.iter().flatten().map(|s| s.as_str()));
 
+    // The address list is the `mailto:` path, before any `?`. The primary
+    // addresses are just as caller-controlled as cc/bcc, so they need the same
+    // escaping: a raw `&` or `?` here would inject query parameters of its own,
+    // and a raw `#` would truncate the URI. `@` is a reserved URI character but
+    // is what makes an address recognizable, so allow it literally; commas
+    // remain escaped so one address cannot be read as two recipients.
     if let Some(first_addr) = addrs_iter.next() {
-        url.push_str(first_addr);
+        url.push_str(glib::uri_escape_string(first_addr, Some("@"), true).as_str());
         for addr in addrs_iter {
             url.push(',');
-            url.push_str(addr);
+            url.push_str(glib::uri_escape_string(addr, Some("@"), true).as_str());
         }
     }
 
@@ -199,15 +223,16 @@ impl Email {
         options: ComposeEmailOptions,
         #[zbus(object_server)] server: &ObjectServer,
     ) -> Result<Response<EmailResults>, fdo::Error> {
+        // Borrow the sender from the message; `run_request` only needs `&str`
+        // and never moves it into a spawned task, so no owned String is needed.
         let sender = header
             .sender()
-            .map(|s| String::from(s.as_str()))
             .ok_or_else(|| fdo::Error::Failed("Missing sender".into()))?;
         Ok(run_request(
             server,
             self.session_manager.clone(),
             &app_id,
-            &sender,
+            sender.as_str(),
             handle,
             self.compose_email_impl(app_id.clone(), parent_window, options),
         )
@@ -217,7 +242,7 @@ impl Email {
 
 #[cfg(test)]
 mod tests {
-    use {super::*, zbus::zvariant::Type};
+    use {super::*, zbus::Type};
 
     #[test]
     fn test_compose_url_basic() {
@@ -243,6 +268,29 @@ mod tests {
         assert_eq!(
             build_mailto_url(&options),
             "mailto:single@example.com,foo@example.com,bar@example.com"
+        );
+    }
+
+    /// The primary addresses live before the `?`, but they are just as
+    /// caller-controlled as cc/bcc. An unescaped `&` there was read as the start
+    /// of a new query parameter, letting one address inject fields of its own.
+    /// `@` stays literal so addresses remain recognizable.
+    #[test]
+    fn test_compose_url_primary_address_is_escaped() {
+        let options = ComposeEmailOptions {
+            address: Some("a&b@example.com".into()),
+            addresses: Some(vec![
+                "c?d@example.com".into(),
+                "e,f@example.com".into(),
+                "g#h@example.com".into(),
+                "i%j@example.com".into(),
+            ]),
+            subject: Some("Hi".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            build_mailto_url(&options),
+            "mailto:a%26b@example.com,c%3Fd@example.com,e%2Cf@example.com,g%23h@example.com,i%25j@example.com?subject=Hi"
         );
     }
 
@@ -303,10 +351,8 @@ mod tests {
         assert_eq!(EmailResults::SIGNATURE, "a{sv}");
     }
 
-    /// The regression: `cc` and `bcc` are one parameter each, not one per
-    /// recipient. Every test above passes a single address, where a repeated
-    /// key and a comma-joined value are indistinguishable -- which is exactly
-    /// why this went unnoticed.
+    /// `cc` and `bcc` are one comma-joined parameter each, not one parameter
+    /// per recipient.
     #[test]
     fn test_compose_url_multiple_cc_recipients_share_one_key() {
         let options = ComposeEmailOptions {
@@ -382,8 +428,7 @@ mod tests {
         );
     }
 
-    /// `attachment` is a repeatable field and stays one key per file, matching
-    /// the reference implementation.
+    /// `attachment` is a repeatable field and stays one key per file.
     #[test]
     fn test_compose_url_attachments_repeat_the_key() {
         let options = ComposeEmailOptions {
@@ -400,15 +445,18 @@ mod tests {
     fn test_compose_email_options_deserialize() {
         use {
             std::collections::HashMap,
-            zbus::zvariant::{self, Endian, Value, serialized::Context},
+            zbus::{
+                Variant,
+                wire::{self, Endian, serialized::Context},
+            },
         };
 
         let mut dict = HashMap::new();
-        dict.insert("address", Value::from("test@example.com"));
-        dict.insert("subject", Value::from("Test Subject"));
+        dict.insert("address", Variant::from("test@example.com"));
+        dict.insert("subject", Variant::from("Test Subject"));
 
-        let ctxt = Context::new_dbus(Endian::Little, 0);
-        let encoded = zvariant::to_bytes(ctxt, &dict).unwrap();
+        let ctxt = Context::new(Endian::Little, 0);
+        let encoded = wire::to_bytes(ctxt, &dict).unwrap();
         let options: ComposeEmailOptions = encoded.deserialize().unwrap().0;
 
         assert_eq!(options.address.as_deref(), Some("test@example.com"));
@@ -419,13 +467,16 @@ mod tests {
     fn test_email_results_serialize() {
         use {
             std::collections::HashMap,
-            zbus::zvariant::{self, Endian, Value, serialized::Context},
+            zbus::{
+                Variant,
+                wire::{self, Endian, serialized::Context},
+            },
         };
 
         let results = EmailResults::default();
-        let ctxt = Context::new_dbus(Endian::Little, 0);
-        let encoded = zvariant::to_bytes(ctxt, &results).unwrap();
-        let decoded: HashMap<String, Value> = encoded.deserialize().unwrap().0;
+        let ctxt = Context::new(Endian::Little, 0);
+        let encoded = wire::to_bytes(ctxt, &results).unwrap();
+        let decoded: HashMap<String, Variant> = encoded.deserialize().unwrap().0;
 
         assert!(decoded.is_empty());
     }

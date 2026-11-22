@@ -5,9 +5,8 @@ use {
         gui::UiProxy,
     },
     zbus::{
-        Connection, ObjectServer, fdo, interface,
-        message::Header,
-        zvariant::{DeserializeDict, OwnedObjectPath, SerializeDict, Type},
+        Connection, DeserializeDict, ObjectServer, OwnedObjectPath, SerializeDict, Type, fdo,
+        interface, message::Header,
     },
 };
 
@@ -50,14 +49,14 @@ impl Account {
 }
 
 #[derive(DeserializeDict, Type, Debug, Default)]
-#[zvariant(signature = "dict")]
+#[zbus(signature = "dict")]
 struct GetUserInformationOptions {
     reason: Option<String>,
     pub activation_token: Option<String>,
 }
 
 #[derive(SerializeDict, Type, Debug, Default)]
-#[zvariant(signature = "dict")]
+#[zbus(signature = "dict")]
 struct UserInformation {
     id: String,
     name: String,
@@ -76,7 +75,7 @@ impl Account {
         let res = AccountUi {
             app_id,
             parent_window,
-            activation_token: options.activation_token.clone(),
+            activation_token: options.activation_token,
             user_name,
             real_name,
             icon_file,
@@ -125,15 +124,18 @@ impl Account {
         options: GetUserInformationOptions,
         #[zbus(object_server)] server: &ObjectServer,
     ) -> Result<Response<UserInformation>, fdo::Error> {
+        // `Header::sender()` borrows from the message, which outlives this
+        // method, so hand the borrowed `&str` straight to `run_request` instead
+        // of allocating a `String` for it.
         let sender = header
             .sender()
-            .map(|s| String::from(s.as_str()))
-            .ok_or_else(|| fdo::Error::Failed("Missing sender".into()))?;
+            .ok_or_else(|| fdo::Error::Failed("Missing sender".into()))?
+            .as_str();
         Ok(run_request(
             server,
             self.session_manager.clone(),
             &app_id,
-            &sender,
+            sender,
             handle,
             self.get_user_information_impl(app_id.clone(), parent_window, options),
         )
@@ -148,11 +150,11 @@ async fn fetch_user_data() -> zbus::Result<(String, String, String)> {
 
     // AccountsService exposes user objects at paths like `/org/freedesktop/Accounts/User1000`.
     let path = format!("/org/freedesktop/Accounts/User{}", uid);
-    let obj_path = zbus::zvariant::ObjectPath::try_from(path)?;
+    let obj_path = zbus::ObjectPath::try_from(path)?;
 
     let system_bus = Connection::system().await?;
     let user_proxy = UserProxy::builder(&system_bus)
-        .path(obj_path)?
+        .path(obj_path)
         .build()
         .await?;
 
@@ -168,17 +170,20 @@ mod tests {
     use {
         super::*,
         std::collections::HashMap,
-        zbus::zvariant::{self, Endian, Value, serialized::Context},
+        zbus::{
+            Variant,
+            wire::{self, Endian, serialized::Context},
+        },
     };
 
     #[test]
     fn test_get_user_information_options_deserialize() {
         let mut dict = HashMap::new();
-        dict.insert("reason", Value::from("Because"));
-        dict.insert("activation_token", Value::from("token123"));
+        dict.insert("reason", Variant::from("Because"));
+        dict.insert("activation_token", Variant::from("token123"));
 
-        let ctxt = Context::new_dbus(Endian::Little, 0);
-        let encoded = zvariant::to_bytes(ctxt, &dict).unwrap();
+        let ctxt = Context::new(Endian::Little, 0);
+        let encoded = wire::to_bytes(ctxt, &dict).unwrap();
         let options: GetUserInformationOptions = encoded.deserialize().unwrap().0;
 
         assert_eq!(options.reason.as_deref(), Some("Because"));
@@ -187,9 +192,9 @@ mod tests {
 
     #[test]
     fn test_get_user_information_options_empty() {
-        let dict: HashMap<&str, Value> = HashMap::new();
-        let ctxt = Context::new_dbus(Endian::Little, 0);
-        let encoded = zvariant::to_bytes(ctxt, &dict).unwrap();
+        let dict: HashMap<&str, Variant> = HashMap::new();
+        let ctxt = Context::new(Endian::Little, 0);
+        let encoded = wire::to_bytes(ctxt, &dict).unwrap();
         let options: GetUserInformationOptions = encoded.deserialize().unwrap().0;
 
         assert_eq!(options.reason, None);
@@ -204,22 +209,22 @@ mod tests {
             image: "file:///icon.png".into(),
         };
 
-        let ctxt = Context::new_dbus(Endian::Little, 0);
-        let encoded = zvariant::to_bytes(ctxt, &info).unwrap();
+        let ctxt = Context::new(Endian::Little, 0);
+        let encoded = wire::to_bytes(ctxt, &info).unwrap();
 
-        let decoded: HashMap<String, Value> = encoded.deserialize().unwrap().0;
+        let decoded: HashMap<String, Variant> = encoded.deserialize().unwrap().0;
 
         assert_eq!(
             decoded.get("id").unwrap().try_clone().unwrap(),
-            Value::from("user1")
+            Variant::from("user1")
         );
         assert_eq!(
             decoded.get("name").unwrap().try_clone().unwrap(),
-            Value::from("User One")
+            Variant::from("User One")
         );
         assert_eq!(
             decoded.get("image").unwrap().try_clone().unwrap(),
-            Value::from("file:///icon.png")
+            Variant::from("file:///icon.png")
         );
     }
 }

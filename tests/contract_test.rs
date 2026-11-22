@@ -7,10 +7,7 @@ mod common;
 use {
     common::dummy_proxy,
     std::collections::HashMap,
-    zbus::{
-        Connection,
-        zvariant::{ObjectPath, OwnedObjectPath, Value},
-    },
+    zbus::{Connection, ObjectPath, OwnedObjectPath, Variant},
 };
 
 // ---------------------------------------------------------------- clipboard --
@@ -33,12 +30,8 @@ trait Clipboard {
 /// session handle: serials are session-scoped, so a caller must not be able to
 /// reach another session's pending transfer by guessing a serial.
 ///
-/// * GNOME (`src/clipboard.c`, `handle_selection_write`) resolves
-///   `session_handle` first and answers `org.freedesktop.portal.Error.NotFound`
-///   for a non-existing session, `Failed` for a wrong session type.
-/// * KDE (`ClipboardPortal::SelectionWrite`, `clipboard.cpp:327-349`) answers
-///   `QDBusError::InvalidArgs` when the handle is not a clipboard-enabled
-///   session, and `InvalidArgs` for an unknown serial.
+/// The exact fdo error differs between backends, but every reference implementation
+/// validates the session before touching a serial.
 ///
 /// The transfer map is additionally keyed by session, so validating the session
 /// is not merely cosmetic: a caller that passes an unknown session but a real
@@ -48,27 +41,19 @@ async fn clipboard_validates_session_handle() {
     let Ok(client) = Connection::session().await else {
         return;
     };
-    let Ok(builder) = zbus::connection::Builder::session() else {
-        return;
-    };
-    let server_conn = builder
-        .serve_at(
-            "/org/freedesktop/portal/desktop",
-            xdg_desktop_portal_gtk4::portals::clipboard::dbus::ClipboardPortal::new(
-                client.clone(),
-                dummy_proxy(),
-                xdg_desktop_portal_gtk4::core::session_manager::SessionManager::new(
-                    client.clone(),
-                    10,
-                ),
-            ),
-        )
-        .expect("serve_at");
+    let builder = zbus::connection::Builder::session();
+    let server_conn = builder.serve_at(
+        "/org/freedesktop/portal/desktop",
+        xdg_desktop_portal_gtk4::portals::clipboard::dbus::ClipboardPortal::new(
+            client.clone(),
+            dummy_proxy(),
+            xdg_desktop_portal_gtk4::core::session_manager::SessionManager::new(client.clone(), 10),
+        ),
+    );
     let _server: zbus::connection::Connection = server_conn.build().await.expect("private bus");
 
     let proxy = ClipboardProxy::builder(&client)
         .destination(_server.unique_name().unwrap().clone())
-        .unwrap()
         .build()
         .await
         .unwrap();
@@ -105,35 +90,23 @@ trait AppChooser {
 /// nothing left to update. A false success instead leaves the frontend waiting on
 /// a dialog that will never receive the new choices, with no indication that
 /// anything went wrong.
-///
-/// This previously returned `Ok(())` unconditionally, and the existing
-/// `tests/app_chooser_test.rs` asserted that silent success as if it were
-/// correct.
 #[tokio::test]
 async fn app_chooser_update_choices_unknown_handle() {
     let Ok(client) = Connection::session().await else {
         return;
     };
-    let Ok(builder) = zbus::connection::Builder::session() else {
-        return;
-    };
-    let server_conn = builder
-        .serve_at(
-            "/org/freedesktop/portal/desktop",
-            xdg_desktop_portal_gtk4::portals::app_chooser::dbus::AppChooser::new(
-                &dummy_proxy(),
-                xdg_desktop_portal_gtk4::core::session_manager::SessionManager::new(
-                    client.clone(),
-                    10,
-                ),
-            ),
-        )
-        .expect("serve_at");
+    let builder = zbus::connection::Builder::session();
+    let server_conn = builder.serve_at(
+        "/org/freedesktop/portal/desktop",
+        xdg_desktop_portal_gtk4::portals::app_chooser::dbus::AppChooser::new(
+            &dummy_proxy(),
+            xdg_desktop_portal_gtk4::core::session_manager::SessionManager::new(client.clone(), 10),
+        ),
+    );
     let _server = server_conn.build().await.expect("private bus");
 
     let proxy = AppChooserProxy::builder(&client)
         .destination(_server.unique_name().unwrap().clone())
-        .unwrap()
         .build()
         .await
         .unwrap();
@@ -161,8 +134,7 @@ async fn app_chooser_update_choices_unknown_handle() {
 /// application that sends a slightly different `current_filter` still gets its
 /// intent honoured.
 ///
-/// This exercises the real decision function, which previously could not be
-/// reached from a test.
+/// This exercises the real decision function directly.
 #[test]
 fn file_chooser_current_filter_applies_without_filters_list() {
     use xdg_desktop_portal_gtk4::portals::file_chooser::gui::{
@@ -213,9 +185,7 @@ fn file_chooser_current_filter_applies_without_filters_list() {
 /// When the caller sends a `filters` list, the offered filters are the caller's
 /// own entries rather than a deep copy of them.
 ///
-/// `effective_filters` used to return `(list.to_vec(), …)`, duplicating every
-/// `Filter`'s name and every element in its `Vec<FilterKind>` on each dialog.
-/// With a borrowed `Cow` that copy only happens on the `current_filter`-alone
+/// With a borrowed `Cow`, the copy only happens on the `current_filter`-alone
 /// path, which has no list to borrow.
 ///
 /// `build_dialog` reaches this by *moving* the list out of `FileChooserUi`
@@ -271,8 +241,8 @@ trait Account {
         handle: &OwnedObjectPath,
         app_id: &str,
         window: &str,
-        options: HashMap<&str, Value<'_>>,
-    ) -> zbus::Result<(u32, HashMap<String, zbus::zvariant::OwnedValue>)>;
+        options: HashMap<&str, Variant<'_>>,
+    ) -> zbus::Result<(u32, HashMap<String, zbus::OwnedVariant>)>;
 }
 
 /// `Request.Close()` must be answered with a *non-cancellation* response code.
@@ -304,12 +274,9 @@ async fn request_close_reports_other_not_cancelled() {
     let h = handle.clone();
     tokio::spawn(async move {
         tokio::time::sleep(std::time::Duration::from_millis(300)).await;
-        let Ok(builder) = RequestCloserProxy::builder(&closer)
+        let builder = RequestCloserProxy::builder(&closer)
             .destination(dest.clone())
-            .and_then(|b| b.path(h.as_str()))
-        else {
-            return;
-        };
+            .path(h.as_str());
         let Ok(proxy) = builder.build().await else {
             return;
         };
@@ -333,10 +300,9 @@ async fn request_close_reports_other_not_cancelled() {
 
 /// A `PreparePrint` token is only valid for the application that obtained it.
 ///
-/// Tokens used to be looked up by value alone, so any sandboxed application
-/// could consume another application's cached printer, page setup and settings
-/// by guessing a token. A mismatched `app_id` is rejected and the entry is left
-/// in place for its rightful owner.
+/// A token is bound to the application that obtained it: a mismatched `app_id`
+/// is rejected and the entry is left in place for its rightful owner, so
+/// guessing a token cannot reuse another app's cached settings.
 #[test]
 fn print_token_is_bound_to_app_id() {
     use {

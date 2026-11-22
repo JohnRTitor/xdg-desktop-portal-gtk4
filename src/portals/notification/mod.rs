@@ -42,15 +42,18 @@
 //!    - *Icons:* If the app provides raw pixel data (a memfd "file-descriptor" or "bytes"), the
 //!      portal safely loads it into a `gdk_pixbuf::Pixbuf` and extracts the pixels for the host daemon.
 //!    - *Sounds:* If the app provides a sound file via FD, the portal copies it to a temporary
-//!      file in `/tmp/xdg-desktop-portal-gtk4-sounds/` and passes that path to the host daemon.
+//!      file in `$XDG_RUNTIME_DIR/xdg-desktop-portal-gtk4-sounds/` and passes that path to the host
+//!      daemon. Only the private runtime directory is used: a world-writable `/tmp` would let
+//!      another user plant a symlink for the daemon to write through.
 //! 4. **Backend Interaction:** It calls `org.freedesktop.Notifications.Notify` on the Session Bus.
 //!    If this notification is replacing an existing one (matching `app_id` + `id`), it passes the
 //!    existing host `u32` ID to replace it.
 //! 5. **State Tracking:** The returned system `u32` ID is saved in two thread-safe maps:
-//!    - `active_notifications`: Maps a shared `NotifKey { app_id, portal_id }` -> `u32`.
-//!    - `reverse_map`: Maps `u32` -> `NotificationTarget { key, action_targets, sound_file }`.
+//!    - `active_notifications`: `app_id -> portal_id -> u32`, keyed by two `Arc<str>` values.
+//!    - `reverse_map`: `u32` -> `NotificationTarget { key, action_targets, sound_file }`.
 //!
-//! Both maps reference the *same* `Arc<NotifKey>`, so the identity pair is stored once.
+//! The reverse entry holds an `Arc<NotifKey>` that shares its two `Arc<str>` strings with the
+//! forward map's keys, so the identity strings are stored once.
 //!
 //! **Action Invoked (User Clicks a Button or the Notification):**
 //! 1. One background task (`listen_for_server_signals`) receives the host daemon's
@@ -121,7 +124,8 @@
 //!   - `active_notifications` is keyed by the app's ID so `RemoveNotification` can find the host ID.
 //!   - `reverse_map` is keyed by the host ID so the background signal listeners can route host events
 //!     back to the correct app.
-//! - **Sound File Leaks:** If the portal crashes, `/tmp/xdg-desktop-portal-gtk4-sounds/` might accumulate
-//!   orphaned files because `Drop` isn't called. A future enhancement could clear this directory on startup.
+//! - **Sound File Leaks:** If the portal crashes, `$XDG_RUNTIME_DIR/xdg-desktop-portal-gtk4-sounds/` might
+//!   accumulate orphaned files because `Drop` isn't called. A future enhancement could clear this
+//!   directory on startup.
 
 pub mod dbus;

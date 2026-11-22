@@ -25,11 +25,10 @@ async fn notified(n: &Notify) -> bool {
 /// decrements the per-app counter; `run_request()` then calls `unregister()`
 /// for the very same `(app_id, path)` pair when the cancelled future finishes.
 ///
-/// That double decrement must not free the per-app budget while the same
-/// `app_id` still has live requests registered under a *different* sender.
-/// Today it does, which makes `max_sessions_per_app` unenforceable in
-/// exactly the situation it exists to protect against (a leaking or
-/// misbehaving app).
+/// The second decrement must be a no-op here: it may not free the per-app
+/// budget while the same `app_id` still has live requests registered under a
+/// *different* sender, which is exactly the situation `max_sessions_per_app`
+/// exists to protect against.
 #[tokio::test]
 async fn disconnect_does_not_double_decrement_per_app_budget() {
     let Ok(bus) = Connection::session().await else {
@@ -89,9 +88,8 @@ async fn disconnect_does_not_double_decrement_per_app_budget() {
     );
 
     // What run_request() does once the cancelled future unwinds. This must be a
-    // no-op: the sweep already accounted for /p/1, and decrementing again is
-    // what previously drove the app's count to zero and deleted the entry,
-    // freeing the whole budget while /p/2 was still live.
+    // no-op: the sweep already accounted for /p/1, so decrementing again must
+    // not delete the entry while /p/2 is still live.
     sm.unregister("app.a", &name1, "/p/1");
 
     // Exactly one slot came back, not two.
@@ -108,9 +106,8 @@ async fn disconnect_does_not_double_decrement_per_app_budget() {
     let _ = n2;
 }
 
-/// The per-app limit must actually stop work, not merely log. `run_request()`
-/// currently traces the `register()` failure and proceeds, so a caller can
-/// issue unlimited concurrent dialogs.
+/// The per-app limit must actually stop work, not merely log: a failed
+/// `register()` must reject the request instead of running the dialog.
 #[tokio::test]
 async fn session_limit_rejects_new_requests() {
     let Ok(bus) = Connection::session().await else {

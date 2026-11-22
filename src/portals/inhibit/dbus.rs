@@ -11,15 +11,13 @@ use {
     },
     tokio::sync::Notify,
     zbus::{
-        Connection, ObjectServer, fdo, interface,
-        message::Header,
-        object_server::SignalEmitter,
-        zvariant::{DeserializeDict, OwnedObjectPath, Type, Value},
+        Connection, DeserializeDict, ObjectServer, OwnedObjectPath, Type, Variant, fdo, interface,
+        message::Header, object_server::SignalEmitter,
     },
 };
 
 #[derive(DeserializeDict, Type, Debug, Default)]
-#[zvariant(signature = "dict")]
+#[zbus(signature = "dict")]
 struct InhibitOptions {
     reason: Option<String>,
 }
@@ -43,13 +41,7 @@ trait ScreenSaver {
     default_path = "/org/freedesktop/login1"
 )]
 trait Login1Manager {
-    fn inhibit(
-        &self,
-        what: &str,
-        who: &str,
-        why: &str,
-        mode: &str,
-    ) -> zbus::Result<zbus::zvariant::OwnedFd>;
+    fn inhibit(&self, what: &str, who: &str, why: &str, mode: &str) -> zbus::Result<zbus::OwnedFd>;
 }
 
 struct InhibitRequest {
@@ -75,8 +67,7 @@ pub struct Inhibit {
     /// because the screensaver broadcasts to every monitor on each state change,
     /// and collecting the handles into a `Vec` to iterate outside the lock is
     /// cheaper in bytes: a bare `OwnedObjectPath` element carries its own path
-    /// buffer and refcount, where an `Arc` element is a single pointer. Measured
-    /// at 1536 bytes versus 512 for a 64-monitor fan-out.
+    /// buffer and refcount, where an `Arc` element is a single pointer.
     active_monitors: Arc<Mutex<HashMap<OwnedObjectPath, Arc<OwnedObjectPath>>>>,
     /// Last observed `screensaver-active` value, used to seed a new monitor.
     ///
@@ -140,9 +131,9 @@ const SESSION_STATE_RUNNING: u32 = 1;
 /// 2 = Query End, 3 = Ending), and both are emitted on every transition and once
 /// when a monitor is created, so a new monitor learns the current state without
 /// waiting for the next change.
-fn monitor_state<'a>(screensaver_active: bool) -> HashMap<&'a str, Value<'a>> {
-    let mut state: HashMap<&'a str, Value<'a>> = HashMap::with_capacity(2);
-    state.insert("screensaver-active", Value::Bool(screensaver_active));
+fn monitor_state<'a>(screensaver_active: bool) -> HashMap<&'a str, Variant<'a>> {
+    let mut state: HashMap<&'a str, Variant<'a>> = HashMap::with_capacity(2);
+    state.insert("screensaver-active", Variant::Bool(screensaver_active));
     // Always publish `session-state` alongside `screensaver-active`, with the
     // one value this backend can actually be in.
     //
@@ -160,7 +151,7 @@ fn monitor_state<'a>(screensaver_active: bool) -> HashMap<&'a str, Value<'a>> {
     // every consumer see `session_state == 0`, a value outside the documented
     // 1/2/3 range, so an app that switched on it fell through to undefined
     // behaviour.
-    state.insert("session-state", Value::U32(SESSION_STATE_RUNNING));
+    state.insert("session-state", Variant::U32(SESSION_STATE_RUNNING));
     state
 }
 
@@ -168,20 +159,14 @@ fn monitor_state<'a>(screensaver_active: bool) -> HashMap<&'a str, Value<'a>> {
 ///
 /// Only three of the four documented flags reach logind; bit 2 (user switch) is
 /// accepted from callers but has no logind equivalent, so it contributes
-/// nothing -- preserved from the previous implementation, which also skipped it.
-/// Returns `""` when no inhibitable flag is set, which the caller treats as
-/// "do not ask logind".
+/// nothing. Returns `""` when no inhibitable flag is set, which the caller
+/// treats as "do not ask logind".
 ///
-/// This is a table rather than the `Vec` + `join(":")` it replaces: the flag
-/// space is four bits wide, so every reachable answer is a compile-time constant
-/// and the whole mapping costs nothing at run time. The join form allocated a
-/// vector that grew as it was pushed to, then a second `String` to hold the
-/// result.
+/// The flag space is four bits wide, so every reachable answer is a compile-time
+/// constant and the whole mapping costs nothing at run time.
 const fn inhibit_targets(reason: u32) -> &'static str {
     // Only the three logind-understood flags are considered; bit 2 (user
-    // switch) and any bit a future caller might set are dropped, matching the
-    // previous implementation, which tested `reason & FLAG` per known flag and
-    // ignored everything else.
+    // switch) and any bit a future caller might set are ignored.
     match reason & (1 | 4 | 8) {
         0 => "",
         1 => "shutdown",
@@ -337,14 +322,16 @@ impl Inhibit {
         let notify = Arc::new(Notify::new());
         let cancel_notify = Arc::new(Notify::new());
 
-        let sender = match header.sender() {
-            Some(s) => String::from(s.as_str()),
-            None => return Ok(2),
+        // The register/unregister calls below only need `&str`, so borrow the
+        // sender from the message. Only the spawned cleanup task needs an owned
+        // copy, which is made once at the bottom of this method.
+        let Some(sender) = header.sender() else {
+            return Ok(2);
         };
 
         if let Err(e) = self.session_manager.register(
             &app_id,
-            &sender,
+            sender.as_str(),
             session_handle.as_str(),
             cancel_notify.clone(),
         ) {
@@ -356,8 +343,8 @@ impl Inhibit {
         if let Err(e) = server.at(session_handle.clone(), session).await {
             tracing::error!("Failed to export monitor session: {}", e);
             self.session_manager
-                .unregister(&app_id, &sender, session_handle.as_str());
-            return Ok(2); // Returning 2 as general error for create_monitor according to xdp-gtk
+                .unregister(&app_id, sender.as_str(), session_handle.as_str());
+            return Ok(2); // 2 is the general error for CreateMonitor
         }
 
         self.active_monitors
@@ -369,7 +356,9 @@ impl Inhibit {
         let monitors_clone = self.active_monitors.clone();
         let session_manager_clone = self.session_manager.clone();
         let app_id_clone = app_id.clone();
-        let sender_clone = sender.clone();
+        // The cleanup task outlives this method, so it needs an owned name;
+        // this is the only allocation on the sender path now.
+        let sender_owned = sender.as_str().to_owned();
         let server_clone = server.clone();
 
         tokio::spawn(async move {
@@ -381,7 +370,7 @@ impl Inhibit {
             monitors_clone.lock().remove(&handle_clone);
             session_manager_clone.unregister(
                 &app_id_clone,
-                &sender_clone,
+                &sender_owned,
                 session_handle_clone.as_str(),
             );
 
@@ -487,8 +476,8 @@ impl Inhibit {
     #[zbus(signal)]
     async fn state_changed(
         ctx: &SignalEmitter<'_>,
-        session_handle: &zbus::zvariant::ObjectPath<'_>,
-        state: &HashMap<&str, Value<'_>>,
+        session_handle: &zbus::ObjectPath<'_>,
+        state: &HashMap<&str, Variant<'_>>,
     ) -> zbus::Result<()>;
 }
 
@@ -497,16 +486,19 @@ mod tests {
     use {
         super::*,
         std::collections::HashMap,
-        zbus::zvariant::{self, Endian, Value, serialized::Context},
+        zbus::{
+            Variant,
+            wire::{self, Endian, serialized::Context},
+        },
     };
 
     #[test]
     fn test_inhibit_options_deserialize() {
         let mut dict = HashMap::new();
-        dict.insert("reason", Value::from("Playing a movie"));
+        dict.insert("reason", Variant::from("Playing a movie"));
 
-        let ctxt = Context::new_dbus(Endian::Little, 0);
-        let encoded = zvariant::to_bytes(ctxt, &dict).unwrap();
+        let ctxt = Context::new(Endian::Little, 0);
+        let encoded = wire::to_bytes(ctxt, &dict).unwrap();
         let options: InhibitOptions = encoded.deserialize().unwrap().0;
 
         assert_eq!(options.reason.as_deref(), Some("Playing a movie"));
@@ -514,9 +506,9 @@ mod tests {
 
     #[test]
     fn test_inhibit_options_empty() {
-        let dict: HashMap<&str, Value> = HashMap::new();
-        let ctxt = Context::new_dbus(Endian::Little, 0);
-        let encoded = zvariant::to_bytes(ctxt, &dict).unwrap();
+        let dict: HashMap<&str, Variant> = HashMap::new();
+        let ctxt = Context::new(Endian::Little, 0);
+        let encoded = wire::to_bytes(ctxt, &dict).unwrap();
         let options: InhibitOptions = encoded.deserialize().unwrap().0;
 
         assert_eq!(options.reason, None);
@@ -549,9 +541,8 @@ mod inhibit_target_tests {
         assert_eq!(inhibit_targets(1 | 4 | 8), "shutdown:sleep:idle");
     }
 
-    /// Bit 2 (user switch) has no logind counterpart. It was already skipped
-    /// before this became a table, so a caller sending only that flag must still
-    /// get no inhibition request rather than a newly-invented one.
+    /// Bit 2 (user switch) has no logind counterpart, so a caller sending only
+    /// that flag must get no inhibition request.
     #[test]
     fn user_switch_alone_asks_logind_for_nothing() {
         assert_eq!(inhibit_targets(2), "");
@@ -579,9 +570,8 @@ mod inhibit_target_tests {
         assert_eq!(inhibit_targets(8 | 64), "idle");
     }
 
-    /// The regression this guards: the mapping used to build a `Vec<&str>` and
-    /// `join(":")` it, allocating the vector and then the result string on every
-    /// `Inhibit` call. It is now a table lookup returning a `&'static str`.
+    /// Every reachable `reason` maps without allocating: the table returns a
+    /// `&'static str`.
     #[test]
     fn resolving_the_flags_allocates_nothing() {
         for reason in [0u32, 1, 2, 4, 5, 8, 9, 12, 13, 1 | 2 | 4 | 8, 16] {
@@ -683,18 +673,13 @@ mod monitor_tests {
         assert!(broadcast_sessions(&monitors).is_empty());
     }
 
-    /// The regression this guards: the monitor handles are read on every
-    /// screensaver state change and the collected `Vec` is what the fan-out
-    /// iterates.
-    ///
-    /// Note on what this does and does not save: `OwnedObjectPath::clone` was
-    /// already allocation-free (it is a refcounted handle), so the old code did
-    /// not allocate per monitor either -- measured at one `Vec` allocation then
-    /// as now. What the `Arc` changes is the retained size of that vector:
-    /// 1536 bytes for 64 bare handles versus 512, since each element shrinks
-    /// from a path buffer plus its refcount to a single pointer. That matters
-    /// because the vector is rebuilt on every state change and lives across the
-    /// awaited signal emission.
+    /// Monitor handles are read on every screensaver state change and the
+    /// collected `Vec` is what the fan-out iterates. Cloning a handle is
+    /// allocation-free either way; what the `Arc` changes is the retained size
+    /// of that vector, because each element shrinks from a path buffer plus its
+    /// refcount to a single pointer. The vector is rebuilt on every state
+    /// change and lives across the awaited signal emission, so this test pins
+    /// its single allocation.
     #[test]
     fn fanning_out_to_the_monitors_costs_one_vec() {
         let monitors = monitors_with(64);
@@ -712,6 +697,13 @@ mod monitor_tests {
         assert_eq!(
             snap.count, 1,
             "64 monitors must cost one Vec allocation, got {snap:?}"
+        );
+        // Pin the documented 1536 -> 512 byte claim: the single Vec holds 64
+        // one-pointer `Arc<OwnedObjectPath>` elements (64 * 8 = 512), not 64
+        // bare path buffers (which measured 1536).
+        assert_eq!(
+            snap.bytes, 512,
+            "the fan-out Vec must hold 64 pointers (512 bytes), got {snap:?}"
         );
     }
 
@@ -743,20 +735,21 @@ mod monitor_tests {
 
     /// The frontend reads both keys out of this dict, so both must be present.
     ///
-    /// Regression: `session-state` was never inserted, so the frontend's
-    /// `g_variant_lookup (state, "session-state", "u", &session_state)` left the
-    /// variable at its initialiser of `0` -- a value the contract does not
-    /// define (the range is 1/2/3). Any application that switched on it had
-    /// undefined behaviour.
+    /// `session-state` must be in the 1/2/3 range; a missing key leaves the
+    /// frontend's lookup at its initialiser of `0`, which the contract does not
+    /// define.
     #[test]
     fn the_state_dict_always_carries_both_documented_keys() {
         for active in [true, false] {
             let state = monitor_state(active);
             assert_eq!(state.len(), 2, "exactly the two contract keys");
-            assert_eq!(state.get("screensaver-active"), Some(&Value::Bool(active)));
+            assert_eq!(
+                state.get("screensaver-active"),
+                Some(&Variant::Bool(active))
+            );
             assert_eq!(
                 state.get("session-state"),
-                Some(&Value::U32(SESSION_STATE_RUNNING)),
+                Some(&Variant::U32(SESSION_STATE_RUNNING)),
                 "session-state must never be absent"
             );
             assert_eq!(
@@ -775,7 +768,7 @@ mod monitor_tests {
         for active in [true, false] {
             assert_eq!(
                 monitor_state(active).get("session-state"),
-                Some(&Value::U32(1)),
+                Some(&Variant::U32(1)),
                 "the reported state must not depend on the screensaver"
             );
         }

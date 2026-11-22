@@ -52,7 +52,7 @@
 //! 1. **Application** calls `Print`, passing the `token` and a file descriptor (`fd`).
 //! 2. **Portal Object (`Print`)** receives the request in `print`.
 //! 3. **Validation:** The portal duplicates the received descriptor with a CLOEXEC-preserving
-//!    `fcntl_dupfd_cloexec`, because zvariant borrows the original from the D-Bus message and zbus
+//!    `fcntl_dupfd_cloexec`, because zbus borrows the original from the D-Bus message and zbus
 //!    closes it when the method returns. If the token is absent or is not a known prepared token,
 //!    `PrintUi` presents the dialog on this call first.
 //! 4. **GUI/Backend Interaction:** The request is dispatched to the GTK thread via `ExecutePrintUi::run`.

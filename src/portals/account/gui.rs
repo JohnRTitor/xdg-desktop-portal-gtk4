@@ -90,7 +90,10 @@ impl AccountUi {
         user_name_entry.set_text(&self.user_name);
         vbox.append(&user_name_entry);
 
-        let icon_file = self.icon_file.clone();
+        // `self` is owned and `icon_file` is not read again below, so move it
+        // out rather than cloning. The later uses only touch `parent_window`
+        // and `activation_token`, which are separate fields.
+        let icon_file = self.icon_file;
 
         let window = dialog.window.clone();
 
@@ -119,8 +122,8 @@ impl AccountUi {
             #[weak]
             real_name_entry,
             move |_| {
-                // If the user selected an icon, we must convert it to a file:// URI
-                // as required by the portal specification.
+                // AccountsService may supply a plain path; convert it to a
+                // file:// URI as required by the portal specification.
                 let image_uri = if !icon_file.is_empty() {
                     if let Ok(uri) = glib::filename_to_uri(&icon_file, None) {
                         uri.into()

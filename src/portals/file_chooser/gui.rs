@@ -2,7 +2,7 @@ use {
     crate::gui::{PortalDispatcher, UiError, UiProxy},
     gtk4::{
         FileChooserAction, FileChooserDialog, FileFilter, RecentData, RecentManager, ResponseType,
-        gio::{self, File},
+        gio::{self, File, prelude::ListModelExt},
         glib::{self, MainContext},
         prelude::{
             Cast, DialogExt, FileChooserExt, FileChooserExtManual, FileExt, GtkWindowExt,
@@ -10,13 +10,7 @@ use {
         },
     },
     rust_i18n::t,
-    std::{
-        borrow::Cow,
-        cell::Cell,
-        collections::{HashMap, HashSet},
-        rc::Rc,
-        time::Duration,
-    },
+    std::{borrow::Cow, cell::Cell, collections::HashMap, rc::Rc, time::Duration},
     tokio::sync::{mpsc::channel, oneshot::Receiver},
 };
 
@@ -158,38 +152,39 @@ impl FileChooserUi {
         let response_handler = dialog.connect_response(move |dialog, r| {
             let res = match r {
                 ResponseType::Ok => {
-                    let files: Vec<_> = dialog
-                        .files()
-                        .into_iter()
-                        .filter_map(|f| f.ok().and_then(|f| f.downcast::<gio::File>().ok()))
-                        .map(|f| {
-                            let uri = f.uri();
-                            if !uri.starts_with("file://")
-                                && let Some(path) = f.path()
-                            {
-                                return gio::File::for_path(path).uri().into();
-                            }
-                            uri.into()
-                        })
-                        .collect();
+                    let selected = dialog.files();
+                    // `filter_map` can drop entries, so the selection count is an
+                    // upper bound: reserve it once instead of growing per file.
+                    let mut files: Vec<String> = Vec::with_capacity(selected.n_items() as usize);
+                    files.extend(
+                        selected
+                            .into_iter()
+                            .filter_map(|f| f.ok().and_then(|f| f.downcast::<gio::File>().ok()))
+                            .map(|f| {
+                                let uri = f.uri();
+                                if !uri.starts_with("file://")
+                                    && let Some(path) = f.path()
+                                {
+                                    return gio::File::for_path(path).uri().into();
+                                }
+                                uri.into()
+                            }),
+                    );
                     add_recent(&self.app_id, &files);
                     let filter = cf
                         .take()
                         .and_then(|f| filters.get(&f))
                         .and_then(|&i| offered.get(i))
                         .cloned();
-                    let choices: Vec<_> = self
-                        .choices
-                        .as_deref()
-                        .unwrap_or_default()
-                        .iter()
-                        .flat_map(|c| {
-                            dialog.choice(&c.id).map(|v| FinalChoice {
-                                id: c.id.clone(),
-                                variant_id: v.into(),
-                            })
+                    let configured = self.choices.as_deref().unwrap_or_default();
+                    // At most one final choice per configured choice.
+                    let mut choices = Vec::with_capacity(configured.len());
+                    choices.extend(configured.iter().flat_map(|c| {
+                        dialog.choice(&c.id).map(|v| FinalChoice {
+                            id: c.id.clone(),
+                            variant_id: v.into(),
                         })
-                        .collect();
+                    }));
                     // `read_only_choice` is only injected for Open actions, so
                     // for any other action (and for `directory: true`) the
                     // lookup misses. Default to writable, not read-only, so a
@@ -230,7 +225,6 @@ impl FileChooserUi {
 
         dialog.show();
         context.spawn_local(async move {
-            // Wait for either the dialog response or the D-Bus request cancellation
             tokio::select! {
                 _ = done_rx.recv() => {}
                 _ = close_on_close => {}
@@ -270,8 +264,11 @@ impl FileChooserUi {
             (&t!("cancel_action"), ResponseType::Cancel),
         ];
 
+        // GTK copies the title into the widget, so move the caller's String out
+        // and lend a borrow rather than cloning the whole buffer.
+        let title = std::mem::take(&mut self.title);
         let dialog = FileChooserDialog::new(
-            Some(self.title.clone()),
+            Some(title.as_str()),
             None::<&gtk4::Window>,
             action,
             &buttons,
@@ -316,16 +313,17 @@ impl FileChooserUi {
             // The portal spec specifies that an 'Open' dialog should let the user
             // choose whether the file is opened read-only. We inject this choice
             // dynamically into the GTK dialog if it's an Open action.
-            let choice_ids: HashSet<_> = self
+            read_only_id = "_read_only".into();
+            // Ensure our injected choice ID doesn't collide with one provided by
+            // the frontend. `any` scans the handful of choices directly, so no
+            // throwaway `HashSet` of every id has to be built.
+            while self
                 .choices
                 .as_deref()
                 .unwrap_or_default()
                 .iter()
-                .map(|c| c.id.as_str())
-                .collect();
-            read_only_id = "_read_only".into();
-            // Ensure our injected choice ID doesn't collide with one provided by the frontend.
-            while choice_ids.contains(read_only_id.as_str()) {
+                .any(|c| c.id.as_str() == read_only_id.as_str())
+            {
                 read_only_id.push('_');
             }
             dialog.add_choice(&read_only_id, t!("open_files_read_only").as_ref(), &[]);
@@ -389,6 +387,163 @@ fn add_recent(app_id: &str, uris: &[String]) {
                 &[],
                 false,
             ),
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `FilterKind` has two data-carrying `String` variants. Rust can only use
+    /// a variant's niche for the tag when at most one variant carries data, so
+    /// the 24-byte `String` payload is joined by an 8-byte tag: 32 bytes on
+    /// 64-bit. Pin it so the enum does not silently grow. There is no
+    /// `#[repr(u8)]` to apply here -- the variants carry fields.
+    #[test]
+    #[cfg(target_pointer_width = "64")]
+    fn filter_kind_is_two_words_plus_tag() {
+        assert_eq!(std::mem::size_of::<FilterKind>(), 32);
+    }
+
+    #[test]
+    fn effective_filters_borrows_the_caller_list_and_preselects_by_name() {
+        let filters = vec![
+            Filter {
+                name: "Images".into(),
+                elements: vec![FilterKind::Glob("*.png".into())],
+            },
+            Filter {
+                name: "Audio".into(),
+                elements: vec![FilterKind::Mime("audio/*".into())],
+            },
+        ];
+        // A different `current_filter` must still select by name, as GTK does.
+        let current = Filter {
+            name: "Audio".into(),
+            elements: vec![FilterKind::Glob("*".into())],
+        };
+
+        let (offered, selected) = effective_filters(Some(&filters), Some(&current));
+
+        assert!(matches!(offered, Cow::Borrowed(_)));
+        assert_eq!(offered.len(), 2);
+        assert_eq!(selected, Some(1));
+        assert!(std::ptr::eq(offered.as_ptr(), filters.as_ptr()));
+    }
+
+    #[test]
+    fn effective_filters_with_filters_and_no_current_selects_none() {
+        let filters = vec![Filter {
+            name: "Images".into(),
+            elements: vec![],
+        }];
+
+        let (offered, selected) = effective_filters(Some(&filters), None);
+
+        assert!(matches!(offered, Cow::Borrowed(_)));
+        assert_eq!(offered.len(), 1);
+        assert_eq!(selected, None);
+    }
+
+    #[test]
+    fn effective_filters_builds_a_single_filter_when_only_current_is_set() {
+        let current = Filter {
+            name: "Only".into(),
+            elements: vec![FilterKind::Glob("*".into())],
+        };
+
+        let (offered, selected) = effective_filters(None, Some(&current));
+
+        assert!(matches!(offered, Cow::Owned(_)));
+        assert_eq!(offered.len(), 1);
+        assert_eq!(offered[0], current);
+        assert_eq!(selected, Some(0));
+    }
+
+    #[test]
+    fn effective_filters_with_empty_list_falls_back_to_current() {
+        let empty: Vec<Filter> = Vec::new();
+        let current = Filter {
+            name: "Only".into(),
+            elements: vec![],
+        };
+
+        let (offered, selected) = effective_filters(Some(&empty), Some(&current));
+
+        assert!(matches!(offered, Cow::Owned(_)));
+        assert_eq!(offered.len(), 1);
+        assert_eq!(offered[0], current);
+        assert_eq!(selected, Some(0));
+    }
+
+    #[test]
+    fn effective_filters_with_no_input_is_empty() {
+        let (offered, selected) = effective_filters(None, None);
+
+        assert!(matches!(offered, Cow::Owned(_)));
+        assert!(offered.is_empty());
+        assert_eq!(selected, None);
+    }
+
+    /// The common path -- the caller sent `filters` -- must hand back the
+    /// caller's slice untouched: borrowing each `Filter` (its name plus every
+    /// `FilterKind`) must allocate nothing.
+    #[test]
+    fn effective_filters_borrowed_arm_allocates_nothing() {
+        use crate::alloc_probe::AllocScope;
+
+        let filters = vec![
+            Filter {
+                name: "Images".into(),
+                elements: vec![
+                    FilterKind::Glob("*.png".into()),
+                    FilterKind::Glob("*.jpg".into()),
+                ],
+            },
+            Filter {
+                name: "Audio".into(),
+                elements: vec![FilterKind::Mime("audio/*".into())],
+            },
+        ];
+        let current = Filter {
+            name: "Audio".into(),
+            elements: vec![],
+        };
+
+        let scope = AllocScope::start();
+        let (offered, selected) = effective_filters(Some(&filters), Some(&current));
+        let snap = scope.finish();
+        std::hint::black_box(&offered);
+
+        assert_eq!(selected, Some(1));
+        assert_eq!(
+            snap.count, 0,
+            "borrowing the caller's filters must not allocate, got {snap:?}"
+        );
+    }
+
+    /// Positive control for the allocation probe: the `current_filter`-alone
+    /// arm genuinely has to build a new list, so it must allocate. Without this
+    /// the zero-allocation assertion above could pass vacuously.
+    #[test]
+    fn effective_filters_owned_arm_allocates() {
+        use crate::alloc_probe::AllocScope;
+
+        let current = Filter {
+            name: "Only".into(),
+            elements: vec![FilterKind::Glob("*".into())],
+        };
+
+        let scope = AllocScope::start();
+        let (offered, _) = effective_filters(None, Some(&current));
+        let snap = scope.finish();
+        std::hint::black_box(&offered);
+
+        assert!(matches!(offered, Cow::Owned(_)));
+        assert!(
+            snap.count > 0,
+            "cloning current_filter into a new list must allocate, got {snap:?}"
         );
     }
 }

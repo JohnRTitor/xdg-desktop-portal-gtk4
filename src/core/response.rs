@@ -1,4 +1,4 @@
-use {serde::Serialize, zbus::zvariant::Type};
+use {serde::Serialize, zbus::Type};
 
 const PORTAL_SUCCESS: u32 = 0;
 const PORTAL_CANCELLED: u32 = 1;
@@ -52,20 +52,24 @@ impl<T: Type> Response<T> {
     where
         T: Default,
     {
-        if error.is_user_cancellation() {
-            Self::cancelled()
-        } else {
-            Self::other()
+        // Match the variants explicitly so a new UiError forces a decision
+        // here, rather than silently falling into "other". This must agree
+        // with `is_user_cancellation()`, which the logging in the portals uses.
+        match error {
+            crate::gui::UiError::Rejected => Self::cancelled(),
+            crate::gui::UiError::Closed
+            | crate::gui::UiError::Refused
+            | crate::gui::UiError::Failed => Self::other(),
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use {super::*, serde::Serialize, zbus::zvariant::Type};
+    use {super::*, serde::Serialize, zbus::Type};
 
     #[derive(Serialize, Type, Default)]
-    #[zvariant(signature = "u")]
+    #[zbus(signature = "u")]
     struct DummyResult(u32);
 
     #[test]
@@ -85,11 +89,9 @@ mod tests {
     /// A dialog the user dismissed is a cancellation; one that never opened is
     /// not.
     ///
-    /// Regression: every caller collapsed both into code 1, so an application
-    /// whose dialog failed to appear -- GTK thread gone, request cancelled, GTK
-    /// refusing to build a window -- was told a person declined a prompt they
-    /// were never shown. The contract's own split is the reference here: 1 is
-    /// "the user cancelled the interaction", 2 is "ended in some other way".
+    /// The contract's split is the reference: 1 is "the user cancelled the
+    /// interaction", 2 is "ended in some other way" (GTK thread gone, request
+    /// cancelled, GTK refusing to build a window).
     #[test]
     fn a_user_refusal_is_cancelled_but_an_aborted_dialog_is_other() {
         let refused: Response<DummyResult> = Response::from_ui_error(crate::gui::UiError::Rejected);
@@ -117,5 +119,23 @@ mod tests {
         assert_eq!(never_shown.1.0, 0);
         assert_eq!(turned_down.1.0, 0);
         assert_eq!(failed.1.0, 0);
+    }
+
+    /// The explicit match above must stay in step with the helper the portals
+    /// use for their log levels; a new UiError variant triggers the match but
+    /// not this helper, so keep the agreement pinned.
+    #[test]
+    fn response_codes_agree_with_is_user_cancellation() {
+        for error in [
+            crate::gui::UiError::Closed,
+            crate::gui::UiError::Rejected,
+            crate::gui::UiError::Refused,
+            crate::gui::UiError::Failed,
+        ] {
+            let label = format!("{error:?}");
+            let is_cancellation = error.is_user_cancellation();
+            let code = Response::<DummyResult>::from_ui_error(error).0;
+            assert_eq!(code, if is_cancellation { 1 } else { 2 }, "{label}");
+        }
     }
 }

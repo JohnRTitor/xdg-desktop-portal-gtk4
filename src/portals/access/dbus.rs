@@ -6,9 +6,8 @@ use {
     },
     serde::Deserialize,
     zbus::{
-        ObjectServer, fdo, interface,
+        DeserializeDict, ObjectServer, OwnedObjectPath, SerializeDict, Type, fdo, interface,
         message::Header,
-        zvariant::{DeserializeDict, OwnedObjectPath, SerializeDict, Type},
     },
 };
 
@@ -17,7 +16,6 @@ use {
 /// This struct holds a proxy to the GTK main loop, used to present the generic
 /// access dialog when the system needs to ask the user for permission.
 pub struct Access {
-    // Keep a cloned UI proxy to dispatch GTK tasks.
     proxy: UiProxy,
     session_manager: crate::core::session_manager::SessionManager,
 }
@@ -35,11 +33,11 @@ impl Access {
 }
 
 #[derive(Type, Debug, Deserialize)]
-#[zvariant(signature = "(ssa(ss)s)")]
+#[zbus(signature = "(ssa(ss)s)")]
 struct Choice(String, String, Vec<(String, String)>, String);
 
 #[derive(DeserializeDict, Type, Debug, Default)]
-#[zvariant(signature = "dict")]
+#[zbus(signature = "dict")]
 struct AccessDialogOptions {
     modal: Option<bool>,
     deny_label: Option<String>,
@@ -50,7 +48,7 @@ struct AccessDialogOptions {
 }
 
 #[derive(SerializeDict, Type, Debug, Default)]
-#[zvariant(signature = "dict")]
+#[zbus(signature = "dict")]
 struct AccessResults {
     choices: Option<Vec<(String, String)>>,
 }
@@ -70,8 +68,9 @@ impl Access {
         options: AccessDialogOptions,
     ) -> Response<AccessResults> {
         let choices = options.choices.map(|c| {
-            c.into_iter()
-                .map(|ch| GuiChoice {
+            let mut mapped = Vec::with_capacity(c.len());
+            mapped.extend(c.into_iter().map(|ch| {
+                GuiChoice {
                     id: ch.0,
                     label: ch.1,
                     variants: ch
@@ -83,14 +82,15 @@ impl Access {
                         })
                         .collect(),
                     default: ch.3,
-                })
-                .collect()
+                }
+            }));
+            mapped
         });
 
         let res = AccessUi {
             app_id,
             parent_window,
-            activation_token: options.activation_token.clone(),
+            activation_token: options.activation_token,
             title,
             subtitle,
             body,
@@ -137,10 +137,13 @@ impl Access {
         options: AccessDialogOptions,
         #[zbus(object_server)] server: &ObjectServer,
     ) -> Result<Response<AccessResults>, fdo::Error> {
+        // `Header::sender()` borrows from the message, which outlives this
+        // method, so hand the borrowed `&str` straight to `run_request` instead
+        // of allocating a `String` for it.
         let sender = header
             .sender()
-            .map(|s| String::from(s.as_str()))
-            .ok_or_else(|| fdo::Error::Failed("Missing sender".into()))?;
+            .ok_or_else(|| fdo::Error::Failed("Missing sender".into()))?
+            .as_str();
         // Run the request concurrently with a cancellation listener.
         // If the frontend calls `Close()` on the request object path, `run_request`
         // will return `Response::other()` and drop the future.
@@ -148,7 +151,7 @@ impl Access {
             server,
             self.session_manager.clone(),
             &app_id,
-            &sender,
+            sender,
             handle,
             self.access_dialog_impl(
                 app_id.clone(),
@@ -168,7 +171,10 @@ mod tests {
     use {
         super::*,
         std::collections::HashMap,
-        zbus::zvariant::{self, Endian, Value, serialized::Context},
+        zbus::{
+            Variant,
+            wire::{self, Endian, serialized::Context},
+        },
     };
 
     #[test]
@@ -179,11 +185,11 @@ mod tests {
     #[test]
     fn test_access_dialog_options_deserialize() {
         let mut dict = HashMap::new();
-        dict.insert("modal", Value::from(false));
-        dict.insert("deny_label", Value::from("No"));
-        dict.insert("grant_label", Value::from("Yes"));
-        dict.insert("icon", Value::from("icon-name"));
-        dict.insert("activation_token", Value::from("token123"));
+        dict.insert("modal", Variant::from(false));
+        dict.insert("deny_label", Variant::from("No"));
+        dict.insert("grant_label", Variant::from("Yes"));
+        dict.insert("icon", Variant::from("icon-name"));
+        dict.insert("activation_token", Variant::from("token123"));
 
         let choice = (
             "choice_id",
@@ -192,10 +198,10 @@ mod tests {
             "default_variant",
         );
 
-        dict.insert("choices", Value::from(vec![choice]));
+        dict.insert("choices", Variant::from(vec![choice]));
 
-        let ctxt = Context::new_dbus(Endian::Little, 0);
-        let encoded = zvariant::to_bytes(ctxt, &dict).unwrap();
+        let ctxt = Context::new(Endian::Little, 0);
+        let encoded = wire::to_bytes(ctxt, &dict).unwrap();
         let options: AccessDialogOptions = encoded.deserialize().unwrap().0;
 
         assert_eq!(options.modal, Some(false));
@@ -208,9 +214,9 @@ mod tests {
 
     #[test]
     fn test_access_dialog_options_empty() {
-        let dict: HashMap<&str, Value> = HashMap::new();
-        let ctxt = Context::new_dbus(Endian::Little, 0);
-        let encoded = zvariant::to_bytes(ctxt, &dict).unwrap();
+        let dict: HashMap<&str, Variant> = HashMap::new();
+        let ctxt = Context::new(Endian::Little, 0);
+        let encoded = wire::to_bytes(ctxt, &dict).unwrap();
         let options: AccessDialogOptions = encoded.deserialize().unwrap().0;
 
         assert_eq!(options.modal, None);
@@ -224,10 +230,10 @@ mod tests {
             choices: Some(vec![("choice_id".into(), "variant_id".into())]),
         };
 
-        let ctxt = Context::new_dbus(Endian::Little, 0);
-        let encoded = zvariant::to_bytes(ctxt, &results).unwrap();
+        let ctxt = Context::new(Endian::Little, 0);
+        let encoded = wire::to_bytes(ctxt, &results).unwrap();
 
-        let decoded: HashMap<String, Value> = encoded.deserialize().unwrap().0;
+        let decoded: HashMap<String, Variant> = encoded.deserialize().unwrap().0;
         let choices = decoded.get("choices").unwrap();
         assert_eq!(choices.value_signature(), "a(ss)");
     }

@@ -40,7 +40,8 @@
 //!    the host OS to launch the default mail application. It also passes `activation_token` to GIO
 //!    to ensure the launched mail client is brought to the foreground.
 //! 7. **Response Generation:** It returns a successful `Response` object (with an empty dictionary,
-//!    per specification) or a cancelled response if launching fails.
+//!    per specification) or `Response::other()` if launching fails. No dialog is shown, so there is
+//!    no user cancellation to report.
 //! 8. **Cleanup:** `run_request` handles exporting and unexporting the request object.
 //!
 //! **Ownership:** Request tracking is owned by the `run_request` helper. The `Email` struct keeps
@@ -62,13 +63,15 @@
 //! The backend component for this portal is the host's `gio` application launching system.
 //! - **Request Flow:** The portal translates D-Bus options into a `mailto:` URI string and asks GIO to launch it.
 //! - **Failure Handling:** If GIO fails to find or launch a default application, the portal logs the error
-//!   and returns a cancelled response to the caller.
+//!   and returns `Response::other()` to the caller; no user interaction was cancelled.
 //!
 //! ## Specification Notes
 //!
-//! - **URI Construction:** The `mailto:` URI construction explicitly URI-escapes the CC, BCC, subject,
-//!   body, and attachment fields using `glib::uri_escape_string` to ensure the resulting URI is
-//!   well-formed and secure against injection, as implicitly mandated by the specification.
+//! - **URI Construction:** The `mailto:` URI construction explicitly URI-escapes the `address`/
+//!   `addresses` recipients as well as the CC, BCC, subject, body, and attachment fields using
+//!   `glib::uri_escape_string`, so a caller-supplied `&`, `?`, `#`, `%` or `,` cannot inject extra
+//!   query parameters. A literal `@` is allowed in the primary recipients so addresses stay
+//!   recognizable; CC/BCC addresses escape it.
 //! - **Response Object:** The specification requires returning a dictionary of results. For `ComposeEmail`,
 //!   this dictionary is intentionally empty (`EmailResults {}`), which is why the implementation returns an
 //!   empty serialized dictionary on success.

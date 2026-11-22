@@ -3,11 +3,7 @@ use {
     common::*,
     std::collections::HashMap,
     xdg_desktop_portal_gtk4::portals::dynamic_launcher::dbus::DynamicLauncher,
-    zbus::{
-        connection::Builder,
-        proxy,
-        zvariant::{OwnedObjectPath, Value},
-    },
+    zbus::{OwnedObjectPath, Variant, connection::Builder, proxy},
 };
 
 #[proxy(
@@ -22,14 +18,14 @@ trait DynamicLauncherPortal {
         app_id: &str,
         parent_window: &str,
         name: &str,
-        icon_v: Value<'_>,
-        options: HashMap<&str, Value<'_>>,
+        icon_v: Variant<'_>,
+        options: HashMap<&str, Variant<'_>>,
     ) -> zbus::Result<u32>;
 
     fn request_install_token(
         &self,
         app_id: &str,
-        options: HashMap<&str, Value<'_>>,
+        options: HashMap<&str, Variant<'_>>,
     ) -> zbus::Result<u32>;
 }
 
@@ -42,21 +38,21 @@ async fn test_dynamic_launcher_prepare_install_dummy_ui() -> Result<(), Box<dyn 
         10,
     );
     let proxy_ui = dummy_proxy();
-    let _conn = Builder::session()?
+    let _conn = Builder::session()
         .serve_at(
             "/org/freedesktop/portal/desktop",
             DynamicLauncher::new(&proxy_ui, sm),
-        )?
+        )
         .build()
         .await?;
 
     let proxy = DynamicLauncherPortalProxy::builder(&client_conn)
-        .destination(_conn.unique_name().unwrap().clone())?
+        .destination(_conn.unique_name().unwrap().clone())
         .build()
         .await?;
 
     let path = OwnedObjectPath::try_from("/org/freedesktop/portal/desktop/request/5").unwrap();
-    let icon = Value::from("icon-name");
+    let icon = Variant::from("icon-name");
 
     let res = proxy
         .prepare_install(path, "app_id", "window", "name", icon, HashMap::new())

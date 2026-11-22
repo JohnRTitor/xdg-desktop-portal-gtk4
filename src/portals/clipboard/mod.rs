@@ -106,8 +106,10 @@
 //! ## Maintenance Notes
 //!
 //! - **Memory Leaks (Pipes):** Ensure that if an application crashes or fails to call `SelectionWriteDone`,
-//!   the pending transfer maps in `dbus.rs` are cleaned up. Currently, the pending transfer map entry is
-//!   removed either on `SelectionWrite` or `SelectionWriteDone`.
+//!   the pending transfer maps in `dbus.rs` are cleaned up. A pending transfer entry is removed on
+//!   `SelectionWrite` or `SelectionWriteDone`; in addition, each successful `SelectionTransfer`
+//!   emission spawns a 10-second timeout task that drops the entry if the client never answers, so a
+//!   stuck transfer cannot keep its `fd_sender` alive indefinitely.
 
 pub mod dbus;
 pub mod gtk_backend;

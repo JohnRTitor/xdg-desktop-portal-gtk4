@@ -1,12 +1,8 @@
 use {
     gtk4::gio::{Settings, SettingsSchemaSource},
     parking_lot::RwLock,
-    std::{collections::HashMap, sync::Arc, time::Duration},
-    zbus::{
-        fdo, interface,
-        object_server::SignalEmitter,
-        zvariant::{OwnedValue, Value},
-    },
+    std::{collections::HashMap, ffi::OsStr, sync::Arc, time::Duration},
+    zbus::{OwnedVariant, Variant, fdo, interface, object_server::SignalEmitter},
 };
 
 use crate::{
@@ -18,6 +14,14 @@ use crate::{
 
 #[cfg(test)]
 use crate::portals::settings::aggregator::NS_FREEDESKTOP_APPEARANCE;
+
+/// Basenames of the config targets watched through the parent `~/.config` monitor.
+///
+/// Kept as `&str` literals because `OsStr::new` is not a `const fn`. Converting
+/// one to `&OsStr` at the comparison site is a zero-cost reinterpretation, so
+/// this allocates nothing on every file-monitor event -- unlike building three
+/// owned `OsString`s inside the callback.
+const RELEVANT_CONFIG_NAMES: [&str; 3] = ["gtk-3.0", "gtk-4.0", "kdeglobals"];
 
 /// Does `namespace` satisfy any of the caller's `patterns`?
 ///
@@ -57,7 +61,7 @@ fn namespace_matches(namespace: &str, patterns: &[String]) -> bool {
 ///
 /// Only the namespaces the caller asked for (or all of them) appear, and each is
 /// accompanied by a copy of its key/value map: the reply type is an owned
-/// `HashMap<String, HashMap<String, OwnedValue>>`, so the inner copy is required
+/// `HashMap<String, HashMap<String, OwnedVariant>>`, so the inner copy is required
 /// by the D-Bus contract rather than by the lookup.
 ///
 /// A namespace that is supported but has no data is omitted rather than sent as
@@ -66,7 +70,7 @@ fn namespace_matches(namespace: &str, patterns: &[String]) -> bool {
 fn read_all_from_state(
     state: &SettingsState,
     requested: &[String],
-) -> HashMap<String, HashMap<String, OwnedValue>> {
+) -> HashMap<String, HashMap<String, OwnedVariant>> {
     state
         .namespaces
         .iter()
@@ -168,11 +172,6 @@ impl SettingsPortal {
                     if let Ok(monitor) = config_dir_file
                         .monitor_directory(gio::FileMonitorFlags::NONE, gio::Cancellable::NONE)
                     {
-                        let relevant_names = [
-                            std::ffi::OsString::from("gtk-3.0"),
-                            std::ffi::OsString::from("gtk-4.0"),
-                            std::ffi::OsString::from("kdeglobals"),
-                        ];
                         monitor.set_rate_limit(100);
                         monitor.connect_changed({
                             let tx = tx_main.clone();
@@ -180,8 +179,13 @@ impl SettingsPortal {
                                 let is_relevant = [Some(file), other_file]
                                     .into_iter()
                                     .flatten()
-                                    .filter_map(|f| f.basename())
-                                    .any(|name| relevant_names.iter().any(|n| n == &name));
+                                    .any(|f| {
+                                        f.basename().as_deref().is_some_and(|name| {
+                                            RELEVANT_CONFIG_NAMES
+                                                .iter()
+                                                .any(|n| name == OsStr::new(*n))
+                                        })
+                                    });
 
                                 if is_relevant {
                                     let _ = tx.try_send(());
@@ -194,7 +198,6 @@ impl SettingsPortal {
                 }));
             }
 
-            // Initial load
             agg.reload_all();
 
             // Event loop: react to change notifications and emit D-Bus signals.
@@ -236,7 +239,7 @@ pub(crate) fn map_color_scheme(val: &str) -> u32 {
 
 #[interface(name = "org.freedesktop.impl.portal.Settings")]
 impl SettingsPortal {
-    async fn read(&self, namespace: String, key: String) -> Result<OwnedValue, fdo::Error> {
+    async fn read(&self, namespace: String, key: String) -> Result<OwnedVariant, fdo::Error> {
         let state = self.aggregator.read();
         if let Some(val) = state.get(&namespace, &key) {
             Ok(val)
@@ -249,7 +252,7 @@ impl SettingsPortal {
     async fn read_all(
         &self,
         namespaces: Vec<String>,
-    ) -> Result<HashMap<String, HashMap<String, OwnedValue>>, fdo::Error> {
+    ) -> Result<HashMap<String, HashMap<String, OwnedVariant>>, fdo::Error> {
         Ok(read_all_from_state(&self.aggregator.read(), &namespaces))
     }
 
@@ -258,7 +261,7 @@ impl SettingsPortal {
         ctx: &SignalEmitter<'_>,
         namespace: &str,
         key: &str,
-        value: &Value<'_>,
+        value: &Variant<'_>,
     ) -> zbus::Result<()>;
 
     #[zbus(property, name = "version")]
@@ -373,10 +376,8 @@ mod tests {
         assert!(!namespace_matches(NS_GNOME_DESKTOP_INTERFACE, &patterns));
     }
 
-    /// Regression: the previous matcher used `trim_end_matches('*')`, which
-    /// stripped *every* trailing star. `org.freedesktop.**` therefore collapsed
-    /// to the prefix `org.freedesktop.` and matched, though it is not a valid
-    /// pattern. The reference strips exactly one.
+    /// Exactly one trailing star is consumed: `org.freedesktop.**` must not
+    /// collapse into a valid `org.freedesktop.` prefix.
     #[test]
     fn only_one_trailing_star_is_consumed() {
         assert!(namespace_matches(
@@ -393,9 +394,8 @@ mod tests {
         );
     }
 
-    /// Regression: a doubled star mid-pattern used to reduce the prefix to
-    /// `org.gnome.desktop.` and match. One star is stripped, leaving a literal
-    /// `*` at the front of the prefix, which no namespace can start with.
+    /// Only a trailing star is a wildcard: stripping one from `org.gnome.desktop.*.*`
+    /// leaves a literal `*` that no namespace can start with.
     #[test]
     fn a_star_in_the_middle_does_not_match() {
         assert!(!namespace_matches(
@@ -404,10 +404,8 @@ mod tests {
         ));
     }
 
-    /// Regression: `read_kdeglobals` publishes `org.kde.kdeglobals.<Group>`, so a
-    /// bare `org.kde.kdeglobals` prefix must select those group namespaces. They
-    /// were previously unreachable through `ReadAll`, because the matcher only
-    /// knew the bare `org.kde.kdeglobals` name and never the group-suffixed ones.
+    /// `read_kdeglobals` publishes `org.kde.kdeglobals.<Group>`, so a bare
+    /// `org.kde.kdeglobals` prefix must select those group namespaces.
     #[test]
     fn the_kde_prefix_selects_group_namespaces() {
         let group_ns = "org.kde.kdeglobals.KDE";
@@ -442,8 +440,8 @@ mod read_all_tests {
     /// `read_kdeglobals` writes: `format!("{}.{}", NS_KDE_KDEGLOBALS, group)`.
     const KDE_GROUP: &str = "org.kde.kdeglobals.KDE";
 
-    fn value(s: &str) -> OwnedValue {
-        OwnedValue::try_from(Value::from(s)).expect("str to OwnedValue is infallible")
+    fn value(s: &str) -> OwnedVariant {
+        OwnedVariant::try_from(Variant::from(s)).expect("str to OwnedVariant is infallible")
     }
 
     /// Populates the namespaces the aggregator can produce, including the
@@ -456,7 +454,7 @@ mod read_all_tests {
         state
     }
 
-    fn keys(result: &HashMap<String, HashMap<String, OwnedValue>>) -> Vec<&str> {
+    fn keys(result: &HashMap<String, HashMap<String, OwnedVariant>>) -> Vec<&str> {
         let mut v: Vec<&str> = result.keys().map(String::as_str).collect();
         v.sort_unstable();
         v
@@ -511,12 +509,10 @@ mod read_all_tests {
         assert_eq!(keys(&result), vec![GNOME]);
     }
 
-    /// Regression: `read_kdeglobals` stores one namespace per INI group, as
-    /// `org.kde.kdeglobals.<Group>`. The previous implementation resolved
-    /// requests against a fixed list holding only the bare `org.kde.kdeglobals`,
-    /// so none of the group namespaces it had written could ever be selected
-    /// and every one of them was invisible to `ReadAll` -- while a direct `Read`
-    /// of the same namespace returned data. These two calls must agree.
+    /// `read_kdeglobals` stores one namespace per INI group, as
+    /// `org.kde.kdeglobals.<Group>`. Matching against live state rather than a
+    /// fixed list keeps `ReadAll` consistent with a direct `Read` of the same
+    /// namespace.
     #[test]
     fn group_suffixed_kde_namespaces_are_reachable() {
         let state = populated();

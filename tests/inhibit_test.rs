@@ -1,11 +1,7 @@
 use {
     futures_util::stream::StreamExt,
     std::collections::HashMap,
-    zbus::{
-        connection::Builder,
-        proxy,
-        zvariant::{OwnedObjectPath, Value},
-    },
+    zbus::{OwnedObjectPath, Variant, connection::Builder, proxy},
 };
 mod common;
 use xdg_desktop_portal_gtk4::portals::inhibit::dbus::Inhibit;
@@ -22,7 +18,7 @@ trait InhibitTest {
         app_id: &str,
         window: &str,
         reason: u32,
-        options: HashMap<&str, Value<'_>>,
+        options: HashMap<&str, Variant<'_>>,
     ) -> zbus::Result<()>;
 
     fn create_monitor(
@@ -37,14 +33,14 @@ trait InhibitTest {
     fn state_changed(
         &self,
         session_handle: OwnedObjectPath,
-        state: HashMap<&str, Value<'_>>,
+        state: HashMap<&str, Variant<'_>>,
     ) -> zbus::Result<()>;
 }
 
 #[tokio::test]
 async fn test_inhibit_returns_success() -> Result<(), Box<dyn std::error::Error>> {
     let client_conn = try_dbus_session!();
-    let _conn = Builder::session()?
+    let _conn = Builder::session()
         .serve_at(
             "/org/freedesktop/portal/desktop",
             Inhibit::new(
@@ -55,12 +51,12 @@ async fn test_inhibit_returns_success() -> Result<(), Box<dyn std::error::Error>
                 None,
             )
             .await,
-        )?
+        )
         .build()
         .await?;
 
     let proxy = InhibitTestProxy::builder(&client_conn)
-        .destination(_conn.unique_name().unwrap().clone())?
+        .destination(_conn.unique_name().unwrap().clone())
         .build()
         .await?;
 
@@ -86,7 +82,7 @@ async fn test_inhibit_returns_success() -> Result<(), Box<dyn std::error::Error>
 async fn create_monitor_seeds_state_changed_with_both_keys()
 -> Result<(), Box<dyn std::error::Error>> {
     let client_conn = try_dbus_session!();
-    let _conn = Builder::session()?
+    let _conn = Builder::session()
         .serve_at(
             "/org/freedesktop/portal/desktop",
             Inhibit::new(
@@ -97,12 +93,12 @@ async fn create_monitor_seeds_state_changed_with_both_keys()
                 None,
             )
             .await,
-        )?
+        )
         .build()
         .await?;
 
     let proxy = InhibitTestProxy::builder(&client_conn)
-        .destination(_conn.unique_name().unwrap().clone())?
+        .destination(_conn.unique_name().unwrap().clone())
         .build()
         .await?;
 
@@ -126,12 +122,12 @@ async fn create_monitor_seeds_state_changed_with_both_keys()
     let state = signal.args()?.state;
     assert_eq!(
         state.get("screensaver-active"),
-        Some(&Value::Bool(false)),
+        Some(&Variant::Bool(false)),
         "no ActiveChanged has arrived, so the seeded value is false"
     );
     assert_eq!(
         state.get("session-state"),
-        Some(&Value::U32(1)),
+        Some(&Variant::U32(1)),
         "session-state must be present and Running, never absent"
     );
 

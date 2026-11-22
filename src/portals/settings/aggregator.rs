@@ -5,7 +5,7 @@ use {
     },
     parking_lot::RwLock,
     std::{collections::HashMap, sync::Arc},
-    zbus::zvariant::{OwnedValue, Value},
+    zbus::{OwnedVariant, Variant},
 };
 
 use crate::portals::settings::dbus::map_color_scheme;
@@ -17,12 +17,22 @@ pub const KEY_COLOR_SCHEME: &str = "color-scheme";
 
 #[derive(Default, Debug)]
 pub struct SettingsState {
-    pub namespaces: HashMap<String, HashMap<String, OwnedValue>>,
+    pub namespaces: HashMap<String, HashMap<String, OwnedVariant>>,
 }
 
 impl SettingsState {
-    pub fn get(&self, ns: &str, key: &str) -> Option<OwnedValue> {
-        self.namespaces.get(ns).and_then(|m| m.get(key).cloned())
+    pub fn get(&self, ns: &str, key: &str) -> Option<OwnedVariant> {
+        self.get_ref(ns, key).cloned()
+    }
+
+    /// Borrow a value instead of cloning it.
+    ///
+    /// Inspection-only callers (diffing a reload, resolving derived appearance
+    /// keys) only read the `Variant`, so cloning the whole `OwnedVariant` there
+    /// is wasted work. Callers that must retain the value past the borrow --
+    /// notably `SettingsPortal::read` -- use [`Self::get`] instead.
+    pub fn get_ref(&self, ns: &str, key: &str) -> Option<&OwnedVariant> {
+        self.namespaces.get(ns).and_then(|m| m.get(key))
     }
 
     /// Inserts `val` under `namespaces[ns][key]`.
@@ -37,7 +47,7 @@ impl SettingsState {
     /// The miss path costs a second hash lookup (`get_mut`, then `insert`).
     /// That happens once per namespace per reload, so trading it for not
     /// allocating on every key is the right way round.
-    pub fn insert(&mut self, ns: &str, key: &str, val: OwnedValue) {
+    pub fn insert(&mut self, ns: &str, key: &str, val: OwnedVariant) {
         if let Some(inner) = self.namespaces.get_mut(ns) {
             inner.insert(key.to_owned(), val);
             return;
@@ -65,20 +75,13 @@ impl SettingsAggregator {
         }
     }
 
-    pub fn reload_all(&mut self) -> Vec<(String, String, OwnedValue)> {
+    pub fn reload_all(&mut self) -> Vec<(String, String, OwnedVariant)> {
         let mut new_state = SettingsState::default();
 
-        // 1. Read GSettings
         Self::read_gsettings(&mut new_state);
-
-        // 2. Read GTK 3.0 / 4.0 settings.ini
         Self::read_gtk_settings_ini(&mut new_state, "gtk-3.0");
         Self::read_gtk_settings_ini(&mut new_state, "gtk-4.0");
-
-        // 3. Read kdeglobals
         Self::read_kdeglobals(&mut new_state);
-
-        // 4. Resolve org.freedesktop.appearance
         Self::resolve_appearance(&mut new_state);
 
         let mut changes = Vec::new();
@@ -86,8 +89,8 @@ impl SettingsAggregator {
             let old_state = self.state.read();
             for (ns, keys) in &new_state.namespaces {
                 for (key, new_val) in keys {
-                    if let Some(old_val) = old_state.get(ns, key) {
-                        if old_val != *new_val {
+                    if let Some(old_val) = old_state.get_ref(ns, key) {
+                        if *old_val != *new_val {
                             changes.push((ns.clone(), key.clone(), new_val.clone()));
                         }
                     } else {
@@ -131,19 +134,19 @@ impl SettingsAggregator {
             let owned_val = match type_string {
                 "s" => val
                     .get::<String>()
-                    .and_then(|s| OwnedValue::try_from(Value::Str(s.into())).ok()),
+                    .and_then(|s| OwnedVariant::try_from(Variant::Str(s.into())).ok()),
                 "b" => val
                     .get::<bool>()
-                    .and_then(|b| OwnedValue::try_from(Value::Bool(b)).ok()),
+                    .and_then(|b| OwnedVariant::try_from(Variant::Bool(b)).ok()),
                 "u" => val
                     .get::<u32>()
-                    .and_then(|u| OwnedValue::try_from(Value::U32(u)).ok()),
+                    .and_then(|u| OwnedVariant::try_from(Variant::U32(u)).ok()),
                 "i" => val
                     .get::<i32>()
-                    .and_then(|i| OwnedValue::try_from(Value::I32(i)).ok()),
+                    .and_then(|i| OwnedVariant::try_from(Variant::I32(i)).ok()),
                 "d" => val
                     .get::<f64>()
-                    .and_then(|d| OwnedValue::try_from(Value::F64(d)).ok()),
+                    .and_then(|d| OwnedVariant::try_from(Variant::F64(d)).ok()),
                 _ => None,
             };
             let Some(v) = owned_val else {
@@ -179,19 +182,16 @@ impl SettingsAggregator {
             };
 
             let val_str = val.as_str();
-            let owned = if val_str == "true" {
-                OwnedValue::try_from(Value::Bool(true))
-                    .expect("Converting primitive Value to OwnedValue is infallible")
-            } else if val_str == "false" {
-                OwnedValue::try_from(Value::Bool(false))
-                    .expect("Converting primitive Value to OwnedValue is infallible")
-            } else if let Ok(num) = val_str.parse::<i32>() {
-                OwnedValue::try_from(Value::I32(num))
-                    .expect("Converting primitive Value to OwnedValue is infallible")
-            } else {
-                OwnedValue::try_from(Value::Str(val_str.into()))
-                    .expect("Converting primitive Value to OwnedValue is infallible")
+            let variant = match val_str {
+                "true" => Variant::Bool(true),
+                "false" => Variant::Bool(false),
+                other => match other.parse::<i32>() {
+                    Ok(num) => Variant::I32(num),
+                    Err(_) => Variant::Str(other.into()),
+                },
             };
+            let owned = OwnedVariant::try_from(variant)
+                .expect("Converting primitive Variant to OwnedVariant is infallible");
             state.insert(NS_GNOME_DESKTOP_INTERFACE, key_str, owned);
         }
     }
@@ -223,17 +223,17 @@ impl SettingsAggregator {
                     continue;
                 };
 
+                // Unlike settings.ini, kdeglobals keeps everything except the
+                // two boolean literals as a string, including numeric-looking
+                // values. Do not add the i32 parsing used above.
                 let val_str = val.as_str();
-                let owned = if val_str == "true" {
-                    OwnedValue::try_from(Value::Bool(true))
-                        .expect("Converting primitive Value to OwnedValue is infallible")
-                } else if val_str == "false" {
-                    OwnedValue::try_from(Value::Bool(false))
-                        .expect("Converting primitive Value to OwnedValue is infallible")
-                } else {
-                    OwnedValue::try_from(Value::Str(val_str.into()))
-                        .expect("Converting primitive Value to OwnedValue is infallible")
+                let variant = match val_str {
+                    "true" => Variant::Bool(true),
+                    "false" => Variant::Bool(false),
+                    other => Variant::Str(other.into()),
                 };
+                let owned = OwnedVariant::try_from(variant)
+                    .expect("Converting primitive Variant to OwnedVariant is infallible");
                 state.insert(&ns, key_str, owned);
             }
         }
@@ -241,27 +241,27 @@ impl SettingsAggregator {
 
     fn resolve_appearance(state: &mut SettingsState) {
         let mut color_scheme_val = 0u32;
-        if let Some(cs) = state.get(NS_GNOME_DESKTOP_INTERFACE, KEY_COLOR_SCHEME) {
-            if let Value::Str(s) = &*cs {
+        if let Some(cs) = state.get_ref(NS_GNOME_DESKTOP_INTERFACE, KEY_COLOR_SCHEME) {
+            if let Variant::Str(s) = &**cs {
                 color_scheme_val = map_color_scheme(s.as_str());
             }
-        } else if let Some(pref_dark) = state.get(
+        } else if let Some(pref_dark) = state.get_ref(
             NS_GNOME_DESKTOP_INTERFACE,
             "gtk-application-prefer-dark-theme",
-        ) && let Value::Bool(b) = &*pref_dark
+        ) && let Variant::Bool(b) = &**pref_dark
         {
             color_scheme_val = if *b { 1 } else { 2 };
         }
         state.insert(
             NS_FREEDESKTOP_APPEARANCE,
             KEY_COLOR_SCHEME,
-            OwnedValue::try_from(Value::U32(color_scheme_val))
-                .expect("Converting primitive Value to OwnedValue is infallible"),
+            OwnedVariant::try_from(Variant::U32(color_scheme_val))
+                .expect("Converting primitive Variant to OwnedVariant is infallible"),
         );
 
         let mut contrast_val = 0u32;
-        if let Some(hc) = state.get(NS_GNOME_DESKTOP_INTERFACE, "gtk-theme-name")
-            && let Value::Str(s) = &*hc
+        if let Some(hc) = state.get_ref(NS_GNOME_DESKTOP_INTERFACE, "gtk-theme-name")
+            && let Variant::Str(s) = &**hc
             && s.as_str().contains("HighContrast")
         {
             contrast_val = 1;
@@ -269,21 +269,21 @@ impl SettingsAggregator {
         state.insert(
             NS_FREEDESKTOP_APPEARANCE,
             "contrast",
-            OwnedValue::try_from(Value::U32(contrast_val))
-                .expect("Converting primitive Value to OwnedValue is infallible"),
+            OwnedVariant::try_from(Variant::U32(contrast_val))
+                .expect("Converting primitive Variant to OwnedVariant is infallible"),
         );
 
         let mut reduced_motion_val = 0u32;
-        if let Some(ea) = state.get(NS_GNOME_DESKTOP_INTERFACE, "gtk-enable-animations")
-            && let Value::Bool(b) = &*ea
+        if let Some(ea) = state.get_ref(NS_GNOME_DESKTOP_INTERFACE, "gtk-enable-animations")
+            && let Variant::Bool(b) = &**ea
         {
             reduced_motion_val = if *b { 0 } else { 1 };
         }
         state.insert(
             NS_FREEDESKTOP_APPEARANCE,
             "reduced-motion",
-            OwnedValue::try_from(Value::U32(reduced_motion_val))
-                .expect("Converting primitive Value to OwnedValue is infallible"),
+            OwnedVariant::try_from(Variant::U32(reduced_motion_val))
+                .expect("Converting primitive Variant to OwnedVariant is infallible"),
         );
     }
 }
@@ -292,8 +292,9 @@ impl SettingsAggregator {
 mod tests {
     use super::*;
 
-    fn bool_value(v: bool) -> OwnedValue {
-        OwnedValue::try_from(Value::Bool(v)).expect("primitive Value to OwnedValue is infallible")
+    fn bool_value(v: bool) -> OwnedVariant {
+        OwnedVariant::try_from(Variant::Bool(v))
+            .expect("primitive Variant to OwnedVariant is infallible")
     }
 
     #[test]
@@ -367,10 +368,9 @@ mod tests {
         assert_eq!(state.get(NS_GNOME_DESKTOP_INTERFACE, "absent"), None);
     }
 
-    /// The regression this guards: `insert` used to build a fresh namespace
-    /// `String` on every call, so loading N keys into one namespace cost N
-    /// throwaway allocations on top of the N key allocations. `read_gsettings`
-    /// does exactly that, once per key, on every reload.
+    /// Loading N keys into one namespace must cost one allocation per key, not
+    /// a throwaway namespace `String` each time. `read_gsettings` does exactly
+    /// that, once per key, on every reload.
     #[test]
     fn insert_into_one_namespace_allocates_one_key_string_per_key() {
         let keys: Vec<String> = (0..64).map(|i| format!("key-{i}")).collect();

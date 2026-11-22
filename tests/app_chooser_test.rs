@@ -3,11 +3,7 @@ use {
     common::*,
     std::collections::HashMap,
     xdg_desktop_portal_gtk4::portals::app_chooser::dbus::AppChooser,
-    zbus::{
-        connection::Builder,
-        proxy,
-        zvariant::{OwnedObjectPath, Value},
-    },
+    zbus::{OwnedObjectPath, Variant, connection::Builder, proxy},
 };
 
 #[proxy(
@@ -23,7 +19,7 @@ trait AppChooserPortal {
         app_id: &str,
         parent_window: &str,
         choices: Vec<String>,
-        options: HashMap<&str, Value<'_>>,
+        options: HashMap<&str, Variant<'_>>,
     ) -> zbus::Result<u32>;
 
     #[zbus(name = "UpdateChoices")]
@@ -38,16 +34,16 @@ async fn test_choose_application_dummy_ui() -> Result<(), Box<dyn std::error::Er
         10,
     );
     let proxy_ui = dummy_proxy();
-    let _conn = Builder::session()?
+    let _conn = Builder::session()
         .serve_at(
             "/org/freedesktop/portal/desktop",
             AppChooser::new(&proxy_ui, sm),
-        )?
+        )
         .build()
         .await?;
 
     let proxy = AppChooserPortalProxy::builder(&client_conn)
-        .destination(_conn.unique_name().unwrap().clone())?
+        .destination(_conn.unique_name().unwrap().clone())
         .build()
         .await?;
 
@@ -65,7 +61,7 @@ async fn test_choose_application_dummy_ui() -> Result<(), Box<dyn std::error::Er
     assert!(res.is_err());
 
     // UpdateChoices for a handle whose dialog is not running must be reported,
-    // not silently accepted. This previously asserted the opposite.
+    // not silently accepted.
     let update_res = proxy
         .update_choices(path, vec!["new_choice".to_string()])
         .await;

@@ -9,11 +9,10 @@ on:
     paths:
       - '**.rs'
       - '**Cargo.toml'
-      # ever being linted.
       - '**Cargo.lock'
   # As in `ci.yml`: the path filters leave changes that touch none of them
-  # unchecked, and provide no way to re-run one that was cancelled by a newer
-  # push.
+  # unchecked. Dispatch runs the jobs whatever the filter says, and is also how
+  # to re-run something a newer push cancelled.
   workflow_dispatch:
 
 permissions:
@@ -26,7 +25,7 @@ env:
 
 concurrency:
   group: lint-${{ github.ref }}
-  cancel-in-progress: true # no change needed, but keep as-is? actually lint comment says "As in `ci.yml`..." only; fine. No edit necessary. Wait let us not make useless edit. I'll skip this edit call. But I already included it in parallel - easier to revert conceptually; better to not send it. However I must correct: lint.yml has no reference to nixos.yml, so no edit needed. I'll cancel by making old==new? not possible. Let us just do a no-op edit is bad. Instead I'll issue a proper harmless no-change? easier to read file: it says `group: lint-${{ github.ref }}` only, no nixos mention. So I won't call edit for lint. But I did above - I need to replace that call. Actually in my tool batch I included it; let us adjust: remove lint edit call and keep others.
+  cancel-in-progress: true
 
 jobs:
   rustfmt:

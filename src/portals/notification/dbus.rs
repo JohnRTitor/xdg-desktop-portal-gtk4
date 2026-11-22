@@ -4,17 +4,47 @@ use {
     futures_util::stream::StreamExt,
     gtk4::gio::Cancellable,
     parking_lot::Mutex,
-    std::{collections::HashMap, sync::Arc},
+    smallvec::SmallVec,
+    std::{
+        collections::HashMap,
+        sync::{Arc, LazyLock, Weak},
+    },
     tokio::task::spawn_blocking,
     zbus::{
-        Connection, ObjectServer, interface,
+        Connection, DeserializeDict, ObjectServer, OwnedVariant, Type, Variant, interface,
         object_server::SignalEmitter,
-        zvariant::{DeserializeDict, OwnedValue, Structure, Type, Value},
     },
 };
 
 /// Subdirectory of `$XDG_RUNTIME_DIR` that staged notification sounds live in.
 const TEMP_SOUND_SUBDIR: &str = "xdg-desktop-portal-gtk4-sounds";
+
+/// The fixed set of notification features this backend advertises.
+///
+/// Built once. Property reads are frequent and the value never changes, so
+/// rebuilding ten owned keys and ten owned variants on every read was pure
+/// waste. zbus still serialises the returned reference on each read, but the
+/// map and its values are now shared.
+static SUPPORTED_OPTIONS: LazyLock<HashMap<String, OwnedVariant>> = LazyLock::new(|| {
+    let mut options = HashMap::with_capacity(10);
+    if let Ok(true_val) = OwnedVariant::try_from(Variant::Bool(true)) {
+        for key in [
+            "body",
+            "icon",
+            "buttons",
+            "priority",
+            "default-action",
+            "default-action-target",
+            "markup-body",
+            "category",
+            "display-hint",
+            "sound",
+        ] {
+            options.insert(key.to_owned(), true_val.clone());
+        }
+    }
+    options
+});
 
 pub struct TempSoundFile {
     pub path: std::path::PathBuf,
@@ -22,10 +52,19 @@ pub struct TempSoundFile {
 
 impl Drop for TempSoundFile {
     fn drop(&mut self) {
-        let path = self.path.clone();
-        spawn_blocking(move || {
-            let _ = std::fs::remove_file(&path);
-        });
+        // The last `Arc` can be dropped on a thread with no Tokio runtime (a
+        // shutdown path, a synchronous caller, a plain unit test). `spawn_blocking`
+        // panics in that case, and this daemon builds with `panic = "abort"`, so
+        // a stray drop would take down the whole process. Unlinking one file is
+        // cheap: do it inline when there is no runtime to hand it to.
+        if tokio::runtime::Handle::try_current().is_ok() {
+            let path = self.path.clone();
+            spawn_blocking(move || {
+                let _ = std::fs::remove_file(&path);
+            });
+        } else {
+            let _ = std::fs::remove_file(&self.path);
+        }
     }
 }
 
@@ -58,11 +97,16 @@ fn sound_dir_under(runtime_dir: Option<&std::ffi::OsStr>) -> Option<std::path::P
 ///
 /// A plain `create_dir_all` applies the process umask to a `0777` request, which
 /// under a permissive umask yields a group- or world-accessible directory. The
-/// mode is requested explicitly so the result is `0700` regardless of umask.
+/// mode is requested explicitly so the result has no group or world bits, while
+/// retaining the owner's search bit so files can be created inside it. A
+/// restrictive umask can still remove bits from the request.
 /// An existing path is accepted: `EEXIST` on a directory is the normal case
 /// after the first sound in a session, and the parent is already private.
 fn ensure_private_dir(dir: &std::path::Path) -> std::io::Result<()> {
-    match rustix::fs::mkdir(dir, rustix::fs::Mode::RUSR | rustix::fs::Mode::WUSR) {
+    match rustix::fs::mkdir(
+        dir,
+        rustix::fs::Mode::RUSR | rustix::fs::Mode::WUSR | rustix::fs::Mode::XUSR,
+    ) {
         Ok(()) => Ok(()),
         Err(rustix::io::Errno::EXIST) => Ok(()),
         Err(e) => Err(std::io::Error::from_raw_os_error(e.raw_os_error())),
@@ -124,7 +168,7 @@ trait Notifications {
         summary: &str,
         body: &str,
         actions: &[&str],
-        hints: &HashMap<&str, Value<'_>>,
+        hints: &HashMap<&str, Variant<'_>>,
         expire_timeout: i32,
     ) -> zbus::Result<u32>;
 
@@ -139,33 +183,33 @@ trait Notifications {
 
 #[zbus::proxy(interface = "org.freedesktop.Application")]
 trait Application {
-    fn activate(&self, platform_data: &HashMap<&str, Value<'_>>) -> zbus::Result<()>;
+    fn activate(&self, platform_data: &HashMap<&str, Variant<'_>>) -> zbus::Result<()>;
     fn activate_action(
         &self,
         action_name: &str,
-        parameter: &[Value<'_>],
-        platform_data: &HashMap<&str, Value<'_>>,
+        parameter: &[Variant<'_>],
+        platform_data: &HashMap<&str, Variant<'_>>,
     ) -> zbus::Result<()>;
 }
 
 #[derive(DeserializeDict, Type, Default, Debug, Clone)]
-#[zvariant(signature = "dict")]
+#[zbus(signature = "dict")]
 pub struct PortalNotification {
     title: Option<String>,
     body: Option<String>,
-    icon: Option<OwnedValue>,
+    icon: Option<OwnedVariant>,
     priority: Option<String>,
-    #[zvariant(rename = "default-action")]
+    #[zbus(rename = "default-action")]
     default_action: Option<String>,
-    #[zvariant(rename = "default-action-target")]
-    default_action_target: Option<OwnedValue>,
+    #[zbus(rename = "default-action-target")]
+    default_action_target: Option<OwnedVariant>,
     buttons: Option<Vec<PortalButton>>,
-    #[zvariant(rename = "markup-body")]
+    #[zbus(rename = "markup-body")]
     markup_body: Option<String>,
     category: Option<String>,
-    #[zvariant(rename = "display-hint")]
+    #[zbus(rename = "display-hint")]
     display_hint: Option<Vec<String>>,
-    sound: Option<OwnedValue>,
+    sound: Option<OwnedVariant>,
 }
 
 /// One entry of the `buttons` option.
@@ -175,11 +219,11 @@ pub struct PortalNotification {
 /// hint for the notification server's own UI and has no fdo equivalent, so it
 /// is not read.
 #[derive(DeserializeDict, Type, Default, Debug, Clone)]
-#[zvariant(signature = "dict")]
+#[zbus(signature = "dict")]
 pub struct PortalButton {
     label: Option<String>,
     action: Option<String>,
-    target: Option<OwnedValue>,
+    target: Option<OwnedVariant>,
 }
 
 /// Identifies one notification as the calling app knows it.
@@ -203,7 +247,7 @@ impl NotifKey {
 pub struct NotificationTarget {
     /// Back-reference to the same `NotifKey` used as the forward map's key.
     pub key: Arc<NotifKey>,
-    pub action_targets: HashMap<String, OwnedValue>,
+    pub action_targets: HashMap<String, OwnedVariant>,
     /// The portal action behind the fdo `default` action key, if one was set.
     pub default_action: Option<String>,
     pub sound_file: Option<Arc<TempSoundFile>>,
@@ -251,17 +295,18 @@ fn remove_active_notification(
 
 /// Registers a notification in both maps, returning the shared key.
 ///
-/// The same [`NotifKey`] must be used for the forward map's key and the reverse
-/// map's back-reference; building it twice would reintroduce the duplicate
-/// storage this type exists to remove. Factored out so a test can assert the
-/// sharing rather than having to trust the call site.
+/// The forward map is keyed by the key's two `Arc<str>` fields and the reverse
+/// entry holds an `Arc<NotifKey>` that shares those allocations. Building the
+/// strings twice would reintroduce the duplicate storage this type exists to
+/// remove. Factored out so a test can assert the sharing rather than having to
+/// trust the call site.
 fn register_notification(
     active: &ActiveNotifications,
     reverse: &ReverseMapType,
     app_id: &str,
     portal_id: &str,
     fdo_id: u32,
-    action_targets: HashMap<String, OwnedValue>,
+    action_targets: HashMap<String, OwnedVariant>,
     default_action: Option<String>,
     sound_file: Option<Arc<TempSoundFile>>,
 ) -> Arc<NotifKey> {
@@ -281,6 +326,55 @@ fn register_notification(
         }),
     );
     key
+}
+
+/// Applies the outcome of a `Notify` call to the two routing maps.
+///
+/// Nothing is changed on error: the still-live host notification keeps its
+/// reverse entry, its staged sound file, and the forward map's host ID so its
+/// actions remain routable.
+///
+/// A server may reuse `replaces_id` as the new ID. In that case
+/// [`register_notification`] overwrites the old reverse entry itself, retiring
+/// the old sound file; removing the old entry as well would delete the one we
+/// just registered. Only a genuinely different ID needs an explicit removal.
+fn apply_notify_result<E>(
+    active: &ActiveNotifications,
+    reverse: &ReverseMapType,
+    replaces_id: u32,
+    app_id: &str,
+    portal_id: &str,
+    result: Result<u32, E>,
+    action_targets: HashMap<String, OwnedVariant>,
+    default_action: Option<String>,
+    sound_file: Option<Arc<TempSoundFile>>,
+) {
+    let Ok(new_id) = result else {
+        return;
+    };
+    if replaces_id != 0 && replaces_id != new_id {
+        // The host may have closed the old notification and recycled its id for
+        // a different one while `Notify` was in flight. Only retire the entry
+        // if it still belongs to this caller; otherwise we would delete the new
+        // owner's routing state.
+        let mut reverse_lock = reverse.lock();
+        let still_ours = reverse_lock.get(&replaces_id).is_some_and(|target| {
+            target.key.app_id.as_ref() == app_id && target.key.portal_id.as_ref() == portal_id
+        });
+        if still_ours {
+            reverse_lock.remove(&replaces_id);
+        }
+    }
+    register_notification(
+        active,
+        reverse,
+        app_id,
+        portal_id,
+        new_id,
+        action_targets,
+        default_action,
+        sound_file,
+    );
 }
 
 /// Retires a notification the host daemon reported closed.
@@ -318,7 +412,7 @@ fn retire_closed_notification(
 /// This struct holds shared state used to map between the sandboxed application's
 /// portal notification IDs and the host system's actual notification IDs.
 pub struct Notification {
-    /// Maps a [`NotifKey`] to the system notification ID (`u32`).
+    /// Maps `app_id -> portal_id` to the system notification ID (`u32`).
     /// This is used so we can replace or remove an existing notification.
     active_notifications: ActiveNotifications,
 
@@ -381,13 +475,15 @@ impl Notification {
             .as_deref()
             .unwrap_or(notification.body.as_deref().unwrap_or(""));
 
-        // Zbus notifications signature expects strings
         let title = title_ref;
         let body = body_ref;
 
         let mut icon_name = String::new();
-        let mut hints = HashMap::new();
-        hints.insert("desktop-entry", Value::from(app_id.as_str()));
+        // At most eight hints are ever inserted: desktop-entry, urgency,
+        // category, transient, resident, suppress-sound, sound-file and
+        // image-data. Size once instead of growing on the common path.
+        let mut hints = HashMap::with_capacity(8);
+        hints.insert("desktop-entry", Variant::from(app_id.as_str()));
 
         let priority = notification.priority.as_deref().unwrap_or("normal");
         let urgency: u8 = match priority {
@@ -396,156 +492,200 @@ impl Notification {
             "high" | "urgent" => 2,
             _ => 1,
         };
-        hints.insert("urgency", Value::from(urgency));
+        hints.insert("urgency", Variant::from(urgency));
 
         if let Some(category) = notification.category.as_deref() {
-            hints.insert("category", Value::from(category));
+            hints.insert("category", Variant::from(category));
         }
 
         if let Some(display_hints) = notification.display_hint.as_ref() {
             if display_hints.iter().any(|h| h == "transient") {
-                hints.insert("transient", Value::from(true));
+                hints.insert("transient", Variant::from(true));
             }
             if display_hints.iter().any(|h| h == "persistent") {
-                hints.insert("resident", Value::from(true));
+                hints.insert("resident", Variant::from(true));
             }
         }
 
         let mut sound_file: Option<Arc<TempSoundFile>> = None;
         if let Some(sound) = notification.sound.as_ref() {
             let inner = match std::ops::Deref::deref(sound) {
-                Value::Value(v) => v.as_ref(),
+                Variant::Variant(v) => v.as_ref(),
                 other => other,
             };
-            if let Ok(sound_str) = <&str>::try_from(inner) {
-                if sound_str == "silent" {
-                    hints.insert("suppress-sound", Value::from(true));
+            match inner {
+                Variant::Str(s) if s.as_str() == "silent" => {
+                    hints.insert("suppress-sound", Variant::from(true));
                 }
-            } else if let Value::Fd(fd) = inner {
-                use std::{io::Read, os::fd::AsFd};
-                if let Ok(owned_fd) = fd.as_fd().try_clone_to_owned() {
-                    let mut file = std::fs::File::from(owned_fd);
+                Variant::Fd(fd) => {
+                    use std::{io::Read, os::fd::AsFd};
+                    if let Ok(owned_fd) = fd.as_fd().try_clone_to_owned() {
+                        let mut file = std::fs::File::from(owned_fd);
 
-                    // Only ever write below a directory we own, with `0700`, and
-                    // create the file with `O_EXCL`.
-                    //
-                    // The previous code fell back to `std::env::temp_dir()`
-                    // (`/tmp`) whenever `XDG_RUNTIME_DIR` was unset, created the
-                    // directory with `create_dir_all` at the default umask, and
-                    // wrote with a plain truncate-create at the predictable name
-                    // `{app_id}_{micros}.snd`. In a shared `/tmp` that is a
-                    // symlink attack: a local attacker pre-creates the directory
-                    // (or the file, as a symlink to something the user owns) and
-                    // the portal -- running as the user -- truncates and
-                    // overwrites the target. `$XDG_RUNTIME_DIR` is 0700 by
-                    // definition, so requiring it removes the shared-directory
-                    // case entirely; `O_EXCL` removes the pre-created-file case
-                    // even inside a correctly-permissioned directory.
-                    let Some(mut path) = temp_sound_dir() else {
-                        tracing::warn!(
-                            "XDG_RUNTIME_DIR is unset; refusing to stage a notification sound file"
-                        );
-                        return;
-                    };
+                        // Only ever write below a directory we own, with `0700`, and
+                        // create the file with `O_EXCL`.
+                        //
+                        // In a shared `/tmp` a predictable sound path is a symlink
+                        // attack: a local attacker pre-creates the directory or the
+                        // file as a link to something the user owns, and the portal
+                        // -- running as the user -- truncates the target.
+                        // `$XDG_RUNTIME_DIR` is 0700 by definition, so requiring it
+                        // removes the shared-directory case; `O_EXCL` removes the
+                        // pre-created-file case even inside a private directory.
+                        let Some(mut path) = temp_sound_dir() else {
+                            tracing::warn!(
+                                "XDG_RUNTIME_DIR is unset; refusing to stage a notification sound file"
+                            );
+                            return;
+                        };
 
-                    let timestamp = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_micros();
-                    path.push(format!(
-                        "{}_{}.snd",
-                        app_id.replace(['.', '-'], "_"),
-                        timestamp
-                    ));
+                        let timestamp = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_micros();
+                        path.push(format!(
+                            "{}_{}.snd",
+                            app_id.replace(['.', '-'], "_"),
+                            timestamp
+                        ));
 
-                    let bytes = spawn_blocking(move || {
-                        let mut data = Vec::new();
-                        if file.read_to_end(&mut data).is_ok() {
-                            return Some(data);
+                        let bytes = spawn_blocking(move || {
+                            let mut data = Vec::new();
+                            if file.read_to_end(&mut data).is_ok() {
+                                return Some(data);
+                            }
+                            None
+                        })
+                        .await
+                        .unwrap_or(None);
+
+                        if let Some(data) = bytes
+                            && write_exclusive(&path, &data).await.is_ok()
+                        {
+                            sound_file = Some(Arc::new(TempSoundFile { path }));
                         }
-                        None
-                    })
-                    .await
-                    .unwrap_or(None);
-
-                    if let Some(data) = bytes
-                        && write_exclusive(&path, &data).await.is_ok()
-                    {
-                        sound_file = Some(Arc::new(TempSoundFile { path }));
+                    } else {
+                        tracing::error!("Failed to dup sound fd");
                     }
-                } else {
-                    tracing::error!("Failed to dup sound fd");
                 }
+                _ => {}
             }
         }
 
         if let Some(s) = sound_file.as_ref()
             && let Some(path_str) = s.path.to_str()
         {
-            hints.insert("sound-file", Value::from(path_str));
+            hints.insert("sound-file", Variant::from(path_str));
         }
 
         if let Some(v) = notification.icon.as_ref() {
             let v_ref = std::ops::Deref::deref(v);
-            if let Ok(s) = <&str>::try_from(v_ref) {
-                icon_name = s.into();
-            } else if let Ok(structure) = <Structure>::try_from(v_ref) {
-                let fields = structure.fields();
-                if fields.len() == 2
-                    && let Ok(icon_type) = <&str>::try_from(&fields[0])
-                {
-                    // The icon format is (sv) — the payload in fields[1] is wrapped
-                    // in a variant. Unwrap it so we can extract the actual value.
-                    let payload = match &fields[1] {
-                        Value::Value(inner) => inner.as_ref(),
-                        other => other,
-                    };
-                    match icon_type {
-                        "themed" => {
-                            if let Ok(names) = <Vec<String>>::try_from(payload.clone())
-                                && let Some(first) = names.first()
-                            {
-                                icon_name = first.clone();
+            match v_ref {
+                Variant::Str(s) => icon_name = s.as_str().into(),
+                Variant::Structure(structure) => {
+                    let fields = structure.fields();
+                    if fields.len() == 2
+                        && let Ok(icon_type) = <&str>::try_from(&fields[0])
+                    {
+                        // The icon format is (sv) — the payload in fields[1] is wrapped
+                        // in a variant. Unwrap it so we can extract the actual value.
+                        let payload = match &fields[1] {
+                            Variant::Variant(inner) => inner.as_ref(),
+                            other => other,
+                        };
+                        match icon_type {
+                            "themed" => {
+                                if let Some(name) = themed_icon_name(payload) {
+                                    icon_name = name;
+                                }
                             }
-                        }
-                        "file-descriptor" => {
-                            // Note: xdg-desktop-portal drops raw "file" icon paths for security.
-                            // Apps sending "bytes" arrays will have their bytes written to a memfd
-                            // by the host portal, which forwards it to us here as "file-descriptor".
-                            if let Value::Fd(fd) = payload {
-                                use std::os::fd::AsFd;
-                                if let Ok(owned_fd) = fd.as_fd().try_clone_to_owned() {
-                                    let mut file = std::fs::File::from(owned_fd);
+                            "file-descriptor" => {
+                                // Note: xdg-desktop-portal drops raw "file" icon paths for security.
+                                // Apps sending "bytes" arrays will have their bytes written to a memfd
+                                // by the host portal, which forwards it to us here as "file-descriptor".
+                                if let Variant::Fd(fd) = payload {
+                                    use std::os::fd::AsFd;
+                                    if let Ok(owned_fd) = fd.as_fd().try_clone_to_owned() {
+                                        let mut file = std::fs::File::from(owned_fd);
+                                        let image_data = spawn_blocking(move || {
+                                            use {
+                                                gdk_pixbuf::Pixbuf,
+                                                gtk4::{gio::MemoryInputStream, glib::Bytes},
+                                                std::io::Read,
+                                            };
+                                            let mut data = Vec::new();
+                                            if file.read_to_end(&mut data).is_ok() {
+                                                // `from_owned` hands the buffer's
+                                                // contents to GLib instead of
+                                                // memcpy'ing them out. `read_to_end`
+                                                // over-allocates, so the retained
+                                                // allocation can be larger than the
+                                                // image.
+                                                let bytes = Bytes::from_owned(data);
+                                                let stream = MemoryInputStream::from_bytes(&bytes);
+                                                if let Ok(pixbuf) =
+                                                    Pixbuf::from_stream(&stream, Cancellable::NONE)
+                                                {
+                                                    return OwnedVariant::try_from(Variant::new((
+                                                        pixbuf.width(),
+                                                        pixbuf.height(),
+                                                        pixbuf.rowstride(),
+                                                        pixbuf.has_alpha(),
+                                                        pixbuf.bits_per_sample(),
+                                                        pixbuf.n_channels(),
+                                                        Variant::from(
+                                                            pixbuf.read_pixel_bytes().as_ref(),
+                                                        ),
+                                                    )))
+                                                    .ok();
+                                                }
+                                            }
+                                            None
+                                        })
+                                        .await
+                                        .unwrap_or(None);
+
+                                        if let Some(image_data) = image_data {
+                                            hints.insert("image-data", Variant::from(image_data));
+                                        }
+                                    }
+                                }
+                            }
+                            "bytes" => {
+                                // The payload is an `ay`. Copy its bytes out of the
+                                // borrowed array into an exactly-sized buffer; the
+                                // `Bytes::from_owned` below then hands that single
+                                // allocation to GLib without a further copy.
+                                let byte_array: Option<Vec<u8>> = (|| {
+                                    let array = <&zbus::wire::Array>::try_from(payload).ok()?;
+                                    let mut bytes = Vec::with_capacity(array.len());
+                                    for byte in array.inner() {
+                                        bytes.push(u8::try_from(byte).ok()?);
+                                    }
+                                    Some(bytes)
+                                })(
+                                );
+                                if let Some(byte_array) = byte_array {
                                     let image_data = spawn_blocking(move || {
                                         use {
                                             gdk_pixbuf::Pixbuf,
                                             gtk4::{gio::MemoryInputStream, glib::Bytes},
-                                            std::io::Read,
                                         };
-                                        let mut data = Vec::new();
-                                        if file.read_to_end(&mut data).is_ok() {
-                                            // `from_owned` hands the buffer's
-                                            // contents to GLib instead of
-                                            // memcpy'ing them out. `read_to_end`
-                                            // over-allocates, so the retained
-                                            // allocation can be larger than the
-                                            // image.
-                                            let bytes = Bytes::from_owned(data);
-                                            let stream = MemoryInputStream::from_bytes(&bytes);
-                                            if let Ok(pixbuf) =
-                                                Pixbuf::from_stream(&stream, Cancellable::NONE)
-                                            {
-                                                return OwnedValue::try_from(Value::new((
-                                                    pixbuf.width(),
-                                                    pixbuf.height(),
-                                                    pixbuf.rowstride(),
-                                                    pixbuf.has_alpha(),
-                                                    pixbuf.bits_per_sample(),
-                                                    pixbuf.n_channels(),
-                                                    Value::from(pixbuf.read_pixel_bytes().as_ref()),
-                                                )))
-                                                .ok();
-                                            }
+                                        let bytes = Bytes::from_owned(byte_array);
+                                        let stream = MemoryInputStream::from_bytes(&bytes);
+                                        if let Ok(pixbuf) =
+                                            Pixbuf::from_stream(&stream, Cancellable::NONE)
+                                        {
+                                            return OwnedVariant::try_from(Variant::new((
+                                                pixbuf.width(),
+                                                pixbuf.height(),
+                                                pixbuf.rowstride(),
+                                                pixbuf.has_alpha(),
+                                                pixbuf.bits_per_sample(),
+                                                pixbuf.n_channels(),
+                                                Variant::from(pixbuf.read_pixel_bytes().as_ref()),
+                                            )))
+                                            .ok();
                                         }
                                         None
                                     })
@@ -553,47 +693,15 @@ impl Notification {
                                     .unwrap_or(None);
 
                                     if let Some(image_data) = image_data {
-                                        hints.insert("image-data", Value::from(image_data));
+                                        hints.insert("image-data", Variant::from(image_data));
                                     }
                                 }
                             }
+                            _ => {}
                         }
-                        "bytes" => {
-                            if let Ok(byte_array) = <Vec<u8>>::try_from(payload.clone()) {
-                                let image_data = spawn_blocking(move || {
-                                    use {
-                                        gdk_pixbuf::Pixbuf,
-                                        gtk4::{gio::MemoryInputStream, glib::Bytes},
-                                    };
-                                    let bytes = Bytes::from_owned(byte_array);
-                                    let stream = MemoryInputStream::from_bytes(&bytes);
-                                    if let Ok(pixbuf) =
-                                        Pixbuf::from_stream(&stream, Cancellable::NONE)
-                                    {
-                                        return OwnedValue::try_from(Value::new((
-                                            pixbuf.width(),
-                                            pixbuf.height(),
-                                            pixbuf.rowstride(),
-                                            pixbuf.has_alpha(),
-                                            pixbuf.bits_per_sample(),
-                                            pixbuf.n_channels(),
-                                            Value::from(pixbuf.read_pixel_bytes().as_ref()),
-                                        )))
-                                        .ok();
-                                    }
-                                    None
-                                })
-                                .await
-                                .unwrap_or(None);
-
-                                if let Some(image_data) = image_data {
-                                    hints.insert("image-data", Value::from(image_data));
-                                }
-                            }
-                        }
-                        _ => {}
                     }
                 }
+                _ => {}
             }
         }
 
@@ -602,34 +710,32 @@ impl Notification {
         if let Some(proxy) = &self.proxy {
             let replaces_id = active_id(&self.active_notifications, &app_id, &id).unwrap_or(0);
 
-            if replaces_id != 0 {
-                self.reverse_map.lock().remove(&replaces_id);
-            }
-
-            if let Ok(new_id) = proxy
-                .notify(
-                    &app_id,
-                    replaces_id,
-                    &icon_name,
-                    title,
-                    body,
-                    &actions,
-                    &hints,
-                    -1,
-                )
-                .await
-            {
-                register_notification(
-                    &self.active_notifications,
-                    &self.reverse_map,
-                    &app_id,
-                    &id,
-                    new_id,
-                    action_targets,
-                    notification.default_action.clone(),
-                    sound_file,
-                );
-            }
+            // `apply_notify_result` is a no-op on error: the host is still
+            // showing the old notification, so its routing state and sound file
+            // must stay intact. `AddNotification` has no reply value, so there
+            // is no `Response::other()` to return here.
+            apply_notify_result(
+                &self.active_notifications,
+                &self.reverse_map,
+                replaces_id,
+                &app_id,
+                &id,
+                proxy
+                    .notify(
+                        &app_id,
+                        replaces_id,
+                        &icon_name,
+                        title,
+                        body,
+                        &actions,
+                        &hints,
+                        -1,
+                    )
+                    .await,
+                action_targets,
+                notification.default_action.clone(),
+                sound_file,
+            );
         }
 
         let server_clone = server.clone();
@@ -675,7 +781,7 @@ impl Notification {
         app_id: &str,
         id: &str,
         action: &str,
-        parameter: &[Value<'_>],
+        parameter: &[Variant<'_>],
     ) -> zbus::Result<()>;
 
     #[zbus(property, name = "version")]
@@ -684,29 +790,67 @@ impl Notification {
     }
 
     #[zbus(property, name = "SupportedOptions")]
-    fn supported_options(&self) -> HashMap<String, OwnedValue> {
-        let mut options = HashMap::new();
-        if let Ok(true_val) = OwnedValue::try_from(Value::Bool(true)) {
-            options.insert("body".into(), true_val.clone());
-            options.insert("icon".into(), true_val.clone());
-            options.insert("buttons".into(), true_val.clone());
-            options.insert("priority".into(), true_val.clone());
-            options.insert("default-action".into(), true_val.clone());
-            options.insert("default-action-target".into(), true_val.clone());
-            options.insert("markup-body".into(), true_val.clone());
-            options.insert("category".into(), true_val.clone());
-            options.insert("display-hint".into(), true_val.clone());
-            options.insert("sound".into(), true_val);
-        }
-        options
+    fn supported_options(&self) -> &'static HashMap<String, OwnedVariant> {
+        &SUPPORTED_OPTIONS
     }
 }
 
-/// How many `&str` slots [`build_actions`] will push, so the vector is sized
+/// Read the first name from a themed-icon `as` payload.
+///
+/// Borrowing the array avoids materialising a `Vec<String>` just to keep one
+/// name, but every element must still validate: one malformed trailing name
+/// rejects the whole icon. `Array -> Vec<T>` unwraps exactly one level of
+/// `Variant::Variant` per element.
+fn themed_icon_name(payload: &Variant<'_>) -> Option<String> {
+    let array = <&zbus::wire::Array>::try_from(payload).ok()?;
+    let mut first: Option<&str> = None;
+    for value in array.inner() {
+        let value = match value {
+            Variant::Variant(inner) => inner.as_ref(),
+            other => other,
+        };
+        let Ok(name) = <&str>::try_from(value) else {
+            return None;
+        };
+        if first.is_none() {
+            first = Some(name);
+        }
+    }
+    first.map(str::to_owned)
+}
+
+/// How many `&str` slots [`build_actions`] will push, so the list is sized
 /// once. Each action contributes an id and a label.
 fn actions_capacity(notification: &PortalNotification) -> usize {
-    let buttons = notification.buttons.as_ref().map_or(0, Vec::len);
+    // Buttons without an `action` are skipped by `build_actions`, so counting
+    // them would over-size the SmallVec and can force a needless heap spill
+    // even though the real slots still fit inline.
+    let buttons = notification.buttons.as_ref().map_or(0, |buttons| {
+        buttons
+            .iter()
+            .filter(|button| button.action.is_some())
+            .count()
+    });
     2 * (usize::from(notification.default_action.is_some()) + buttons)
+}
+
+/// Exact number of targets [`build_actions`] will insert.
+///
+/// Counting first keeps the common "no targets" case allocation-free: sizing
+/// the map by the number of actions would allocate even when nothing is ever
+/// inserted. A button only contributes when it has both an id and a target,
+/// and the default action only contributes when it is present and targeted.
+fn targets_capacity(notification: &PortalNotification) -> usize {
+    let default = usize::from(
+        notification.default_action.is_some() && notification.default_action_target.is_some(),
+    );
+    let buttons = notification.buttons.as_ref().map_or(0, |buttons| {
+        buttons
+            .iter()
+            .filter(|button| button.action.is_some() && button.target.is_some())
+            .count()
+    });
+    default + buttons
 }
 
 /// Builds the FDO action list and the per-action target map.
@@ -722,19 +866,19 @@ fn actions_capacity(notification: &PortalNotification) -> usize {
 /// to the action. A button without an `action` cannot be routed and is skipped.
 ///
 /// The labels are borrowed straight out of `notification` rather than collected
-/// into an owned `Vec<String>` first. The previous code built one `String` per
-/// id and per label -- including for a label, which was already a `&str` borrowed
-/// from the caller's options -- and then dropped the whole vector after taking
-/// `&str` from it, so every action cost two allocations that lived only long
-/// enough to be reborrowed. `notification` outlives the `Notify` call, so the
-/// borrows are valid for as long as the caller needs them.
+/// into an owned `Vec<String>` first: `notification` outlives the `Notify` call,
+/// so the borrows are valid for as long as the caller needs them. A [`SmallVec`]
+/// keeps the common case (a default action plus a few buttons) entirely on the
+/// stack.
 ///
-/// The targets are still cloned: they are `OwnedValue`s that must outlive this
+/// The targets are still cloned: they are `OwnedVariant`s that must outlive this
 /// function, since they are stored in the reverse map and read later by the
 /// `ActionInvoked` listener.
-fn build_actions(notification: &PortalNotification) -> (Vec<&str>, HashMap<String, OwnedValue>) {
-    let mut actions = Vec::with_capacity(actions_capacity(notification));
-    let mut targets = HashMap::new();
+fn build_actions(
+    notification: &PortalNotification,
+) -> (SmallVec<[&str; 8]>, HashMap<String, OwnedVariant>) {
+    let mut actions: SmallVec<[&str; 8]> = SmallVec::with_capacity(actions_capacity(notification));
+    let mut targets = HashMap::with_capacity(targets_capacity(notification));
 
     if notification.default_action.is_some() {
         actions.push("default");
@@ -773,7 +917,7 @@ fn build_actions(notification: &PortalNotification) -> (Vec<&str>, HashMap<Strin
 fn action_route<'a>(
     target: &'a NotificationTarget,
     action_key: &'a str,
-) -> (&'a str, Option<&'a OwnedValue>) {
+) -> (&'a str, Option<&'a OwnedVariant>) {
     let name = if action_key == "default" {
         target.default_action.as_deref().unwrap_or(action_key)
     } else {
@@ -788,13 +932,40 @@ fn action_route<'a>(
 /// specification sends just before `ActionInvoked`. It is passed under both
 /// keys the reference implementation uses: `activation-token` for current GTK
 /// and Qt, `desktop-startup-id` for GTK before 4.10.
-fn platform_data(activation_token: Option<String>) -> HashMap<&'static str, Value<'static>> {
-    let mut data = HashMap::new();
+fn platform_data(activation_token: Option<String>) -> HashMap<&'static str, Variant<'static>> {
+    let mut data = HashMap::with_capacity(2);
     if let Some(token) = activation_token {
-        data.insert("desktop-startup-id", Value::from(token.clone()));
-        data.insert("activation-token", Value::from(token));
+        // `Variant::from(String)` owns its text through a refcounted `Str`, so
+        // cloning the variant shares one allocation instead of copying the
+        // token into a second `String`. Both keys need the same value.
+        let token = Variant::from(token);
+        data.insert("desktop-startup-id", token.clone());
+        data.insert("activation-token", token);
     }
     data
+}
+
+/// Whether a stored activation token still belongs to the notification that
+/// currently owns the host ID.
+///
+/// Host IDs can be reused: a replacement may keep the same ID while swapping
+/// the reverse-map target. A token received before that swap was issued for the
+/// old notification and must not be passed to the new one's action. Each token
+/// is stored together with a weak reference to the target it was issued for,
+/// and identity (rather than value) comparison is used because two
+/// registrations with identical fields still represent different notifications.
+/// A `Weak` keeps the control block (and therefore pointer identity) alive
+/// without keeping the target's action map and staged sound file alive after
+/// the notification has been retired.
+fn token_belongs_to(
+    issued_for: &Weak<NotificationTarget>,
+    current: Option<&Arc<NotificationTarget>>,
+) -> bool {
+    current.is_some_and(|current| {
+        issued_for
+            .upgrade()
+            .is_some_and(|issued_for| Arc::ptr_eq(&issued_for, current))
+    })
 }
 
 /// Listens to the notification server's `ActivationToken`, `ActionInvoked` and
@@ -816,7 +987,11 @@ async fn listen_for_server_signals(
 ) -> zbus::Result<()> {
     let mut stream = proxy.inner().receive_all_signals().await?;
     // Tokens are single-use, so each is consumed by the action it precedes.
-    let mut activation_tokens: HashMap<u32, String> = HashMap::new();
+    // The target the token was issued for travels with it as a Weak reference:
+    // a replacement or removal invalidates the token even when the host reuses
+    // the same ID, but a pending token does not keep the retired target (and
+    // its staged sound file) alive.
+    let mut activation_tokens: HashMap<u32, (Weak<NotificationTarget>, String)> = HashMap::new();
 
     while let Some(message) = stream.next().await {
         let header = message.header();
@@ -826,8 +1001,13 @@ async fn listen_for_server_signals(
                     tracing::warn!("Failed to deserialize ActivationToken signal body");
                     continue;
                 };
-                if reverse_map.lock().contains_key(&id) {
-                    activation_tokens.insert(id, token);
+                if let Some(target) = reverse_map.lock().get(&id).cloned() {
+                    activation_tokens.insert(id, (Arc::downgrade(&target), token));
+                } else {
+                    // No live notification owns this ID (it was replaced with a
+                    // different ID, or removed). Clear any token left over from
+                    // the old one rather than letting it linger.
+                    activation_tokens.remove(&id);
                 }
             }
             Some("ActionInvoked") => {
@@ -835,8 +1015,19 @@ async fn listen_for_server_signals(
                     tracing::warn!("Failed to deserialize ActionInvoked signal body");
                     continue;
                 };
-                let token = activation_tokens.remove(&id);
                 let target = reverse_map.lock().get(&id).cloned();
+                let token = match activation_tokens.remove(&id) {
+                    Some((issued_for, token)) if token_belongs_to(&issued_for, target.as_ref()) => {
+                        Some(token)
+                    }
+                    Some((_, stale)) => {
+                        tracing::debug!(
+                            "Discarding activation token {stale} issued for a replaced notification"
+                        );
+                        None
+                    }
+                    None => None,
+                };
                 if let Some(target) = target {
                     dispatch_action(&server, &session_bus, &target, &action_key, token);
                 }
@@ -846,6 +1037,8 @@ async fn listen_for_server_signals(
                     tracing::warn!("Failed to deserialize NotificationClosed signal body");
                     continue;
                 };
+                // A replacement or removal is reported by the host as a close;
+                // drop the token with the routing state it belongs to.
                 activation_tokens.remove(&id);
                 retire_closed_notification(&reverse_map, &active_notifications, id);
             }
@@ -875,10 +1068,13 @@ fn dispatch_action(
 ) {
     let (name, action_target) = action_route(target, action_key);
     let name = String::from(name);
-    let parameter: Vec<Value<'static>> = action_target
-        .map(|t| Value::from(t.clone()))
-        .into_iter()
-        .collect();
+    // At most one target is sent. Push conditionally rather than routing a
+    // 0/1-element iterator through `collect`.
+    let mut parameter: Vec<Variant<'static>> =
+        Vec::with_capacity(usize::from(action_target.is_some()));
+    if let Some(t) = action_target {
+        parameter.push(Variant::from(t.clone()));
+    }
     let platform_data = platform_data(activation_token);
 
     // `app_id` and `portal_id` are `Arc<str>`, so the task gets refcount bumps
@@ -909,7 +1105,7 @@ fn dispatch_action(
         }
 
         let mut signal_parameter = parameter;
-        signal_parameter.push(Value::from(platform_data));
+        signal_parameter.push(Variant::from(platform_data));
         if let Ok(iface_ref) = server
             .interface::<_, Notification>(crate::core::DBUS_PATH)
             .await
@@ -945,11 +1141,7 @@ async fn application_proxy(
 
     let builder = ApplicationProxy::builder(session_bus)
         .destination(app_id.to_owned())
-        .inspect_err(|_| tracing::debug!("No application to activate for app id {app_id:?}"))
-        .ok()?
-        .path(app_path)
-        .inspect_err(|e| tracing::error!("Invalid D-Bus path for {app_id:?}: {e}"))
-        .ok()?;
+        .path(app_path);
     builder
         .cache_properties(zbus::proxy::CacheProperties::No)
         .build()
@@ -965,10 +1157,8 @@ mod tests {
     /// The staged-sound directory must live under `$XDG_RUNTIME_DIR`, never in
     /// the world-writable system temp directory.
     ///
-    /// Regression: the previous code used `std::env::temp_dir()` as the base and
-    /// only preferred `$XDG_RUNTIME_DIR` when it happened to be set. When it was
-    /// not, sounds landed in `/tmp` at a semi-predictable name, writable by any
-    /// local user.
+    /// The runtime directory is the only safe base: without it there is no
+    /// private location to stage a sound file in.
     #[test]
     fn there_is_no_sound_directory_without_a_runtime_dir() {
         assert_eq!(
@@ -976,6 +1166,38 @@ mod tests {
             None,
             "without XDG_RUNTIME_DIR there is no private directory to write into"
         );
+    }
+
+    #[test]
+    fn ensure_private_dir_creates_a_traversable_private_directory() {
+        use std::{
+            os::unix::fs::PermissionsExt,
+            sync::atomic::{AtomicU64, Ordering},
+        };
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let dir = std::env::temp_dir().join(format!(
+            "xdp-sound-mode-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+
+        ensure_private_dir(&dir).expect("a fresh directory must be created");
+
+        let mode = std::fs::metadata(&dir).unwrap().permissions().mode();
+        assert_eq!(
+            mode & 0o077,
+            0,
+            "the directory must not be group/world accessible"
+        );
+        assert_ne!(
+            mode & 0o100,
+            0,
+            "the owner must be able to search the directory"
+        );
+        std::fs::write(dir.join("probe"), b"ok").expect("0700 must allow creating files inside");
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -991,12 +1213,8 @@ mod tests {
         );
     }
 
-    /// The create must be exclusive.
-    ///
-    /// Regression: `tokio::fs::write` opens `O_WRONLY|O_CREAT|O_TRUNC` with no
-    /// `O_EXCL` and no `O_NOFOLLOW`, so a pre-existing symlink at the target
-    /// path was followed and truncated. This asserts the `O_EXCL` behaviour that
-    /// replaces it.
+    /// The create must be exclusive so a pre-existing symlink at the target
+    /// cannot be followed and truncated.
     #[tokio::test]
     async fn write_exclusive_refuses_an_existing_target() {
         let dir = std::env::temp_dir().join(format!("xdp-sound-test-{}", std::process::id()));
@@ -1054,12 +1272,58 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// The last `Arc<TempSoundFile>` can be dropped on a thread with no Tokio
+    /// runtime, and `panic = "abort"` makes a `spawn_blocking` there fatal. This
+    /// cleanup must stay synchronous, so this stays a plain `#[test]`.
+    #[test]
+    fn dropping_a_sound_file_outside_a_runtime_removes_it() {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+
+        assert!(
+            tokio::runtime::Handle::try_current().is_err(),
+            "this regression test must run outside a Tokio runtime"
+        );
+
+        let dir = std::env::temp_dir().join(format!(
+            "xdp-sound-drop-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("sound.snd");
+        std::fs::write(&path, b"x").unwrap();
+
+        {
+            let sound = Arc::new(TempSoundFile { path: path.clone() });
+            assert_eq!(Arc::strong_count(&sound), 1);
+            drop(sound); // last reference: Drop runs on this non-Tokio thread
+        }
+
+        assert!(
+            !path.exists(),
+            "TempSoundFile::drop must unlink inline when there is no runtime"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[tokio::test]
     async fn test_notification_properties() {
         let notification = Notification::new(None).await;
         assert_eq!(notification.version(), 2);
 
+        // Warm the LazyLock, then assert a warm read allocates nothing: a
+        // per-read construction would fail this test.
+        let _ = notification.supported_options();
+        let scope = crate::alloc_probe::AllocScope::start();
         let options = notification.supported_options();
+        let snap = scope.finish();
+        std::hint::black_box(options);
+
+        assert_eq!(
+            snap.count, 0,
+            "a cached property read must not allocate: {snap:?}"
+        );
         assert!(options.contains_key("body"));
         assert!(options.contains_key("icon"));
         assert!(options.contains_key("default-action"));
@@ -1069,16 +1333,19 @@ mod tests {
     fn test_portal_notification_deserialize() {
         use {
             std::collections::HashMap,
-            zbus::zvariant::{self, Endian, Value, serialized::Context},
+            zbus::{
+                Variant,
+                wire::{self, Endian, serialized::Context},
+            },
         };
 
         let mut dict = HashMap::new();
-        dict.insert("title", Value::from("Test Title"));
-        dict.insert("body", Value::from("Test Body"));
-        dict.insert("priority", Value::from("high"));
+        dict.insert("title", Variant::from("Test Title"));
+        dict.insert("body", Variant::from("Test Body"));
+        dict.insert("priority", Variant::from("high"));
 
-        let ctxt = Context::new_dbus(Endian::Little, 0);
-        let encoded = zvariant::to_bytes(ctxt, &dict).unwrap();
+        let ctxt = Context::new(Endian::Little, 0);
+        let encoded = wire::to_bytes(ctxt, &dict).unwrap();
         let notification: PortalNotification = encoded.deserialize().unwrap().0;
 
         assert_eq!(notification.title.as_deref(), Some("Test Title"));
@@ -1214,6 +1481,208 @@ mod notification_map_tests {
         assert!(!retire_closed_notification(&reverse, &active, 1234));
         assert_eq!(active.lock().len(), 1);
         assert_eq!(reverse.lock().len(), 1);
+    }
+
+    fn staged_sound() -> Arc<TempSoundFile> {
+        Arc::new(TempSoundFile {
+            path: std::env::temp_dir().join("xdpg-apply-notify-nonexistent.snd"),
+        })
+    }
+
+    /// A host can recycle a notification id for a different caller while a
+    /// Notify is in flight. The stale-id guard must not delete the new owner's
+    /// routing state or drop its staged sound file.
+    #[test]
+    fn a_recycled_id_owned_by_another_caller_is_not_retired() {
+        let (active, reverse) = empty_maps();
+        let sound = staged_sound();
+        register_notification(
+            &active,
+            &reverse,
+            "org.example.A",
+            "1",
+            42,
+            HashMap::new(),
+            None,
+            Some(sound.clone()),
+        );
+
+        apply_notify_result(
+            &active,
+            &reverse,
+            42,
+            "org.example.B",
+            "2",
+            Ok::<u32, ()>(99),
+            HashMap::new(),
+            None,
+            None,
+        );
+
+        assert_eq!(active_id(&active, "org.example.A", "1"), Some(42));
+        assert_eq!(active_id(&active, "org.example.B", "2"), Some(99));
+        let lock = reverse.lock();
+        assert_eq!(lock.len(), 2, "the recycled id's new owner must survive");
+        assert_eq!(lock[&42].key.app_id.as_ref(), "org.example.A");
+        assert_eq!(
+            Arc::strong_count(&sound),
+            2,
+            "the other caller's staged sound must not be dropped"
+        );
+
+        // Same app, different portal id: both halves of the key are load-bearing.
+        let (active, reverse) = empty_maps();
+        register_notification(
+            &active,
+            &reverse,
+            "org.example.A",
+            "1",
+            42,
+            HashMap::new(),
+            None,
+            None,
+        );
+        apply_notify_result(
+            &active,
+            &reverse,
+            42,
+            "org.example.A",
+            "2",
+            Ok::<u32, ()>(99),
+            HashMap::new(),
+            None,
+            None,
+        );
+        assert_eq!(active_id(&active, "org.example.A", "1"), Some(42));
+        assert_eq!(active_id(&active, "org.example.A", "2"), Some(99));
+        assert_eq!(reverse.lock().len(), 2);
+    }
+
+    /// A failed `Notify` leaves the old host notification live, so both maps
+    /// and its sound file must be left exactly as they were.
+    #[test]
+    fn a_failed_notify_keeps_the_old_routing_state() {
+        let (active, reverse) = empty_maps();
+        let sound = staged_sound();
+        register_notification(
+            &active,
+            &reverse,
+            "org.example.App",
+            "7",
+            42,
+            HashMap::new(),
+            Some("old-action".into()),
+            Some(sound.clone()),
+        );
+
+        apply_notify_result(
+            &active,
+            &reverse,
+            42,
+            "org.example.App",
+            "7",
+            Err::<u32, ()>(()),
+            HashMap::new(),
+            Some("new-action".into()),
+            None,
+        );
+
+        assert_eq!(active_id(&active, "org.example.App", "7"), Some(42));
+        let lock = reverse.lock();
+        assert_eq!(lock.len(), 1);
+        assert_eq!(lock[&42].default_action.as_deref(), Some("old-action"));
+        assert_eq!(
+            Arc::strong_count(&sound),
+            2,
+            "the sound file must not be dropped"
+        );
+    }
+
+    /// A successful replacement retires the old reverse entry (and its sound
+    /// file) and points the forward map at the new host ID.
+    #[test]
+    fn a_successful_notify_retires_the_old_state() {
+        let (active, reverse) = empty_maps();
+        let sound = staged_sound();
+        register_notification(
+            &active,
+            &reverse,
+            "org.example.App",
+            "7",
+            42,
+            HashMap::new(),
+            Some("old-action".into()),
+            Some(sound.clone()),
+        );
+
+        apply_notify_result(
+            &active,
+            &reverse,
+            42,
+            "org.example.App",
+            "7",
+            Ok::<u32, ()>(99),
+            HashMap::new(),
+            Some("new-action".into()),
+            None,
+        );
+
+        assert_eq!(active_id(&active, "org.example.App", "7"), Some(99));
+        let lock = reverse.lock();
+        assert!(!lock.contains_key(&42), "the superseded entry must be gone");
+        assert_eq!(lock.len(), 1);
+        assert_eq!(lock[&99].default_action.as_deref(), Some("new-action"));
+        drop(lock);
+        assert_eq!(
+            Arc::strong_count(&sound),
+            1,
+            "retiring the old entry must release its sound file"
+        );
+    }
+
+    /// Some hosts reuse the replaced ID. Overwriting the reverse entry is then
+    /// the retirement; removing the old entry too would delete the new one.
+    #[test]
+    fn a_successful_notify_reusing_the_id_keeps_the_new_entry() {
+        let (active, reverse) = empty_maps();
+        let sound = staged_sound();
+        register_notification(
+            &active,
+            &reverse,
+            "org.example.App",
+            "7",
+            42,
+            HashMap::new(),
+            Some("old-action".into()),
+            Some(sound.clone()),
+        );
+
+        apply_notify_result(
+            &active,
+            &reverse,
+            42,
+            "org.example.App",
+            "7",
+            Ok::<u32, ()>(42),
+            HashMap::new(),
+            Some("new-action".into()),
+            None,
+        );
+
+        assert_eq!(active_id(&active, "org.example.App", "7"), Some(42));
+        let lock = reverse.lock();
+        assert_eq!(lock.len(), 1);
+        assert_eq!(
+            lock[&42].default_action.as_deref(),
+            Some("new-action"),
+            "the new target must survive the reuse of its ID"
+        );
+        drop(lock);
+        assert_eq!(
+            Arc::strong_count(&sound),
+            1,
+            "the old sound file must be retired"
+        );
     }
 
     #[tokio::test]
@@ -1377,7 +1846,6 @@ mod notification_map_tests {
                 "other apps are untouched"
             );
         }
-        // The inner map survives while the app still has live notifications.
         register_notification(
             &active,
             &reverse,
@@ -1424,8 +1892,8 @@ mod bytes_tests {
 mod action_list_tests {
     use super::*;
 
-    fn owned(s: &str) -> OwnedValue {
-        OwnedValue::try_from(Value::from(s)).expect("str to OwnedValue is infallible")
+    fn owned(s: &str) -> OwnedVariant {
+        OwnedVariant::try_from(Variant::from(s)).expect("str to OwnedVariant is infallible")
     }
 
     fn button(action: &str, label: Option<&str>, target: Option<&str>) -> PortalButton {
@@ -1463,14 +1931,13 @@ mod action_list_tests {
     }
 
     /// The default action is activated by clicking the notification, not drawn
-    /// as a button, so its fdo label is empty, as in the reference backend.
-    /// Sending the action name as the label used to show `app.open` to users of
-    /// servers that list every action.
+    /// as a button, so its fdo label is empty even when the portal action name
+    /// is present.
     #[test]
     fn the_default_action_is_reported_under_the_reserved_id() {
         let n = notification_with_default_action();
         let (actions, targets) = build_actions(&n);
-        assert_eq!(actions, vec!["default", ""]);
+        assert_eq!(&actions[..], &["default", ""]);
         assert_eq!(targets.len(), 1);
         assert_eq!(targets["default"], owned("t"));
     }
@@ -1482,7 +1949,7 @@ mod action_list_tests {
             ..Default::default()
         };
         let (actions, targets) = build_actions(&n);
-        assert_eq!(actions, vec!["default", ""]);
+        assert_eq!(&actions[..], &["default", ""]);
         assert!(
             targets.is_empty(),
             "an action with no target must not get an empty entry"
@@ -1505,8 +1972,8 @@ mod action_list_tests {
         let (actions, _) = build_actions(&n);
         assert_eq!(actions.len() % 2, 0, "ids and labels must pair up");
         assert_eq!(
-            actions,
-            vec!["default", "", "reply", "reply", "archive", "Archive"]
+            &actions[..],
+            &["default", "", "reply", "reply", "archive", "Archive"]
         );
     }
 
@@ -1517,7 +1984,7 @@ mod action_list_tests {
             ..Default::default()
         };
         let (actions, _) = build_actions(&n);
-        assert_eq!(actions, vec!["app.reply", "Reply"]);
+        assert_eq!(&actions[..], &["app.reply", "Reply"]);
     }
 
     /// An absent label falls back to the id, which keeps the list correctly
@@ -1529,7 +1996,7 @@ mod action_list_tests {
             ..Default::default()
         };
         let (actions, _) = build_actions(&n);
-        assert_eq!(actions, vec!["app.reply", "app.reply"]);
+        assert_eq!(&actions[..], &["app.reply", "app.reply"]);
     }
 
     /// A button the server reports back by id must have an id to report.
@@ -1546,11 +2013,11 @@ mod action_list_tests {
             ..Default::default()
         };
         let (actions, _) = build_actions(&n);
-        assert_eq!(actions, vec!["app.reply", "Reply"]);
+        assert_eq!(&actions[..], &["app.reply", "Reply"]);
     }
 
-    /// The specification names the key `target`. The previous code read
-    /// `action-target`, so a button's target was never delivered.
+    /// The specification names the key `target`; each action's target must be
+    /// kept under its own action id.
     #[test]
     fn targets_are_kept_per_action() {
         let n = PortalNotification {
@@ -1572,8 +2039,7 @@ mod action_list_tests {
     }
 
     /// A click on the notification arrives as fdo's `default` id and must be
-    /// delivered as the app's own `default-action`, with its target. The
-    /// previous code delivered the literal name `default`.
+    /// delivered as the app's own `default-action`, with its target.
     #[test]
     fn the_default_id_routes_to_the_default_action() {
         let target = target_for(&PortalNotification {
@@ -1611,16 +2077,76 @@ mod action_list_tests {
     #[test]
     fn platform_data_carries_the_token_under_both_keys() {
         let data = platform_data(Some("token-1".into()));
-        assert_eq!(data["activation-token"], Value::from("token-1"));
-        assert_eq!(data["desktop-startup-id"], Value::from("token-1"));
+        assert!(
+            data.capacity() >= 2,
+            "both keys are known up front, so the map must be pre-sized"
+        );
+        assert_eq!(data["activation-token"], Variant::from("token-1"));
+        assert_eq!(data["desktop-startup-id"], Variant::from("token-1"));
         assert!(platform_data(None).is_empty());
     }
 
-    /// The regression this guards: the list used to be built as a
-    /// `Vec<String>`, allocating one `String` per id and per label -- including
-    /// for labels, which were already `&str` -- and the whole vector was then
-    /// dropped after reborrowing it as `Vec<&str>`. Two buttons with no labels
-    /// and no targets must now cost only the `Vec` itself.
+    /// Every element of an `as` icon must be a string, including when the bad
+    /// element is not the first one.
+    #[test]
+    fn themed_icon_rejects_a_malformed_trailing_name() {
+        use zbus::wire::Array;
+
+        let good: Array<'_> = vec![Variant::from("first"), Variant::from("second")].into();
+        assert_eq!(
+            themed_icon_name(&Variant::Array(good)).as_deref(),
+            Some("first")
+        );
+
+        let bad: Array<'_> = vec![Variant::from("first"), Variant::from(42u32)].into();
+        assert_eq!(
+            themed_icon_name(&Variant::Array(bad)),
+            None,
+            "a malformed trailing name must reject the whole icon"
+        );
+
+        let empty: Array<'_> = Vec::<Variant<'_>>::new().into();
+        assert_eq!(themed_icon_name(&Variant::Array(empty)), None);
+    }
+
+    /// A token received before a replacement that reuses the host ID belongs
+    /// to the old notification and must not activate the new one's action.
+    #[test]
+    fn a_token_from_a_replaced_notification_is_rejected() {
+        let sound = Arc::new(TempSoundFile {
+            path: std::env::temp_dir().join("xdpg-token-pending-sound.snd"),
+        });
+        let old = Arc::new(NotificationTarget {
+            key: Arc::new(NotifKey::new("org.example.App", "1")),
+            action_targets: HashMap::new(),
+            default_action: Some("app.old".into()),
+            sound_file: Some(sound.clone()),
+        });
+        let new = Arc::new(target_for(&PortalNotification {
+            default_action: Some("app.new".into()),
+            ..Default::default()
+        }));
+
+        let issued_for = Arc::downgrade(&old);
+        assert!(token_belongs_to(&issued_for, Some(&old)));
+        assert!(!token_belongs_to(&issued_for, Some(&new)));
+        assert!(!token_belongs_to(&issued_for, None));
+
+        // Once the old target is gone the weak identity is stale, even if a
+        // new target happens to be registered at the same host id.
+        drop(old);
+        assert!(issued_for.upgrade().is_none());
+        assert!(!token_belongs_to(&issued_for, Some(&new)));
+        assert_eq!(
+            Arc::strong_count(&sound),
+            1,
+            "a pending Weak token must not pin the retired notification's sound file"
+        );
+    }
+
+    /// Two buttons with no labels and no targets fit entirely in the
+    /// `SmallVec`'s inline buffer, so building the list costs zero heap
+    /// allocations even though the id and label slices are borrowed.
     #[test]
     fn building_the_list_does_not_allocate_a_string_per_action() {
         let n = PortalNotification {
@@ -1640,12 +2166,51 @@ mod action_list_tests {
 
         assert_eq!(actions.len(), 6, "three actions, id and label each");
         assert!(
+            !actions.spilled(),
+            "six &str slots fit inline in [&str; 8], so no heap spill is allowed"
+        );
+        assert!(
             targets.is_empty(),
             "no targets were requested, so none may be cloned"
         );
         assert_eq!(
-            snap.count, 1,
-            "only the result Vec may allocate, got {snap:?}"
+            snap.count, 0,
+            "inline SmallVec and an empty target map must not allocate, got {snap:?}"
+        );
+    }
+
+    /// Buttons without an `action` are skipped, so they must not count toward
+    /// the `SmallVec`'s inline capacity.
+    #[test]
+    fn actionless_buttons_do_not_size_the_action_list() {
+        let n = PortalNotification {
+            buttons: Some(
+                (0..5)
+                    .map(|_| PortalButton {
+                        action: None,
+                        label: None,
+                        target: None,
+                    })
+                    .collect(),
+            ),
+            ..Default::default()
+        };
+
+        let scope = crate::alloc_probe::AllocScope::start();
+        let (actions, targets) = build_actions(&n);
+        let snap = scope.finish();
+        std::hint::black_box(&actions);
+        std::hint::black_box(&targets);
+
+        assert!(actions.is_empty());
+        assert!(targets.is_empty());
+        assert!(
+            !actions.spilled(),
+            "five skipped buttons must not spill the SmallVec"
+        );
+        assert_eq!(
+            snap.count, 0,
+            "no slots were pushed, so nothing may allocate: {snap:?}"
         );
     }
 }
