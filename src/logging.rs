@@ -5,7 +5,9 @@ pub fn init() {
 
     let registry = Registry::default().with(env_filter);
 
-    #[cfg(feature = "systemd")]
+    // journald is Linux-only: on every other target the `systemd` feature is
+    // inert, so fall through to the plain stderr subscriber there.
+    #[cfg(all(feature = "systemd", target_os = "linux"))]
     if stderr_is_journal()
         && let Ok(layer) = tracing_journald::layer()
     {
@@ -16,7 +18,7 @@ pub fn init() {
     registry.with(tracing_subscriber::fmt::layer()).init();
 }
 
-#[cfg(feature = "systemd")]
+#[cfg(all(feature = "systemd", target_os = "linux"))]
 fn stderr_is_journal() -> bool {
     use std::{env, fs::File, os::linux::fs::MetadataExt};
     let Ok(journal_stream) = env::var("JOURNAL_STREAM") else {

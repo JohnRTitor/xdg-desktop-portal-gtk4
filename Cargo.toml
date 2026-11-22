@@ -61,12 +61,17 @@ tempfile = "3"
 thiserror = "2"
 tokio = { version = "1", features = ["macros", "rt", "sync"] }
 tracing = "0.1"
-tracing-journald = { version = "0.3", optional = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 zbus = { version = "6", default-features = false, features = ["comms", "proxy", "service", "tokio", "tracing"] }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["time"] }
+
+# journald is Linux-only. The `systemd` feature stays in `default`, but on
+# other targets it activates no dependency and the journald code is compiled
+# out (see src/logging.rs).
+[target.'cfg(target_os = "linux")'.dependencies]
+tracing-journald = { version = "0.3", optional = true }
 
 [features]
 default = [

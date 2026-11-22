@@ -111,7 +111,7 @@ systemctl --user restart xdg-desktop-portal
 
 ## Logging & Debugging
 
-When built with the `systemd` feature and started with stderr connected to the journal, the daemon logs directly to the systemd journal via `tracing-journald`. Otherwise it logs to stderr.
+On Linux, when built with the `systemd` feature and started with stderr connected to the journal, the daemon logs directly to the systemd journal via `tracing-journald`. Otherwise it logs to stderr. The `systemd` feature has no effect on non-Linux targets (journald is Linux-only).
 
 Enable debug logging via environment variables:
 

@@ -106,7 +106,7 @@ that fails on revert.
 ## Logging
 
 - Use `tracing` (`error!`, `warn!`, `debug!`, `info!`, `instrument`) for all logging.
-- Native systemd integration uses `tracing-journald` automatically when `stderr` is connected to the journal.
+- On Linux with the `systemd` feature, native journald integration uses `tracing-journald` automatically when `stderr` is connected to the journal. The journald path is gated to `target_os = "linux"`; on other targets logging always goes to stderr.
 
 ## Testing
 
