@@ -1,18 +1,18 @@
-allow_action: _Разрешить
+allow_action: Разрешить
 cancel_action: Отменить
 choose_an_application: Выберите приложение.
-create_action: С_оздать
+create_action: Создать
 create_web_application: Создать веб-приложение
 create_application: Создать веб-приложение
 deny_access_action: Отказать в доступе
 deny_action: Отказать
 grant_access_action: Предоставить доступ
 name: Имя
-open_action: _Открыть
+open_action: Открыть
 open_files_read_only: Открыть файлы только для чтения
-save_action: _Сохранить
+save_action: Сохранить
 select_application_to_open_file: Выберите приложение для открытия «%{filename}».
-share_action: _Дать доступ
+share_action: Дать доступ
 share_information: Подробности
 unknown_device: Неизвестное устройство
 unknown_vendor: Неизвестный производитель

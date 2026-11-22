@@ -7,11 +7,11 @@ deny_access_action: Заборонити доступ
 deny_action: Відмовити
 grant_access_action: Надати доступ
 name: Назва
-open_action: _Відкрити
+open_action: Відкрити
 open_files_read_only: Відкрити файли лише для читання
-save_action: _Зберегти
+save_action: Зберегти
 select_application_to_open_file: Виберіть програму для відкриття файла «%{filename}».
-share_action: _Оприлюднити
+share_action: Оприлюднити
 share_information: Оприлюднити подробиці
 unknown_device: Невідомий пристрій
 unknown_vendor: Невідомий виробник

@@ -7,11 +7,11 @@ deny_access_action: Toegang weigeren
 deny_action: Weigeren
 grant_access_action: Toegang verlenen
 name: Naam
-open_action: _Openen
+open_action: Openen
 open_files_read_only: Bestanden openen als alleen-lezen
-save_action: Op_slaan
+save_action: Opslaan
 select_application_to_open_file: Kies een toepassing om ‘%{filename}’ mee te openen.
-share_action: _Delen
+share_action: Delen
 share_information: Gegevens delen
 unknown_device: Onbekend apparaat
 unknown_vendor: Onbekende leverancier

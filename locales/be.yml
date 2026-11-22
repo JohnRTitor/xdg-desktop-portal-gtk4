@@ -6,11 +6,11 @@ deny_action: Забараніць
 create_application: Create Application
 grant_access_action: Дазволіць доступ
 name: Імя
-open_action: _Адкрыць
+open_action: Адкрыць
 open_files_read_only: Адкрыць файлы ў рэжыме толькі для чытання
-save_action: _Захаваць
+save_action: Захаваць
 select_application_to_open_file: Выберыце праграму, каб адкрыць файл «%{filename}».
-share_action: _Даць доступ
+share_action: Даць доступ
 share_information: Падрабязнасці
 unknown_device: Невядомая прылада
 unknown_vendor: Невядомы вытворца

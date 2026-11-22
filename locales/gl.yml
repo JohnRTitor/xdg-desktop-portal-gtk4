@@ -7,11 +7,11 @@ deny_access_action: Denegar acceso
 deny_action: Denegar
 grant_access_action: Conceder acceso
 name: Nome
-open_action: _Abrir
+open_action: Abrir
 open_files_read_only: Abrir ficheiros en modo só lectura
-save_action: _Gardar
+save_action: Gardar
 select_application_to_open_file: Escolla unha aplicación para abrir «%{filename}».
-share_action: _Compartir
+share_action: Compartir
 share_information: Compartir detalles
 unknown_device: Dispositivo descoñecido
 unknown_vendor: Vendedor descoñecido

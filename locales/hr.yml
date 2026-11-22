@@ -6,9 +6,9 @@ create_application: Stvori web aplikaciju
 deny_access_action: Zabrani pristup
 grant_access_action: Dozvoli pristup
 name: Naziv
-open_action: _Otvori
+open_action: Otvori
 open_files_read_only: Otvori datoteke u zaštićenom stanju
-save_action: _Spremi
+save_action: Spremi
 select_application_to_open_file: Odaberi program za otvaranje datoteke „%{filename}”.
-share_action: _Dijeli
+share_action: Dijeli
 share_information: Dijeli detalje
