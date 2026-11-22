@@ -4,7 +4,25 @@ A GTK4-based backend for [xdg-desktop-portal](https://github.com/flatpak/xdg-des
 
 Enables sandboxed applications (like Flatpaks and Snaps) to securely interact with the host system, providing native GTK4 dialogs for file picking, app choosing, and more. Use this as your primary portal backend on Wayland compositors (like Sway, Hyprland) or X11 to benefit from modern GTK4 features like updated UI elements and native file picker thumbnails.
 
-![screenshot.png](./static/screenshot.png)
+![Native GTK4 file chooser with thumbnails](./static/screenshots/file-chooser-open.png)
+
+## Screenshots
+
+A selection of the native GTK4 dialogs provided by the backend:
+
+| Save File | App Chooser |
+| :-------: | :---------: |
+| <img src="./static/screenshots/file-chooser-save.png" width="400" alt="GTK4 Save File dialog"> | <img src="./static/screenshots/app-chooser.png" width="400" alt="GTK4 App Chooser dialog"> |
+
+| Device Access | USB Device Access |
+| :-----------: | :---------------: |
+| <img src="./static/screenshots/access.png" width="400" alt="GTK4 device access dialog"> | <img src="./static/screenshots/usb.png" width="400" alt="GTK4 USB device access dialog"> |
+
+| Print | Dynamic Launcher |
+| :---: | :--------------: |
+| <img src="./static/screenshots/print.png" width="400" alt="GTK4 Print dialog"> | <img src="./static/screenshots/dynamic-launcher.png" width="400" alt="GTK4 Dynamic Launcher dialog"> |
+
+_More screenshots are available in [`static/screenshots/`](./static/screenshots/)._
 
 ## Supported Portals
 
