@@ -7,11 +7,11 @@ deny_access_action: წვდომის უარყოფა
 deny_action: უარყოფა
 grant_access_action: წვდომის მინიჭება
 name: სახელი
-open_action: _გახსნა
+open_action: გახსნა
 open_files_read_only: ფაილის მხოლოდ-წაკითხვად რეჟიმში გახსნა
-save_action: _შენახვა
+save_action: შენახვა
 select_application_to_open_file: აირჩიეთ \
-share_action: _გაზიარება
+share_action: გაზიარება
 share_information: დეტალების გაზიარება
 unknown_device: უცნობი მოწყობილობა
 unknown_vendor: უცნობი მომწოდებელი

@@ -1,18 +1,18 @@
-allow_action: Izink_an
+allow_action: Izinkan
 cancel_action: Batal
 choose_an_application: Pilih aplikasi.
-create_action: _Buat
+create_action: Buat
 create_web_application: Buat Aplikasi Web
 create_application: Buat Aplikasi Web
 deny_access_action: Tolak Akses
 deny_action: Tolak
 grant_access_action: Beri Akses
 name: Nama
-open_action: B_uka
+open_action: Buka
 open_files_read_only: Buka berkas hanya-baca
-save_action: _Simpan
+save_action: Simpan
 select_application_to_open_file: Pilih aplikasi untuk membuka berkas \
-share_action: _Bagikan
+share_action: Bagikan
 share_information: Bagikan Detail
 unknown_device: Perangkat tak dikenal
 unknown_vendor: Vendor tak dikenal

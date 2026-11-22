@@ -7,11 +7,11 @@ deny_access_action: Nega accesso
 deny_action: Nega
 grant_access_action: Consenti accesso
 name: Nome
-open_action: A_pri
+open_action: Apri
 open_files_read_only: Apri file in sola-lettura
-save_action: _Salva
+save_action: Salva
 select_application_to_open_file: Scegliere un'applicazione per aprire il file «%{filename}».
-share_action: Co_ndividi
+share_action: Condividi
 share_information: Dettagli
 unknown_device: Dispositivo sconosciuto
 unknown_vendor: Produttore sconosciuto

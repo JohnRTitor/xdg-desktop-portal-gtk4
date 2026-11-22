@@ -1,19 +1,19 @@
-allow_action: _Engedélyezés
+allow_action: Engedélyezés
 cancel_action: Mégse
 choose_an_application: Válasszon egy alkalmazást.
-create_action: Lét_rehozás
+create_action: Létrehozás
 create_web_application: Webalkalmazás létrehozása
 create_application: Webalkalmazás létrehozása
 deny_access_action: Hozzáférés megtagadása
 deny_action: Elutasítás
 grant_access_action: Hozzáférés megadása
 name: Név
-open_action: _Megnyitás
+open_action: Megnyitás
 open_files_read_only: Fájlok megnyitása csak olvasásra
-save_action: _Mentés
+save_action: Mentés
 select_application_to_open_file: Válasszon egy alkalmazást a(z) „%{filename}” fájl
   megnyitásához.
-share_action: Meg_osztás
+share_action: Megosztás
 share_information: Részletek megosztása
 unknown_device: Ismeretlen eszköz
 unknown_vendor: Ismeretlen gyártó

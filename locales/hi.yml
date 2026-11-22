@@ -1,15 +1,15 @@
 cancel_action: रद्द करें
 choose_an_application: एक अनुप्रयोग चुनें।
-create_action: बनाएं (_r)
+create_action: बनाएं
 create_web_application: वेब अनुप्रयोग बनाएं
 create_application: वेब अनुप्रयोग बनाएं
 deny_access_action: पहुंच अस्वीकारें
 deny_action: अस्वीकार करें
 grant_access_action: पहुंच स्वीकारें
 name: नाम
-open_action: खोलें (_O)
+open_action: खोलें
 open_files_read_only: फाइलें केवल-पढ़ने के लिए खोलें
-save_action: सहेजें (_S)
+save_action: सहेजें
 select_application_to_open_file: फाइल “%{filename}” को खोलने के लिए एक अनुप्रयोग चुनें।
-share_action: साझा करें (_S)
+share_action: साझा करें
 share_information: जानकारी साझा करें
