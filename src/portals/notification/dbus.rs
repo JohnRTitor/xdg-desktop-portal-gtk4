@@ -412,7 +412,7 @@ fn retire_closed_notification(
 /// This struct holds shared state used to map between the sandboxed application's
 /// portal notification IDs and the host system's actual notification IDs.
 pub struct Notification {
-    /// Maps `app_id -> portal_id -> ` the system notification ID (`u32`).
+    /// Maps `app_id -> portal_id` to the system notification ID (`u32`).
     /// This is used so we can replace or remove an existing notification.
     active_notifications: ActiveNotifications,
 
