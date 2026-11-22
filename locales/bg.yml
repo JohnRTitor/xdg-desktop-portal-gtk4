@@ -1,13 +1,22 @@
-cancel_action: Отказване
-choose_an_application: Изберете програма.
+allow_action: Позволяване
+allow_usb_access: Позволяване на достъп до USB
+application_wants_to_access_information: Приложението иска достъп до вашата информация
+cancel_action: Отказ
+choose_an_application: Изберете приложение
 create_action: Създаване
-create_web_application: Създаване на уеб програма
-create_application: Създаване на уеб програма
+create_web_application: Създаване на уеб приложение
+create_application: Създаване на приложение
 deny_access_action: Отказване на достъп
+deny_action: Забраняване
 grant_access_action: Позволяване на достъп
+name: Име
 open_action: Отваряне
 open_files_read_only: Отваряне на файловете само за четене
 save_action: Запазване
-select_application_to_open_file: Избор на програма за отваряне на „%{filename}“.
+select_application_to_open: Избор на приложение за отваряне
+select_application_to_open_file: Избор на приложение за отваряне на файла „%{filename}“
 share_action: Споделяне
-share_information: Споделяне на подробностите
+share_information: Споделяне на информация
+unknown_device: Неизвестно устройство
+unknown_vendor: Неизвестен производител
+wants_to_access_usb_devices: "%{app_id} иска достъп до следните USB устройства"
