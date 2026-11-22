@@ -97,11 +97,16 @@ fn sound_dir_under(runtime_dir: Option<&std::ffi::OsStr>) -> Option<std::path::P
 ///
 /// A plain `create_dir_all` applies the process umask to a `0777` request, which
 /// under a permissive umask yields a group- or world-accessible directory. The
-/// mode is requested explicitly so the result is `0700` regardless of umask.
+/// mode is requested explicitly so the result has no group or world bits, while
+/// retaining the owner's search bit so files can be created inside it. A
+/// restrictive umask can still remove bits from the request.
 /// An existing path is accepted: `EEXIST` on a directory is the normal case
 /// after the first sound in a session, and the parent is already private.
 fn ensure_private_dir(dir: &std::path::Path) -> std::io::Result<()> {
-    match rustix::fs::mkdir(dir, rustix::fs::Mode::RUSR | rustix::fs::Mode::WUSR) {
+    match rustix::fs::mkdir(
+        dir,
+        rustix::fs::Mode::RUSR | rustix::fs::Mode::WUSR | rustix::fs::Mode::XUSR,
+    ) {
         Ok(()) => Ok(()),
         Err(rustix::io::Errno::EXIST) => Ok(()),
         Err(e) => Err(std::io::Error::from_raw_os_error(e.raw_os_error())),
@@ -1168,6 +1173,38 @@ mod tests {
             None,
             "without XDG_RUNTIME_DIR there is no private directory to write into"
         );
+    }
+
+    #[test]
+    fn ensure_private_dir_creates_a_traversable_private_directory() {
+        use {
+            std::os::unix::fs::PermissionsExt,
+            std::sync::atomic::{AtomicU64, Ordering},
+        };
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let dir = std::env::temp_dir().join(format!(
+            "xdp-sound-mode-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+
+        ensure_private_dir(&dir).expect("a fresh directory must be created");
+
+        let mode = std::fs::metadata(&dir).unwrap().permissions().mode();
+        assert_eq!(
+            mode & 0o077,
+            0,
+            "the directory must not be group/world accessible"
+        );
+        assert_ne!(
+            mode & 0o100,
+            0,
+            "the owner must be able to search the directory"
+        );
+        std::fs::write(dir.join("probe"), b"ok").expect("0700 must allow creating files inside");
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

@@ -378,14 +378,22 @@ impl ThumbnailerSpec {
     }
 }
 
+/// Whether `path` is a regular file with at least one executable bit set.
+fn is_executable_file(path: &Path) -> bool {
+    fs::metadata(path)
+        .map(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+        .unwrap_or(false)
+}
+
+/// Resolve a thumbnailer by absolute path, relative path, or `PATH` lookup.
 fn is_executable_or_in_path(cmd: &str) -> bool {
     let p = Path::new(cmd);
     if p.is_absolute() || cmd.contains('/') {
-        return p.is_file();
+        return is_executable_file(p);
     }
     if let Some(path_var) = std::env::var_os("PATH") {
         for dir in std::env::split_paths(&path_var) {
-            if dir.join(cmd).is_file() {
+            if is_executable_file(&dir.join(cmd)) {
                 return true;
             }
         }
@@ -1654,6 +1662,23 @@ pub fn setup_dialog_thumbnailer(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn executable_lookup_requires_an_executable_file() {
+        let dir = std::env::temp_dir().join(format!("xdp-thumb-exec-{}", std::process::id()));
+        let _ = fs::create_dir_all(&dir);
+        let plain = dir.join("plain-thumbnailer");
+        fs::write(&plain, b"script").unwrap();
+        let executable = dir.join("exec-thumbnailer");
+        fs::write(&executable, b"script").unwrap();
+        fs::set_permissions(&executable, fs::Permissions::from_mode(0o755)).unwrap();
+
+        assert!(!is_executable_or_in_path(plain.to_str().unwrap()));
+        assert!(is_executable_or_in_path(executable.to_str().unwrap()));
+        assert!(!is_executable_or_in_path(dir.to_str().unwrap()));
+
+        let _ = fs::remove_dir_all(&dir);
+    }
 
     #[test]
     #[cfg(target_pointer_width = "64")]
