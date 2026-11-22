@@ -149,32 +149,25 @@ fn glib_to_owned(value: &glib::Variant) -> Option<OwnedVariant> {
     } else {
         value.clone()
     };
-    // Match the borrowed type directly instead of allocating a `String` per
-    // entry of every `a{sv}` dict round-tripped through GTK.
-    let ty = inner.type_();
-    if ty == glib::VariantTy::STRING {
-        let s = inner.get::<String>()?;
-        OwnedVariant::try_from(Variant::from(s.as_str())).ok()
-    } else if ty == glib::VariantTy::DOUBLE {
-        Some(OwnedVariant::from(inner.get::<f64>()?))
-    } else if ty == glib::VariantTy::BOOLEAN {
-        Some(OwnedVariant::from(inner.get::<bool>()?))
-    } else if ty == glib::VariantTy::BYTE {
-        Some(OwnedVariant::from(inner.get::<u8>()?))
-    } else if ty == glib::VariantTy::INT16 {
-        Some(OwnedVariant::from(inner.get::<i16>()?))
-    } else if ty == glib::VariantTy::UINT16 {
-        Some(OwnedVariant::from(inner.get::<u16>()?))
-    } else if ty == glib::VariantTy::INT32 {
-        Some(OwnedVariant::from(inner.get::<i32>()?))
-    } else if ty == glib::VariantTy::UINT32 {
-        Some(OwnedVariant::from(inner.get::<u32>()?))
-    } else if ty == glib::VariantTy::INT64 {
-        Some(OwnedVariant::from(inner.get::<i64>()?))
-    } else if ty == glib::VariantTy::UINT64 {
-        Some(OwnedVariant::from(inner.get::<u64>()?))
-    } else {
-        None
+    // Match the borrowed signature directly: `type_().to_string()` allocated
+    // a `String` for every entry of every `a{sv}` dict round-tripped through
+    // GTK. `VariantTy` itself is unsized, so it cannot be used in a match
+    // pattern; `as_str` gives us a borrowed `&str` to match on.
+    match inner.type_().as_str() {
+        "s" => {
+            let s = inner.get::<String>()?;
+            OwnedVariant::try_from(Variant::from(s.as_str())).ok()
+        }
+        "d" => Some(OwnedVariant::from(inner.get::<f64>()?)),
+        "b" => Some(OwnedVariant::from(inner.get::<bool>()?)),
+        "y" => Some(OwnedVariant::from(inner.get::<u8>()?)),
+        "n" => Some(OwnedVariant::from(inner.get::<i16>()?)),
+        "q" => Some(OwnedVariant::from(inner.get::<u16>()?)),
+        "i" => Some(OwnedVariant::from(inner.get::<i32>()?)),
+        "u" => Some(OwnedVariant::from(inner.get::<u32>()?)),
+        "x" => Some(OwnedVariant::from(inner.get::<i64>()?)),
+        "t" => Some(OwnedVariant::from(inner.get::<u64>()?)),
+        _ => None,
     }
 }
 
