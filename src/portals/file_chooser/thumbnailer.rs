@@ -437,8 +437,15 @@ impl ThumbnailerRegistry {
                 search_dirs.push(dir.join("thumbnailers"));
             }
         }
-        search_dirs.push(PathBuf::from("/run/current-system/sw/share/thumbnailers"));
-        search_dirs.push(PathBuf::from("/usr/share/thumbnailers"));
+
+        search_dirs.extend(
+            [
+                "/run/current-system/sw/share/thumbnailers",
+                "/usr/local/share/thumbnailers",
+                "/usr/share/thumbnailers",
+            ]
+            .map(PathBuf::from),
+        );
 
         for dir in search_dirs {
             if !dir.is_dir() {
