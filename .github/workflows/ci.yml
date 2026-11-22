@@ -88,3 +88,28 @@ jobs:
         # See the comment in the `test` job above: without a session bus the
         # D-Bus tests skip themselves and pass without asserting anything.
         run: dbus-run-session -- cargo test --locked
+
+  freebsd:
+    name: FreeBSD
+    runs-on: ubuntu-latest
+    # GitHub-hosted runners only provide Linux, macOS and Windows images. A
+    # container will not work either: Docker shares the Linux kernel, so it
+    # cannot run FreeBSD binaries. vmactions boots a real FreeBSD VM with QEMU
+    # and syncs the checkout into it.
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Build and test in FreeBSD
+        uses: vmactions/freebsd-vm@811efaaac0668df8bfb8308c3ec997b5ab50037b # v1.6.0
+        with:
+          # The action resolves a leading release component to the newest
+          # matching release (currently 15.1); "latest" is not a valid value.
+          release: "15"
+          prepare: |
+            set -eu
+            pkg install -y pkgconf gtk4 gdk-pixbuf2 dbus rust
+          run: |
+            set -eu
+            cargo build --locked
+            # Without a session bus the D-Bus tests skip themselves and pass
+            # without asserting anything (see the `test` job above).
+            dbus-run-session -- cargo test --locked
