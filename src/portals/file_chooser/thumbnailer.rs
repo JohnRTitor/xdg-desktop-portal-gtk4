@@ -72,10 +72,8 @@ pub fn file_to_uri(path: &Path) -> Option<String> {
 
 /// Percent-encode square brackets per the GNOME/Cosmic file-URI convention.
 ///
-/// `String::replace` builds a fresh string even when nothing matched, so the two
-/// unconditional replacements used to cost two extra allocations for every path.
-/// Almost no path contains brackets: guard them and move `uri` through untouched
-/// on the common branch.
+/// `String::replace` builds a fresh string even when nothing matched, so guard
+/// the replacements and move `uri` through untouched on the common branch.
 fn escape_uri_brackets(uri: String) -> String {
     if uri.contains('[') || uri.contains(']') {
         uri.replace('[', "%5B").replace(']', "%5D")
@@ -246,8 +244,8 @@ static PNG_CRC_TABLE: [u32; 256] = make_png_crc_table();
 
 /// IEEE 802.3 CRC32 calculation for PNG chunk checksums.
 ///
-/// Table-driven: one shift/xor per input byte instead of eight. The table is a
-/// `static`, so this performs no allocation.
+/// Table-driven: one shift/xor per input byte. The table is a `static`, so this
+/// performs no allocation.
 fn png_crc32(data: &[u8]) -> u32 {
     let mut crc = 0xffff_ffffu32;
     for &b in data {
@@ -299,9 +297,7 @@ pub fn inject_png_metadata(
     const SOFTWARE: &str = "xdg-desktop-portal-gtk4";
 
     // One allocation at exactly the final size: the original PNG plus the four
-    // tEXt chunks. The old code allocated a separate Vec per chunk and gave the
-    // result a flat 256 bytes of slack; neither is needed once the chunk sizes
-    // are known up front.
+    // tEXt chunks, whose sizes are known up front.
     let overhead = text_chunk_len("Thumb::URI", uri)
         + text_chunk_len("Thumb::MTime", &mtime_str)
         + text_chunk_len("Thumb::Size", &size_str)
@@ -331,8 +327,8 @@ pub fn save_thumbnail_file(
         .as_secs();
     let size = meta.len();
 
-    // Borrow the original bytes when injection fails (invalid PNG); copying the
-    // whole image just to hand it to `write_all` was a pure allocation.
+    // Borrow the original bytes when injection fails (invalid PNG) rather than
+    // copying the whole image.
     let injected = inject_png_metadata(raw_png, uri, mtime, size);
     let final_png: &[u8] = injected.as_deref().unwrap_or(raw_png);
 
@@ -409,13 +405,10 @@ fn sort_registry_index(index: &mut [(Box<str>, usize)]) {
 
 /// Registry of discovered FreeDesktop thumbnailers.
 ///
-/// A flat, MIME-sorted index into a single boxed slice of specs replaces the
-/// `HashMap<String, Vec<ThumbnailerSpec>>`. Each MIME used to own a full clone
-/// of its spec (name, exec, try_exec and the MIME list); now it stores only a
-/// `(Box<str>, index)` pair and every MIME shares one spec. Small static sets
-/// also beat a hash table here: lookup is a `partition_point` with no hashing.
-/// Entries are stably sorted so that, for a given MIME, the first spec remains
-/// the one discovered first -- exactly what `Vec::first()` used to return.
+/// A flat, MIME-sorted index into a single boxed slice of specs means each MIME
+/// stores only a `(Box<str>, index)` pair and all MIMEs share one spec. Lookup
+/// is a `partition_point` with no hashing, which suits small static sets.
+/// Entries are stably sorted so the first spec discovered for a MIME stays first.
 #[derive(Debug, Default)]
 pub struct ThumbnailerRegistry {
     index: Box<[(Box<str>, usize)]>,
@@ -779,10 +772,8 @@ fn check_cancelled(cancel: &ThumbnailCancel) -> Result<(), String> {
 /// cancellation error.
 ///
 /// The evince and gdk-pixbuf cancel paths funnel through here; the other
-/// branches unlink their temp files inline before returning `CANCELLED`, so no
-/// output is leaked in the private runtime directory. The returned string is
-/// byte-for-byte the same `CANCELLED` value used everywhere else, so
-/// cancellation semantics are unchanged.
+/// branches unlink their temp files inline before returning the standard
+/// `CANCELLED` value, so no output is leaked in the private runtime directory.
 fn cancelled_after_temp_cleanup(temp_path: &Path) -> String {
     let _ = fs::remove_file(temp_path);
     CANCELLED.to_string()
@@ -1100,10 +1091,9 @@ fn generate_thumbnail_cancellable(
                 if let Ok(mut child) = cmd.spawn() {
                     let deadline = std::time::Instant::now() + Duration::from_secs(10);
                     let status = loop {
-                        // Unlike the other external thumbnailers, glycin was
-                        // missing its cancellation check. Without it, closing
-                        // the dialog left glycin running for up to the full
-                        // 10s timeout and then wrote the thumbnail anyway.
+                        // glycin is spawned inline here rather than through
+                        // `execute_thumbnailer_command`, so this loop polls
+                        // cancellation itself before each wait.
                         if cancel.is_cancelled() {
                             let _ = child.kill();
                             let _ = child.wait();
@@ -1696,9 +1686,8 @@ mod tests {
 
     #[test]
     fn needs_gen_matches_independent_validity_decisions() {
-        // The old code called is_thumbnail_valid a second time for every size in
-        // ALL_SIZES. For each validity combination the derived work list must be
-        // exactly the set the old filter kept, in the same order.
+        // For each validity combination the derived work list must be exactly
+        // the invalid tiers, in generation order.
         for normal_ok in [false, true] {
             for large_ok in [false, true] {
                 let (count, sizes) = sizes_needing_generation(normal_ok, large_ok);
@@ -1774,8 +1763,8 @@ mod tests {
         let path = Path::new("/tmp/plain_path.png");
         let _ = file_to_uri(path); // warm up gio's lazy state
 
-        // Baseline: the same gio work plus the two unconditional String::replace
-        // calls the old implementation always performed on a bracket-free URI.
+        // Baseline: the same gio work plus two unconditional replacements, so
+        // the measured difference is only the guard.
         let baseline_scope = crate::alloc_probe::AllocScope::start();
         let baseline = {
             let file = gio::File::for_path(path);
@@ -1821,7 +1810,8 @@ mod tests {
     #[test]
     fn png_crc32_table_matches_bitwise_reference() {
         // Known CRC of the "IHDR" chunk type, then deterministic slices of many
-        // lengths (including empty and long inputs) compared to the old code.
+        // lengths (including empty and long inputs) compared to the bitwise
+        // reference above.
         assert_eq!(png_crc32(b"IHDR"), 0xa8a1_ae0a);
         let mut data = Vec::with_capacity(1024);
         let mut state = 0x1234_5678u32;
@@ -2244,8 +2234,8 @@ mod tests {
         assert!(registry.find_thumbnailer("text/plain").is_none());
     }
 
-    /// Pins the actual attribute writes, not just the GeneratedThumbnails
-    /// values: the original bug was writing one path into both attributes.
+    /// Pins the actual attribute writes, not just the GeneratedThumbnails values:
+    /// each tier must publish its own path.
     #[test]
     fn thumbnail_attributes_use_each_tiers_own_path() {
         let normal = PathBuf::from("/cache/normal.png");

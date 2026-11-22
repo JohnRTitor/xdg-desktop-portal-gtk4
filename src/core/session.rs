@@ -71,10 +71,8 @@ impl Session {
     ///
     /// The wire name needs the explicit `name = "version"`: `#[zbus(property)]`
     /// otherwise derives it from the Rust fn name and capitalises it, exporting
-    /// `Version`. The frontend reads `version`. `Clipboard` and `Settings` both
-    /// shipped that drift before
-    /// `tests/introspection_test.rs::session_interface_matches_upstream_contract`
-    /// was written to catch it.
+    /// `Version`. The frontend reads `version`; the introspection contract test
+    /// checks the wire name for every portal.
     #[zbus(property, name = "version")]
     fn version(&self) -> u32 {
         1

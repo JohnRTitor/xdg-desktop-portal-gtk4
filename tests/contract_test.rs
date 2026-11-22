@@ -30,12 +30,8 @@ trait Clipboard {
 /// session handle: serials are session-scoped, so a caller must not be able to
 /// reach another session's pending transfer by guessing a serial.
 ///
-/// * GNOME (`src/clipboard.c`, `handle_selection_write`) resolves
-///   `session_handle` first and answers `org.freedesktop.portal.Error.NotFound`
-///   for a non-existing session, `Failed` for a wrong session type.
-/// * KDE (`ClipboardPortal::SelectionWrite`, `clipboard.cpp:327-349`) answers
-///   `QDBusError::InvalidArgs` when the handle is not a clipboard-enabled
-///   session, and `InvalidArgs` for an unknown serial.
+/// The exact fdo error differs between backends, but every reference implementation
+/// validates the session before touching a serial.
 ///
 /// The transfer map is additionally keyed by session, so validating the session
 /// is not merely cosmetic: a caller that passes an unknown session but a real
@@ -138,8 +134,7 @@ async fn app_chooser_update_choices_unknown_handle() {
 /// application that sends a slightly different `current_filter` still gets its
 /// intent honoured.
 ///
-/// This exercises the real decision function, which previously could not be
-/// reached from a test.
+/// This exercises the real decision function directly.
 #[test]
 fn file_chooser_current_filter_applies_without_filters_list() {
     use xdg_desktop_portal_gtk4::portals::file_chooser::gui::{
@@ -190,9 +185,7 @@ fn file_chooser_current_filter_applies_without_filters_list() {
 /// When the caller sends a `filters` list, the offered filters are the caller's
 /// own entries rather than a deep copy of them.
 ///
-/// `effective_filters` used to return `(list.to_vec(), …)`, duplicating every
-/// `Filter`'s name and every element in its `Vec<FilterKind>` on each dialog.
-/// With a borrowed `Cow` that copy only happens on the `current_filter`-alone
+/// With a borrowed `Cow`, the copy only happens on the `current_filter`-alone
 /// path, which has no list to borrow.
 ///
 /// `build_dialog` reaches this by *moving* the list out of `FileChooserUi`
@@ -307,10 +300,9 @@ async fn request_close_reports_other_not_cancelled() {
 
 /// A `PreparePrint` token is only valid for the application that obtained it.
 ///
-/// Tokens used to be looked up by value alone, so any sandboxed application
-/// could consume another application's cached printer, page setup and settings
-/// by guessing a token. A mismatched `app_id` is rejected and the entry is left
-/// in place for its rightful owner.
+/// A token is bound to the application that obtained it: a mismatched `app_id`
+/// is rejected and the entry is left in place for its rightful owner, so
+/// guessing a token cannot reuse another app's cached settings.
 #[test]
 fn print_token_is_bound_to_app_id() {
     use {

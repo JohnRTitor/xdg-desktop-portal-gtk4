@@ -98,9 +98,8 @@ impl DynamicLauncher {
         .await;
 
         match res {
-            // An empty name is not a usable launcher entry. GTK3 answers 3
-            // for this rather than 0, so the frontend can tell "user accepted
-            // nothing" from "user accepted this".
+            // An empty name is not a usable launcher entry. Response 3 lets the
+            // frontend tell "user accepted nothing" from "user accepted this".
             Ok(res) if res.name.trim().is_empty() => {
                 tracing::debug!("PrepareInstall accepted an empty name");
                 Response(3, PrepareInstallResults::default())
@@ -173,9 +172,8 @@ impl DynamicLauncher {
     /// # Policy
     ///
     /// We blanket allow certain trusted software centers (like GNOME Software or Discover)
-    /// to create app entries without prompting the user. This matches the behavior of the
-    /// GTK and GNOME portals. All other apps return `2` (Denied), which forces the backend
-    /// to use the interactive `PrepareInstall` UI flow.
+    /// to create app entries without prompting the user. All other apps return `2` (Denied),
+    /// which forces the backend to use the interactive `PrepareInstall` UI flow.
     async fn request_install_token(
         &self,
         app_id: String,
@@ -232,8 +230,7 @@ fn parse_icon(icon_v: &OwnedVariant) -> (Option<String>, Option<Vec<u8>>) {
     };
 
     // `Vec<T>::try_from(Array)` unwraps one level of `Variant::Variant` per
-    // element, so keep doing that here to preserve the previous behaviour while
-    // borrowing the elements instead of cloning the whole array.
+    // element, so do the same here while borrowing instead of cloning the array.
     fn unwrap_one<'b, 'a>(v: &'b Variant<'a>) -> &'b Variant<'a> {
         match v {
             Variant::Variant(inner) => inner,
@@ -315,9 +312,7 @@ mod tests {
         assert_eq!(data, None);
     }
 
-    /// The borrowed themed-icon parser must keep the old `Vec<String>`
-    /// conversion's invariant: one bad name rejects the whole icon, even if a
-    /// valid name came first.
+    /// One bad name rejects the whole icon, even if a valid name came first.
     #[test]
     fn test_parse_icon_themed_rejects_malformed_trailing_name() {
         use zbus::wire::{Array, Structure};

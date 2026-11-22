@@ -100,8 +100,7 @@
 //!
 //! ## Maintenance Notes
 //!
-//! - **Why use two backends?** The dual use of `logind` and `ScreenSaver` is an intentional
-//!   compatibility workaround. Logind is theoretically sufficient, but practically, GNOME and
-//!   other DEs require the `ScreenSaver` D-Bus call to reliably prevent screen dimming.
+//! - **Why use two backends?** Several desktop environments require the `ScreenSaver` D-Bus
+//!   call in addition to `logind` to reliably prevent screen dimming.
 
 pub mod dbus;

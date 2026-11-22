@@ -17,9 +17,7 @@ const PRINT_TOKEN_TIMEOUT_SECS: u32 = 300;
 /// A print job parked between `PreparePrint` and `Print`.
 ///
 /// Deliberately carries no `app_id`: ownership lives in the `PRINT_JOBS` value
-/// tuple, which is what `claim_token` authorises against. A copy of `app_id`
-/// inside the job was write-only, costing a `String` allocation and 24 bytes of
-/// struct for a value no reader could observe.
+/// tuple, which is what `claim_token` authorises against.
 pub struct CachedPrintJob {
     pub title: String,
     pub printer: Printer,
@@ -151,8 +149,8 @@ fn glib_to_owned(value: &glib::Variant) -> Option<OwnedVariant> {
     } else {
         value.clone()
     };
-    // Match the borrowed type directly: `type_().to_string()` allocated a
-    // `String` for every entry of every `a{sv}` dict round-tripped through GTK.
+    // Match the borrowed type directly instead of allocating a `String` per
+    // entry of every `a{sv}` dict round-tripped through GTK.
     let ty = inner.type_();
     if ty == glib::VariantTy::STRING {
         let s = inner.get::<String>()?;
@@ -484,9 +482,8 @@ mod tests {
     /// the payload, so this covers the same branches the real caller hits.
     type Jobs = HashMap<u32, (Arc<str>, u32)>;
 
-    /// `app_id` first removes the padding the previous field order left behind:
-    /// `String` (24) + `u32` (4) + `OwnedFd` (4) pack into exactly 32 bytes,
-    /// down from 40. Pin it so a careless field reorder cannot silently grow it.
+    /// `app_id` first lets `String` (24) + `u32` (4) + `OwnedFd` (4) pack into
+    /// exactly 32 bytes. Pin it so a careless field reorder cannot grow it.
     #[test]
     #[cfg(target_pointer_width = "64")]
     fn execute_print_ui_has_no_tail_padding() {
@@ -665,9 +662,8 @@ mod tests {
         }
     }
 
-    /// The `glib::Variant` <-> zbus `Variant` bridge must preserve value types, not
-    /// only raw bytes. Doubles (margins, paper dimensions) are the values the
-    /// old string-only KeyFile dropped, causing the reported warning.
+    /// The `glib::Variant` <-> zbus `Variant` bridge must preserve value types,
+    /// not only raw bytes: margins and paper dimensions are doubles.
     #[test]
     fn owned_dict_variant_round_trip_preserves_all_scalar_types() {
         use zbus::Variant;
@@ -723,8 +719,7 @@ mod tests {
     }
 
     /// A single unsupported value (or an empty key) must not discard the rest
-    /// of the dict. The old response path skipped bad keys individually; the
-    /// typed bridge must not regress that resilience.
+    /// of the dict.
     #[test]
     fn bad_entries_are_skipped_without_dropping_valid_ones() {
         use zbus::Variant;
@@ -785,9 +780,8 @@ mod tests {
         );
     }
 
-    /// Regression for the "Key file does not have key 'MarginTop'" warning:
-    /// GTK sends doubles for the paper dimensions and margins. A string-only
-    /// KeyFile dropped them, so the dialog fell back to defaults and logged.
+    /// GTK sends doubles for paper dimensions and margins; verify they reach
+    /// GTK so the dialog does not fall back to defaults.
     #[test]
     fn gtk_style_page_setup_dict_applies_margins() {
         use zbus::Variant;

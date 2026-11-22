@@ -286,8 +286,8 @@ mod tests {
     use {super::*, zbus::Connection};
 
     /// Pins the owned-string result of using `Box<str>` for the object path.
-    /// On 64-bit that is 16 bytes, plus 16 for the `Arc<str>` app ID (also a
-    /// fat pointer) and 8 for the thin `Arc<Notify>`; no padding is needed.
+    /// On 64-bit: 16 bytes for the path, 16 for the `Arc<str>` app ID and 8 for
+    /// the thin `Arc<Notify>`; no padding is needed.
     #[test]
     #[cfg(target_pointer_width = "64")]
     fn tracked_request_is_compact() {

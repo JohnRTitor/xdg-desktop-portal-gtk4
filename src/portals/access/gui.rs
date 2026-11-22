@@ -81,8 +81,7 @@ where
         });
     }
     for (id, variants) in radios {
-        // A radio group with nothing selected contributes nothing, matching the
-        // previous `find(..is_active())` behaviour.
+        // A radio group with nothing selected contributes nothing.
         if let Some((variant_id, _)) = variants.into_iter().find(|(_, active)| *active) {
             out.push(FinalChoice {
                 id: id.to_owned(),
@@ -363,12 +362,9 @@ mod final_choice_tests {
 mod allocation_tests {
     use super::*;
 
-    /// The radio-button loop in `run_impl` used to iterate `&choice.variants`
-    /// and clone every `variant.id` into the widget-state tuple, even though the
-    /// `Choice` was consumed right after. It now iterates the variants by value
-    /// and moves the id through. This pins the property that change relies on:
-    /// moving an owned id into the result tuple is free, while cloning it costs
-    /// one allocation per variant.
+    /// The radio-button loop moves each owned `variant.id` into the result
+    /// tuple: that is free, while cloning it would cost one allocation per
+    /// variant.
     #[test]
     fn moving_a_variant_id_into_the_result_does_not_allocate() {
         let variant = ChoiceVariant {

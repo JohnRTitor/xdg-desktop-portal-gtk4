@@ -67,8 +67,7 @@ pub struct Inhibit {
     /// because the screensaver broadcasts to every monitor on each state change,
     /// and collecting the handles into a `Vec` to iterate outside the lock is
     /// cheaper in bytes: a bare `OwnedObjectPath` element carries its own path
-    /// buffer and refcount, where an `Arc` element is a single pointer. Measured
-    /// at 1536 bytes versus 512 for a 64-monitor fan-out.
+    /// buffer and refcount, where an `Arc` element is a single pointer.
     active_monitors: Arc<Mutex<HashMap<OwnedObjectPath, Arc<OwnedObjectPath>>>>,
     /// Last observed `screensaver-active` value, used to seed a new monitor.
     ///
@@ -160,20 +159,14 @@ fn monitor_state<'a>(screensaver_active: bool) -> HashMap<&'a str, Variant<'a>> 
 ///
 /// Only three of the four documented flags reach logind; bit 2 (user switch) is
 /// accepted from callers but has no logind equivalent, so it contributes
-/// nothing -- preserved from the previous implementation, which also skipped it.
-/// Returns `""` when no inhibitable flag is set, which the caller treats as
-/// "do not ask logind".
+/// nothing. Returns `""` when no inhibitable flag is set, which the caller
+/// treats as "do not ask logind".
 ///
-/// This is a table rather than the `Vec` + `join(":")` it replaces: the flag
-/// space is four bits wide, so every reachable answer is a compile-time constant
-/// and the whole mapping costs nothing at run time. The join form allocated a
-/// vector that grew as it was pushed to, then a second `String` to hold the
-/// result.
+/// The flag space is four bits wide, so every reachable answer is a compile-time
+/// constant and the whole mapping costs nothing at run time.
 const fn inhibit_targets(reason: u32) -> &'static str {
     // Only the three logind-understood flags are considered; bit 2 (user
-    // switch) and any bit a future caller might set are dropped, matching the
-    // previous implementation, which tested `reason & FLAG` per known flag and
-    // ignored everything else.
+    // switch) and any bit a future caller might set are ignored.
     match reason & (1 | 4 | 8) {
         0 => "",
         1 => "shutdown",
@@ -351,7 +344,7 @@ impl Inhibit {
             tracing::error!("Failed to export monitor session: {}", e);
             self.session_manager
                 .unregister(&app_id, sender.as_str(), session_handle.as_str());
-            return Ok(2); // Returning 2 as general error for create_monitor according to xdp-gtk
+            return Ok(2); // 2 is the general error for CreateMonitor
         }
 
         self.active_monitors
@@ -548,9 +541,8 @@ mod inhibit_target_tests {
         assert_eq!(inhibit_targets(1 | 4 | 8), "shutdown:sleep:idle");
     }
 
-    /// Bit 2 (user switch) has no logind counterpart. It was already skipped
-    /// before this became a table, so a caller sending only that flag must still
-    /// get no inhibition request rather than a newly-invented one.
+    /// Bit 2 (user switch) has no logind counterpart, so a caller sending only
+    /// that flag must get no inhibition request.
     #[test]
     fn user_switch_alone_asks_logind_for_nothing() {
         assert_eq!(inhibit_targets(2), "");
@@ -578,9 +570,8 @@ mod inhibit_target_tests {
         assert_eq!(inhibit_targets(8 | 64), "idle");
     }
 
-    /// The regression this guards: the mapping used to build a `Vec<&str>` and
-    /// `join(":")` it, allocating the vector and then the result string on every
-    /// `Inhibit` call. It is now a table lookup returning a `&'static str`.
+    /// Every reachable `reason` maps without allocating: the table returns a
+    /// `&'static str`.
     #[test]
     fn resolving_the_flags_allocates_nothing() {
         for reason in [0u32, 1, 2, 4, 5, 8, 9, 12, 13, 1 | 2 | 4 | 8, 16] {
@@ -682,18 +673,13 @@ mod monitor_tests {
         assert!(broadcast_sessions(&monitors).is_empty());
     }
 
-    /// The regression this guards: the monitor handles are read on every
-    /// screensaver state change and the collected `Vec` is what the fan-out
-    /// iterates.
-    ///
-    /// Note on what this does and does not save: `OwnedObjectPath::clone` was
-    /// already allocation-free (it is a refcounted handle), so the old code did
-    /// not allocate per monitor either -- measured at one `Vec` allocation then
-    /// as now. What the `Arc` changes is the retained size of that vector:
-    /// 1536 bytes for 64 bare handles versus 512, since each element shrinks
-    /// from a path buffer plus its refcount to a single pointer. That matters
-    /// because the vector is rebuilt on every state change and lives across the
-    /// awaited signal emission.
+    /// Monitor handles are read on every screensaver state change and the
+    /// collected `Vec` is what the fan-out iterates. Cloning a handle is
+    /// allocation-free either way; what the `Arc` changes is the retained size
+    /// of that vector, because each element shrinks from a path buffer plus its
+    /// refcount to a single pointer. The vector is rebuilt on every state
+    /// change and lives across the awaited signal emission, so this test pins
+    /// its single allocation.
     #[test]
     fn fanning_out_to_the_monitors_costs_one_vec() {
         let monitors = monitors_with(64);
@@ -749,11 +735,9 @@ mod monitor_tests {
 
     /// The frontend reads both keys out of this dict, so both must be present.
     ///
-    /// Regression: `session-state` was never inserted, so the frontend's
-    /// `g_variant_lookup (state, "session-state", "u", &session_state)` left the
-    /// variable at its initialiser of `0` -- a value the contract does not
-    /// define (the range is 1/2/3). Any application that switched on it had
-    /// undefined behaviour.
+    /// `session-state` must be in the 1/2/3 range; a missing key leaves the
+    /// frontend's lookup at its initialiser of `0`, which the contract does not
+    /// define.
     #[test]
     fn the_state_dict_always_carries_both_documented_keys() {
         for active in [true, false] {

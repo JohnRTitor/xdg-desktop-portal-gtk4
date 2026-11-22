@@ -330,10 +330,9 @@ fn register_notification(
 
 /// Applies the outcome of a `Notify` call to the two routing maps.
 ///
-/// Retiring the previous state *before* the call meant a failed `Notify` left
-/// the still-live host notification with no reverse entry (so its actions could
-/// no longer be routed) and dropped its staged sound file early, while the
-/// forward map kept pointing at the old host ID. Nothing is changed on error.
+/// Nothing is changed on error: the still-live host notification keeps its
+/// reverse entry, its staged sound file, and the forward map's host ID so its
+/// actions remain routable.
 ///
 /// A server may reuse `replaces_id` as the new ID. In that case
 /// [`register_notification`] overwrites the old reverse entry itself, retiring
@@ -527,18 +526,13 @@ impl Notification {
                     // Only ever write below a directory we own, with `0700`, and
                     // create the file with `O_EXCL`.
                     //
-                    // The previous code fell back to `std::env::temp_dir()`
-                    // (`/tmp`) whenever `XDG_RUNTIME_DIR` was unset, created the
-                    // directory with `create_dir_all` at the default umask, and
-                    // wrote with a plain truncate-create at the predictable name
-                    // `{app_id}_{micros}.snd`. In a shared `/tmp` that is a
-                    // symlink attack: a local attacker pre-creates the directory
-                    // (or the file, as a symlink to something the user owns) and
-                    // the portal -- running as the user -- truncates and
-                    // overwrites the target. `$XDG_RUNTIME_DIR` is 0700 by
-                    // definition, so requiring it removes the shared-directory
-                    // case entirely; `O_EXCL` removes the pre-created-file case
-                    // even inside a correctly-permissioned directory.
+                    // In a shared `/tmp` a predictable sound path is a symlink
+                    // attack: a local attacker pre-creates the directory or the
+                    // file as a link to something the user owns, and the portal
+                    // -- running as the user -- truncates the target.
+                    // `$XDG_RUNTIME_DIR` is 0700 by definition, so requiring it
+                    // removes the shared-directory case; `O_EXCL` removes the
+                    // pre-created-file case even inside a private directory.
                     let Some(mut path) = temp_sound_dir() else {
                         tracing::warn!(
                             "XDG_RUNTIME_DIR is unset; refusing to stage a notification sound file"
@@ -800,9 +794,9 @@ impl Notification {
 /// Read the first name from a themed-icon `as` payload.
 ///
 /// Borrowing the array avoids materialising a `Vec<String>` just to keep one
-/// name, but the old conversion validated every element, so a malformed
-/// trailing name must still reject the whole icon. `Array -> Vec<T>` unwraps
-/// exactly one level of `Variant::Variant` per element.
+/// name, but every element must still validate: one malformed trailing name
+/// rejects the whole icon. `Array -> Vec<T>` unwraps exactly one level of
+/// `Variant::Variant` per element.
 fn themed_icon_name(payload: &Variant<'_>) -> Option<String> {
     let array = <&zbus::wire::Array>::try_from(payload).ok()?;
     let mut first: Option<&str> = None;
@@ -868,13 +862,10 @@ fn targets_capacity(notification: &PortalNotification) -> usize {
 /// to the action. A button without an `action` cannot be routed and is skipped.
 ///
 /// The labels are borrowed straight out of `notification` rather than collected
-/// into an owned `Vec<String>` first. The previous code built one `String` per
-/// id and per label -- including for a label, which was already a `&str` borrowed
-/// from the caller's options -- and then dropped the whole vector after taking
-/// `&str` from it, so every action cost two allocations that lived only long
-/// enough to be reborrowed. `notification` outlives the `Notify` call, so the
-/// borrows are valid for as long as the caller needs them. A [`SmallVec`] keeps
-/// the common case (a default action plus a few buttons) entirely on the stack.
+/// into an owned `Vec<String>` first: `notification` outlives the `Notify` call,
+/// so the borrows are valid for as long as the caller needs them. A [`SmallVec`]
+/// keeps the common case (a default action plus a few buttons) entirely on the
+/// stack.
 ///
 /// The targets are still cloned: they are `OwnedVariant`s that must outlive this
 /// function, since they are stored in the reverse map and read later by the
@@ -1162,10 +1153,8 @@ mod tests {
     /// The staged-sound directory must live under `$XDG_RUNTIME_DIR`, never in
     /// the world-writable system temp directory.
     ///
-    /// Regression: the previous code used `std::env::temp_dir()` as the base and
-    /// only preferred `$XDG_RUNTIME_DIR` when it happened to be set. When it was
-    /// not, sounds landed in `/tmp` at a semi-predictable name, writable by any
-    /// local user.
+    /// The runtime directory is the only safe base: without it there is no
+    /// private location to stage a sound file in.
     #[test]
     fn there_is_no_sound_directory_without_a_runtime_dir() {
         assert_eq!(
@@ -1220,12 +1209,8 @@ mod tests {
         );
     }
 
-    /// The create must be exclusive.
-    ///
-    /// Regression: `tokio::fs::write` opens `O_WRONLY|O_CREAT|O_TRUNC` with no
-    /// `O_EXCL` and no `O_NOFOLLOW`, so a pre-existing symlink at the target
-    /// path was followed and truncated. This asserts the `O_EXCL` behaviour that
-    /// replaces it.
+    /// The create must be exclusive so a pre-existing symlink at the target
+    /// cannot be followed and truncated.
     #[tokio::test]
     async fn write_exclusive_refuses_an_existing_target() {
         let dir = std::env::temp_dir().join(format!("xdp-sound-test-{}", std::process::id()));
@@ -1284,9 +1269,8 @@ mod tests {
     }
 
     /// The last `Arc<TempSoundFile>` can be dropped on a thread with no Tokio
-    /// runtime. The old unconditional `spawn_blocking` panicked there, and with
-    /// `panic = "abort"` that took down the whole daemon instead of just
-    /// leaking a staged sound file. This must stay a plain `#[test]`.
+    /// runtime, and `panic = "abort"` makes a `spawn_blocking` there fatal. This
+    /// cleanup must stay synchronous, so this stays a plain `#[test]`.
     #[test]
     fn dropping_a_sound_file_outside_a_runtime_removes_it() {
         use std::sync::atomic::{AtomicU64, Ordering};
@@ -1324,9 +1308,8 @@ mod tests {
         let notification = Notification::new(None).await;
         assert_eq!(notification.version(), 2);
 
-        // The property used to rebuild a ten-entry HashMap (and ten variants)
-        // on every read. Warm the LazyLock, then assert a warm read allocates
-        // nothing, so reverting to per-read construction fails this test.
+        // Warm the LazyLock, then assert a warm read allocates nothing: a
+        // per-read construction would fail this test.
         let _ = notification.supported_options();
         let scope = crate::alloc_probe::AllocScope::start();
         let options = notification.supported_options();
@@ -1945,9 +1928,8 @@ mod action_list_tests {
     }
 
     /// The default action is activated by clicking the notification, not drawn
-    /// as a button, so its fdo label is empty, as in the reference backend.
-    /// Sending the action name as the label used to show `app.open` to users of
-    /// servers that list every action.
+    /// as a button, so its fdo label is empty even when the portal action name
+    /// is present.
     #[test]
     fn the_default_action_is_reported_under_the_reserved_id() {
         let n = notification_with_default_action();
@@ -2031,8 +2013,8 @@ mod action_list_tests {
         assert_eq!(&actions[..], &["app.reply", "Reply"]);
     }
 
-    /// The specification names the key `target`. The previous code read
-    /// `action-target`, so a button's target was never delivered.
+    /// The specification names the key `target`; each action's target must be
+    /// kept under its own action id.
     #[test]
     fn targets_are_kept_per_action() {
         let n = PortalNotification {
@@ -2054,8 +2036,7 @@ mod action_list_tests {
     }
 
     /// A click on the notification arrives as fdo's `default` id and must be
-    /// delivered as the app's own `default-action`, with its target. The
-    /// previous code delivered the literal name `default`.
+    /// delivered as the app's own `default-action`, with its target.
     #[test]
     fn the_default_id_routes_to_the_default_action() {
         let target = target_for(&PortalNotification {
@@ -2102,9 +2083,8 @@ mod action_list_tests {
         assert!(platform_data(None).is_empty());
     }
 
-    /// The old `Vec<String>` conversion rejected an `as` icon if any element
-    /// was not a string. The borrowed replacement must keep that invariant,
-    /// including when the bad element is not the first one.
+    /// Every element of an `as` icon must be a string, including when the bad
+    /// element is not the first one.
     #[test]
     fn themed_icon_rejects_a_malformed_trailing_name() {
         use zbus::wire::Array;
@@ -2161,12 +2141,9 @@ mod action_list_tests {
         );
     }
 
-    /// The regression this guards: the list used to be built as a
-    /// `Vec<String>`, allocating one `String` per id and per label -- including
-    /// for labels, which were already `&str` -- and the whole vector was then
-    /// dropped after reborrowing it as `Vec<&str>`. Two buttons with no labels
-    /// and no targets now fit entirely in the `SmallVec`'s inline buffer, so
-    /// building the list costs zero heap allocations.
+    /// Two buttons with no labels and no targets fit entirely in the
+    /// `SmallVec`'s inline buffer, so building the list costs zero heap
+    /// allocations even though the id and label slices are borrowed.
     #[test]
     fn building_the_list_does_not_allocate_a_string_per_action() {
         let n = PortalNotification {
@@ -2199,9 +2176,8 @@ mod action_list_tests {
         );
     }
 
-    /// Buttons without an `action` are skipped by `build_actions`. Counting
-    /// them when sizing the SmallVec used to force a heap spill even though no
-    /// slots were actually pushed.
+    /// Buttons without an `action` are skipped, so they must not count toward
+    /// the `SmallVec`'s inline capacity.
     #[test]
     fn actionless_buttons_do_not_size_the_action_list() {
         let n = PortalNotification {

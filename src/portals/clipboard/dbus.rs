@@ -87,10 +87,9 @@ fn forget_session(session: &str) -> bool {
 
 /// Builds the `SelectionOwnerChanged` options dict.
 ///
-/// Shared by the host-change broadcast and by `RequestClipboard`, which used to
-/// carry two copies of this. The payload depends only on the advertised mime
-/// types, so a caller fanning out to several sessions must build it once and
-/// clone the map rather than rebuilding it per session.
+/// Shared by the host-change broadcast and by `RequestClipboard`. The payload
+/// depends only on the advertised mime types, so a caller fanning out to several
+/// sessions must build it once and clone the map rather than rebuilding it.
 fn owner_changed_options<'a>(
     mimes: &'a gtk_backend::MimeList,
 ) -> HashMap<&'static str, Variant<'a>> {
@@ -626,9 +625,7 @@ mod tests {
     /// The four session-scoped methods must all reject a handle that never went
     /// through `RequestClipboard`.
     ///
-    /// Regression: `SetSelection` was the only one that did not check. The other
-    /// three already rejected a foreign handle, but `SetSelection` accepted any
-    /// `ObjectPath` at all, so an app holding one clipboard session could name
+    /// Without this check an app holding one clipboard session could name
     /// another app's session and take the host clipboard on its behalf, getting
     /// `SelectionTransfer` signals emitted under a session it does not own. The
     /// portal contract is explicit: "May only be called if clipboard access was
@@ -797,9 +794,8 @@ mod serial_tests {
         assert!(!forget_session(s), "removal is idempotent");
     }
 
-    /// The regression this guards: `next_serial` used to build an owned key for
-    /// `HashMap::entry`, so every clipboard request allocated a session `Arc`
-    /// even when the session already had a counter.
+    /// A warm counter lookup must borrow the session key rather than build an
+    /// owned one for `HashMap::entry`.
     #[test]
     fn a_warm_counter_lookup_does_not_allocate() {
         let _guard = SerialTestGuard::new(&["/test/clipboard/serials/warm"]);
@@ -876,11 +872,9 @@ mod liveness_tests {
         assert!(session_is_active(&live, MINE));
     }
 
-    /// The regression this guards: the `SetSelection` transfer loop outlives
-    /// the call that created it, and a client disconnect removes the session
-    /// from `active_sessions`. Without this check the loop kept broadcasting
-    /// `SelectionTransfer` for a session nobody could answer, disclosing its
-    /// advertised mime types to every other clipboard client on the bus.
+    /// The `SetSelection` transfer loop outlives the call that created it, while
+    /// a disconnect removes the session from `active_sessions`. A stale loop
+    /// must not keep broadcasting `SelectionTransfer` and disclosing mime types.
     #[test]
     fn a_session_removed_by_disconnect_is_not_active() {
         let mut live = sessions(&[MINE]);
@@ -947,8 +941,8 @@ mod payload_tests {
         values.iter().map(|v| (*v).into()).collect()
     }
 
-    /// The `SelectionOwnerChanged` payload is what every clipboard client reads,
-    /// and it is now built in one shared place rather than duplicated per caller.
+    /// The `SelectionOwnerChanged` payload is what every clipboard client reads;
+    /// all callers build it through the same helper.
     #[test]
     fn owner_changed_payload_shape() {
         let list = mimes(&["text/plain", "image/png"]);

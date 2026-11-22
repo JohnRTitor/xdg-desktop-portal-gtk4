@@ -201,8 +201,8 @@ mod tests {
     use super::*;
 
     /// Five variants holding only a thin `Box<zbus::Error>` still need an
-    /// explicit discriminant (a single non-null niche cannot encode five
-    /// states), so the boxed error is 8 bytes plus an 8-byte tag on 64-bit.
+    /// explicit discriminant, since one non-null niche cannot encode five
+    /// states.
     #[test]
     #[cfg(target_pointer_width = "64")]
     fn portal_error_boxes_the_source() {

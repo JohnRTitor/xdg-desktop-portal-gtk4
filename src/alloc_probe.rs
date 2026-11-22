@@ -1,10 +1,8 @@
 //! Scoped allocation counting.
 //!
-//! This mirrors the benchmarking method used for Cloudflare's 1.1.1.1 DNS cache
-//! work, where each layout change was validated against a custom
-//! [`GlobalAlloc`] shim rather than by inspection: the shim records the number
-//! and total size of allocations, so a reduction is *measured* instead of
-//! asserted.
+//! Each layout change is validated against a custom [`GlobalAlloc`] shim rather
+//! than by inspection: the shim records the number and total size of
+//! allocations, so a reduction is *measured* instead of asserted.
 //!
 //! Counting is opt-in through [`AllocScope`]. Outside a scope the shim costs one
 //! thread-local read per allocation, so the rest of the test suite is unaffected.

@@ -378,10 +378,9 @@ mod tests {
         assert_eq!(state.get(NS_GNOME_DESKTOP_INTERFACE, "absent"), None);
     }
 
-    /// The regression this guards: `insert` used to build a fresh namespace
-    /// `String` on every call, so loading N keys into one namespace cost N
-    /// throwaway allocations on top of the N key allocations. `read_gsettings`
-    /// does exactly that, once per key, on every reload.
+    /// Loading N keys into one namespace must cost one allocation per key, not
+    /// a throwaway namespace `String` each time. `read_gsettings` does exactly
+    /// that, once per key, on every reload.
     #[test]
     fn insert_into_one_namespace_allocates_one_key_string_per_key() {
         let keys: Vec<String> = (0..64).map(|i| format!("key-{i}")).collect();

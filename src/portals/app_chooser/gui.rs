@@ -513,10 +513,9 @@ mod source_tests {
 mod row_tests {
     use super::*;
 
-    /// The regression this guards: `AppInfo::id()` and `AppInfo::name()` return
-    /// an owned `GString`, and calling `.to_string()` on it allocated a second
-    /// copy of the same text -- once per field, per row, on every dialog open
-    /// and every `UpdateChoices`.
+    /// `AppInfo::id()` and `AppInfo::name()` return an owned `GString`, so
+    /// calling `.to_string()` on it would allocate a second copy of the same
+    /// text once per field, per row, on every dialog open and `UpdateChoices`.
     ///
     /// Measured on an already-owned `GString`, which is what GIO hands back, so
     /// the number cannot be an artefact of constructing one from a literal:

@@ -12,9 +12,7 @@
 //!
 //! It exists because D-Bus property and method names are **case-sensitive** and
 //! because `#[zbus(property)]` silently derives the wire name from the Rust
-//! function name, capitalising it. That is exactly how
-//! `Clipboard.Version` and `Settings.Version` came to be exported where the
-//! contract says `version`.
+//! function name, capitalising it unless `name = "version"` is explicit.
 
 use {
     std::collections::{BTreeMap, BTreeSet},
@@ -339,10 +337,9 @@ async fn introspect_backend() -> Option<String> {
         .ok()
 }
 
-/// Method signatures must match the upstream contract exactly. This is the
-/// machine-checked version of the audit's "all method signatures and argument
-/// orders are correct" claim — including the deliberately unusual
-/// `Usb.AcquireDevices(handle, parent_window, app_id, …)` ordering.
+/// Method signatures must match the upstream contract exactly, including the
+/// deliberately unusual `Usb.AcquireDevices(handle, parent_window, app_id, …)`
+/// ordering.
 #[tokio::test]
 async fn method_signatures_match_upstream_contract() {
     let Some(xml) = introspect_backend().await else {
@@ -390,9 +387,8 @@ async fn method_signatures_match_upstream_contract() {
 /// from the Rust fn name and capitalises it, so a getter written
 /// `fn version()` is exported as `Version`, not `version`.
 ///
-/// `clipboard/dbus.rs` and `settings/dbus.rs` used to omit the explicit
-/// `name = "version"` and therefore exported `Version`, which the contract does
-/// not define. This test was added with that defect present and caught it.
+/// Without the explicit `name = "version"`, the getter would be exported as
+/// `Version`, which the contract does not define.
 #[tokio::test]
 async fn property_names_match_upstream_contract() {
     let Some(xml) = introspect_backend().await else {
@@ -463,8 +459,7 @@ async fn property_types_match_upstream_contract() {
 /// That leaves it easy to break silently, and the way it breaks is a wire-name
 /// drift: `#[zbus(property)]` capitalises the Rust fn name, so a getter written
 /// `fn version()` is exported as `Version`, which the frontend's generated proxy
-/// will never read. `Clipboard` and `Settings` both shipped that defect, which
-/// is why this file exists. A unit test on the Rust getter cannot catch it — it
+/// will never read. A unit test on the Rust getter cannot catch it — it
 /// passes either way — so the only real guard is introspection.
 #[tokio::test]
 async fn session_interface_matches_upstream_contract() {

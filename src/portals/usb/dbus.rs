@@ -28,10 +28,8 @@ const SERIAL_KEY: &str = "ID_SERIAL_SHORT";
 /// nested under a `"properties"` key. This enum unifies the two so lookups share
 /// one implementation and never copy.
 ///
-/// The previous code instead deep-copied the dictionary per device -- and for
-/// the nested shape copied the `Variant` *and then* rebuilt a `HashMap` from that
-/// copy -- in order to read three strings out of it, then dropped the copy. Only
-/// the three extracted fields are ever kept.
+/// Only the three extracted strings are kept: the dictionary is read in place
+/// and never copied.
 enum UdevProperties<'a> {
     Flat(&'a HashMap<String, OwnedVariant>),
     Nested(&'a Dict<'a, 'a>),
@@ -72,15 +70,12 @@ impl<'a> UdevProperties<'a> {
 /// Reads a `Variant` as a string, tolerating one level of variant wrapping.
 ///
 /// `a{sv}` normally deserialises to values that are already unwrapped, but a
-/// payload can arrive wrapped; the previous code went through
-/// `HashMap<String, OwnedVariant>` and would have surfaced the wrapper as the
-/// value, so this keeps that case working rather than silently dropping the
-/// property.
+/// payload can arrive wrapped, so tolerate one level of wrapping rather than
+/// silently dropping the property.
 fn as_str<'a>(value: &'a Variant<'a>) -> Option<&'a str> {
     match value {
-        // One level of unwrapping, not recursive: this is exactly what the
-        // previous `Dict -> HashMap<String, OwnedVariant>` conversion did, and a
-        // nested `a{sv}`'s values arrive wrapped in `Variant::Variant`. Pinned by
+        // One level of unwrapping, not recursive: a nested `a{sv}`'s values
+        // arrive wrapped in `Variant::Variant`. Pinned by
         // `nested_values_arrive_wrapped_in_a_variant`.
         Variant::Variant(inner) => <&str>::try_from(&**inner).ok(),
         other => <&str>::try_from(other).ok(),
@@ -435,9 +430,7 @@ mod udev_property_tests {
         );
     }
 
-    /// The regression this guards: the properties were deep-copied per device --
-    /// and for the nested shape the `Variant` was copied *and then* rebuilt into a
-    /// `HashMap` -- only to read a handful of strings out of it.
+    /// Reading a handful of strings from a device must not copy its properties.
     #[test]
     fn reading_nested_properties_allocates_nothing() {
         // Asserts a *hit*, so an implementation returning `None` unconditionally

@@ -104,12 +104,7 @@ impl Email {
 /// dropping the other. So a caller CC'ing two people reached the user's mail
 /// client with one of them missing.
 ///
-/// This is why every pre-existing test here passed a single address: with one
-/// recipient a repeated key and a comma-joined value are the same string, so
-/// the shape of the bug is invisible until a second address is present.
-///
-/// The addresses are still percent-escaped, which the reference does not do.
-/// That is deliberate: a raw `&` in an address would otherwise terminate the
+/// The addresses are still percent-escaped: a raw `&` would terminate the
 /// parameter and let the address inject query fields of its own.
 fn append_recipients(url: &mut String, key: &str, addrs: &[String]) {
     use std::fmt::Write;
@@ -359,10 +354,8 @@ mod tests {
         assert_eq!(EmailResults::SIGNATURE, "a{sv}");
     }
 
-    /// The regression: `cc` and `bcc` are one parameter each, not one per
-    /// recipient. Every test above passes a single address, where a repeated
-    /// key and a comma-joined value are indistinguishable -- which is exactly
-    /// why this went unnoticed.
+    /// `cc` and `bcc` are one comma-joined parameter each, not one parameter
+    /// per recipient.
     #[test]
     fn test_compose_url_multiple_cc_recipients_share_one_key() {
         let options = ComposeEmailOptions {
@@ -438,8 +431,7 @@ mod tests {
         );
     }
 
-    /// `attachment` is a repeatable field and stays one key per file, matching
-    /// the reference implementation.
+    /// `attachment` is a repeatable field and stays one key per file.
     #[test]
     fn test_compose_url_attachments_repeat_the_key() {
         let options = ComposeEmailOptions {

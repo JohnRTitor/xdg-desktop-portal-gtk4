@@ -99,7 +99,7 @@
 //! ## Maintenance Notes
 //!
 //! - **Policy Hardcoding:** The hardcoded list of trusted apps in `RequestInstallToken` is an
-//!   intentional design choice mirroring the GNOME implementation. Software centers are inherently
+//!   a deliberate design choice. Software centers are inherently
 //!   trusted to manage apps, so prompting the user for every install would be extremely annoying.
 
 pub mod dbus;

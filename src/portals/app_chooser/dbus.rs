@@ -93,10 +93,8 @@ impl AppChooser {
 
         let (update_sender, update_receiver) = channel(CHANNEL_BUFFER_SIZE);
 
-        // The map key and the guard each need their own owned handle, but the
-        // function parameter itself is dead after this point: it was previously
-        // cloned twice and then dropped unused, costing a third `String`
-        // allocation per request.
+        // The map key and the guard each need their own owned handle, so the
+        // parameter is cloned twice and dropped here.
         let _guard = ActiveDialogGuard {
             active_dialogs: self.active_dialogs.clone(),
             handle: handle.clone(),

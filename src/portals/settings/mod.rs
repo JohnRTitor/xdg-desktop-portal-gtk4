@@ -73,9 +73,8 @@
 //! - `gio::FileMonitor` instances and GSettings signal handlers are created on the
 //!   `gtk4::glib::MainContext::default()` (via `UiProxy`) and forward notifications to a Tokio task
 //!   that debounces reloads and emits D-Bus `SettingChanged` signals.
-//! - By using `Arc<RwLock<SettingsState>>`, we avoid the need for `!Send` thread-local hacks (like `thread_local!`)
-//!   that were previously used. The D-Bus worker thread (Tokio) can safely acquire a read lock on the
-//!   state concurrently with the GTK main thread updating it.
+//! - By using `Arc<RwLock<SettingsState>>`, the D-Bus worker thread (Tokio) can safely acquire a
+//!   read lock on the state concurrently with the GTK main thread updating it.
 //!
 //! ## Extension Guide
 //!

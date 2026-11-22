@@ -377,10 +377,8 @@ mod tests {
         assert!(!namespace_matches(NS_GNOME_DESKTOP_INTERFACE, &patterns));
     }
 
-    /// Regression: the previous matcher used `trim_end_matches('*')`, which
-    /// stripped *every* trailing star. `org.freedesktop.**` therefore collapsed
-    /// to the prefix `org.freedesktop.` and matched, though it is not a valid
-    /// pattern. The reference strips exactly one.
+    /// Exactly one trailing star is consumed: `org.freedesktop.**` must not
+    /// collapse into a valid `org.freedesktop.` prefix.
     #[test]
     fn only_one_trailing_star_is_consumed() {
         assert!(namespace_matches(
@@ -397,9 +395,8 @@ mod tests {
         );
     }
 
-    /// Regression: a doubled star mid-pattern used to reduce the prefix to
-    /// `org.gnome.desktop.` and match. One star is stripped, leaving a literal
-    /// `*` at the front of the prefix, which no namespace can start with.
+    /// Only a trailing star is a wildcard: stripping one from `org.gnome.desktop.*.*`
+    /// leaves a literal `*` that no namespace can start with.
     #[test]
     fn a_star_in_the_middle_does_not_match() {
         assert!(!namespace_matches(
@@ -408,10 +405,8 @@ mod tests {
         ));
     }
 
-    /// Regression: `read_kdeglobals` publishes `org.kde.kdeglobals.<Group>`, so a
-    /// bare `org.kde.kdeglobals` prefix must select those group namespaces. They
-    /// were previously unreachable through `ReadAll`, because the matcher only
-    /// knew the bare `org.kde.kdeglobals` name and never the group-suffixed ones.
+    /// `read_kdeglobals` publishes `org.kde.kdeglobals.<Group>`, so a bare
+    /// `org.kde.kdeglobals` prefix must select those group namespaces.
     #[test]
     fn the_kde_prefix_selects_group_namespaces() {
         let group_ns = "org.kde.kdeglobals.KDE";
@@ -515,12 +510,10 @@ mod read_all_tests {
         assert_eq!(keys(&result), vec![GNOME]);
     }
 
-    /// Regression: `read_kdeglobals` stores one namespace per INI group, as
-    /// `org.kde.kdeglobals.<Group>`. The previous implementation resolved
-    /// requests against a fixed list holding only the bare `org.kde.kdeglobals`,
-    /// so none of the group namespaces it had written could ever be selected
-    /// and every one of them was invisible to `ReadAll` -- while a direct `Read`
-    /// of the same namespace returned data. These two calls must agree.
+    /// `read_kdeglobals` stores one namespace per INI group, as
+    /// `org.kde.kdeglobals.<Group>`. Matching against live state rather than a
+    /// fixed list keeps `ReadAll` consistent with a direct `Read` of the same
+    /// namespace.
     #[test]
     fn group_suffixed_kde_namespaces_are_reachable() {
         let state = populated();

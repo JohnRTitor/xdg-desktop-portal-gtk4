@@ -56,9 +56,8 @@ impl<'de> Deserialize<'de> for FilePath {
         let c_string = CString::from_vec_with_nul(bytes)
             .map_err(|_| serde::de::Error::custom("Bytes are not nul-terminated"))?;
         // Valid UTF-8 is the common case: `String::from_utf8` reuses the byte
-        // buffer with no second allocation. `from_utf8_lossy().into_owned()`
-        // copied it unconditionally. Only pay for the lossy replacement path
-        // when the bytes genuinely are not valid UTF-8.
+        // buffer with no second allocation. Only pay for the lossy replacement
+        // path when the bytes genuinely are not valid UTF-8.
         Ok(Self(match String::from_utf8(c_string.into_bytes()) {
             Ok(s) => s,
             Err(e) => String::from_utf8_lossy(e.as_bytes()).into_owned(),
@@ -603,12 +602,9 @@ mod tests {
         assert_eq!(map_cstr(path), "hello");
     }
 
-    /// `FilePath::deserialize` used to call
-    /// `String::from_utf8_lossy(..).into_owned()`, copying the decoded byte
-    /// buffer into a second `String` on every request even for valid UTF-8.
-    /// The fast path must reuse that buffer. Compare directly against the old
-    /// lossy conversion on the same bytes: it pays for one extra `String`
-    /// allocation that the `from_utf8` path no longer makes. (`CString::into_bytes`
+    /// The fast path must reuse the decoded byte buffer rather than copy it
+    /// into a second `String`. Compare against the lossy conversion on the same
+    /// bytes: it pays for one extra `String` allocation. (`CString::into_bytes`
     /// itself shrinks the decoded `Vec` to a boxed slice, which the counting
     /// shim records once in both paths, so comparing against a bare `Vec<u8>`
     /// deserialization would be off by one.)

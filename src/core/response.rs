@@ -85,11 +85,9 @@ mod tests {
     /// A dialog the user dismissed is a cancellation; one that never opened is
     /// not.
     ///
-    /// Regression: every caller collapsed both into code 1, so an application
-    /// whose dialog failed to appear -- GTK thread gone, request cancelled, GTK
-    /// refusing to build a window -- was told a person declined a prompt they
-    /// were never shown. The contract's own split is the reference here: 1 is
-    /// "the user cancelled the interaction", 2 is "ended in some other way".
+    /// The contract's split is the reference: 1 is "the user cancelled the
+    /// interaction", 2 is "ended in some other way" (GTK thread gone, request
+    /// cancelled, GTK refusing to build a window).
     #[test]
     fn a_user_refusal_is_cancelled_but_an_aborted_dialog_is_other() {
         let refused: Response<DummyResult> = Response::from_ui_error(crate::gui::UiError::Rejected);

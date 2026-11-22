@@ -489,9 +489,8 @@ mod tests {
     }
 
     /// The common path -- the caller sent `filters` -- must hand back the
-    /// caller's slice untouched. Cloning each `Filter` (its name plus every
-    /// `FilterKind`) used to allocate once per filter and once per element on
-    /// every dialog open; borrowing must allocate nothing.
+    /// caller's slice untouched: borrowing each `Filter` (its name plus every
+    /// `FilterKind`) must allocate nothing.
     #[test]
     fn effective_filters_borrowed_arm_allocates_nothing() {
         use crate::alloc_probe::AllocScope;

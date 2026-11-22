@@ -418,9 +418,8 @@ mod tests {
         assert_eq!(margin, Variant::from(11.0f64));
     }
 
-    /// This is the exact site of the reported bug: the old `flatten_dict`
-    /// kept only strings, so GTK's double-valued margins never reached the
-    /// dialog. Guard the conversion itself, not just its downstream users.
+    /// Guard the conversion itself, not just its downstream users: dropping
+    /// non-string values here would silently lose GTK's double-valued margins.
     #[test]
     fn to_owned_dict_preserves_non_string_values() {
         let dict = HashMap::from([

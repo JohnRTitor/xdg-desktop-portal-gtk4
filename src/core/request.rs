@@ -182,9 +182,8 @@ mod tests {
 
         assert_eq!(response.0, 0);
         assert_eq!(response.1, 42);
-        // Successfully exported Request objects must be removed again; a
-        // regression that always treated the export as refused would leave a
-        // stale interface on the bus and still return the right response.
+        // Successfully exported Request objects must be removed again even when
+        // the response itself is correct.
         assert!(
             server.interface::<_, Request>(&handle).await.is_err(),
             "a completed request must unexport its Request object"
@@ -278,11 +277,9 @@ mod tests {
         );
     }
 
-    /// The bug this guards: `run_request` used to treat `Ok(Some(_))` as a
-    /// successful export, so on a reused path it would drop this request's
-    /// `Close` listener and then remove the *other* request's interface during
-    /// cleanup. The pre-existing interface must survive a `run_request` that
-    /// could not export its own.
+    /// A pre-existing interface must survive a `run_request` that could not
+    /// export its own: cleanup keys on `Ok(None)`, so treating `Ok(Some(_))` as
+    /// a successful export would remove the other request's interface.
     #[tokio::test]
     async fn run_request_on_a_duplicate_path_does_not_remove_the_first_interface() {
         let Ok(conn) = zbus::Connection::session().await else {

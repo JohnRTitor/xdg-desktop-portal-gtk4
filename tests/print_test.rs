@@ -9,8 +9,7 @@ use {
 };
 
 /// The impl portal returns `Response<T>`, serialized as `(u, a{sv})` — not a
-/// bare `u`. Declaring the wrong return type made the old test pass for the
-/// wrong reason (deserialization failed regardless of what the portal did).
+/// bare `u`. The proxy must declare that type for the reply to deserialize.
 #[proxy(
     interface = "org.freedesktop.impl.portal.Print",
     default_service = "org.freedesktop.impl.portal.desktop.gtk4",

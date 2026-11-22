@@ -61,7 +61,7 @@ async fn test_choose_application_dummy_ui() -> Result<(), Box<dyn std::error::Er
     assert!(res.is_err());
 
     // UpdateChoices for a handle whose dialog is not running must be reported,
-    // not silently accepted. This previously asserted the opposite.
+    // not silently accepted.
     let update_res = proxy
         .update_choices(path, vec!["new_choice".to_string()])
         .await;

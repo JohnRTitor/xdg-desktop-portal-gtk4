@@ -89,8 +89,8 @@ fn button<'a>(
 }
 
 /// `buttons` is `aa{sv}` in the portal specification. A notification carrying
-/// buttons in that format must be accepted; it used to fail deserialization,
-/// which rejected the whole `AddNotification` call.
+/// buttons in that format must be accepted, or the whole `AddNotification` call
+/// is rejected.
 #[tokio::test]
 async fn buttons_in_the_specified_format_are_accepted() -> Result<(), Box<dyn std::error::Error>> {
     let _guard = test_guard().await;
