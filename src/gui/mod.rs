@@ -10,6 +10,7 @@
 use tokio::sync::oneshot::{Receiver, Sender, channel};
 pub mod dialog;
 pub mod error;
+pub mod theme;
 pub mod ui;
 pub mod windowing;
 

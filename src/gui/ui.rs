@@ -58,6 +58,7 @@ impl Ui {
             std::process::exit(1);
         }
         glib::set_prgname(Some("xdg-desktop-portal-gtk4"));
+        crate::gui::theme::watch_user_theme();
     }
 
     pub fn run(&self) {
