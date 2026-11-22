@@ -4,7 +4,7 @@
 # Keep Version in step with Cargo.toml's [package] version.
 
 Name:           xdg-desktop-portal-gtk4
-Version:        1.6.6
+Version:        1.6.7
 Release:        1%{?dist}
 Summary:        GTK4 backend implementation of xdg-desktop-portal
 
@@ -69,6 +69,11 @@ make install DESTDIR=%{buildroot} PREFIX=%{_prefix} LIBEXECDIR=%{_libexecdir} \
 %{_datadir}/xdg-desktop-portal/portals/gtk4.portal
 
 %changelog
+* Sun Nov 22 2026 xdg-desktop-portal-gtk4 packagers <JohnRTitor@users.noreply.github.com> - 1.6.7-1
+- Print: support single-call printing without a prior PreparePrint, with correct file-descriptor handling so jobs read the data and report the real result.
+- Print: honor caller-provided page setup and margin values instead of silently ignoring them.
+- Localization: remove stray underscores from translated button labels such as Allow, Share, Open and Save.
+
 * Sun Nov 15 2026 xdg-desktop-portal-gtk4 packagers <JohnRTitor@users.noreply.github.com> - 1.6.6-1
 - portal: log UI cancellations separately from failures
 

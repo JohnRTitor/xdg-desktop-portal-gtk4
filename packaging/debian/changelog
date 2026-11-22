@@ -1,3 +1,11 @@
+xdg-desktop-portal-gtk4 (1.6.7-1) unstable; urgency=low
+
+  * Print: support single-call printing without a prior PreparePrint, with correct file-descriptor handling so jobs read the data and report the real result.
+  * Print: honor caller-provided page setup and margin values instead of silently ignoring them.
+  * Localization: remove stray underscores from translated button labels such as Allow, Share, Open and Save.
+
+ -- xdg-desktop-portal-gtk4 packagers <JohnRTitor@users.noreply.github.com>  Sun, 22 Nov 2026 17:50:00 +0530
+
 xdg-desktop-portal-gtk4 (1.6.6-1) unstable; urgency=low
 
   * portal: log UI cancellations separately from failures

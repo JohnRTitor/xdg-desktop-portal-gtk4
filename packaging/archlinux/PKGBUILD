@@ -1,7 +1,7 @@
 # Maintainer: xdg-desktop-portal-gtk4 packagers <xdg-desktop-portal-gtk4-packaging@example.invalid>
 
 pkgname=xdg-desktop-portal-gtk4
-pkgver=1.6.6
+pkgver=1.6.7
 pkgrel=1
 pkgdesc='GTK4 backend implementation of xdg-desktop-portal'
 arch=('x86_64')
