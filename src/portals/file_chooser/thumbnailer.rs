@@ -202,11 +202,13 @@ fn is_png_data_metadata_valid(
                     let text = &payload[null_pos + 1..];
                     match keyword {
                         b"Thumb::URI" => found_uri = text == expected_uri.as_bytes(),
-                        b"Thumb::MTime" if let Ok(s) = std::str::from_utf8(text) => {
-                            let secs = s.split('.').next().and_then(|s| s.parse::<u64>().ok());
-                            found_mtime = secs
-                                .map(|s| s.abs_diff(expected_mtime_secs) <= 1)
-                                .unwrap_or(false);
+                        b"Thumb::MTime" => {
+                            if let Ok(s) = std::str::from_utf8(text) {
+                                let secs = s.split('.').next().and_then(|s| s.parse::<u64>().ok());
+                                found_mtime = secs
+                                    .map(|s| s.abs_diff(expected_mtime_secs) <= 1)
+                                    .unwrap_or(false);
+                            }
                         }
                         _ => {}
                     }

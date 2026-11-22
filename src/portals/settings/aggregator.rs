@@ -181,8 +181,7 @@ impl SettingsAggregator {
                 continue;
             };
 
-            let val_str = val.as_str();
-            let variant = match val_str {
+            let variant = match val.as_str() {
                 "true" => Variant::Bool(true),
                 "false" => Variant::Bool(false),
                 other => match other.parse::<i32>() {
@@ -226,8 +225,7 @@ impl SettingsAggregator {
                 // Unlike settings.ini, kdeglobals keeps everything except the
                 // two boolean literals as a string, including numeric-looking
                 // values. Do not add the i32 parsing used above.
-                let val_str = val.as_str();
-                let variant = match val_str {
+                let variant = match val.as_str() {
                     "true" => Variant::Bool(true),
                     "false" => Variant::Bool(false),
                     other => Variant::Str(other.into()),
