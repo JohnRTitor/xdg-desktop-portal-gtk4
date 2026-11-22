@@ -70,7 +70,8 @@
 //! - **URI Construction:** The `mailto:` URI construction explicitly URI-escapes the `address`/
 //!   `addresses` recipients as well as the CC, BCC, subject, body, and attachment fields using
 //!   `glib::uri_escape_string`, so a caller-supplied `&`, `?`, `#`, `%` or `,` cannot inject extra
-//!   query parameters. A literal `@` is allowed in recipients so addresses stay recognizable.
+//!   query parameters. A literal `@` is allowed in the primary recipients so addresses stay
+//!   recognizable; CC/BCC addresses escape it.
 //! - **Response Object:** The specification requires returning a dictionary of results. For `ComposeEmail`,
 //!   this dictionary is intentionally empty (`EmailResults {}`), which is why the implementation returns an
 //!   empty serialized dictionary on success.

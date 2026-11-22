@@ -417,8 +417,8 @@ mod tests {
     #[test]
     fn duplicates_are_collapsed_even_when_names_interleave() {
         // Two rows share a desktop-file id but carry different names, and a third
-        // row sorts strictly between them. A name-first sort leaves the duplicates
-        // non-adjacent, so `dedup_by` never compares them and keeps both.
+        // row sorts strictly between them. The duplicate id must still collapse:
+        // selection deduplicates by id in the filter pass, not by adjacency.
         //
         // GIO does not currently produce this (the same `.desktop` file reports the
         // same display name, which sorts the duplicates together), so this is a
@@ -441,9 +441,8 @@ mod tests {
 
     #[test]
     fn distinct_ids_with_the_same_name_are_both_kept_in_enumeration_order() {
-        // `sort_by` is stable and the tie-break is the original index, so equal
-        // display names keep `AppInfo::all()`'s order -- which is what the
-        // previous single `sort_by_key` produced.
+        // `sort_unstable_by` is deterministic here because the original index is
+        // the tie-break, so equal display names keep `AppInfo::all()`'s order.
         let rows = entries(&[("a.desktop", "Terminal"), ("b.desktop", "Terminal")]);
         assert_eq!(
             ids(&rows, &select_rows(&rows, &[])),

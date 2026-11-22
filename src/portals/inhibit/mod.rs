@@ -16,7 +16,7 @@
 //!
 //! - **Interface Name:** `org.freedesktop.impl.portal.Inhibit`
 //! - **Object Path:** `/org/freedesktop/portal/desktop`
-//! - **Methods:** `Inhibit(handle, app_id, parent_window, options)`, `CreateMonitor(handle, session_handle, app_id, parent_window)`
+//! - **Methods:** `Inhibit(handle, app_id, parent_window, reason, options)`, `CreateMonitor(handle, session_handle, app_id, parent_window)`
 //!   *(Note: The upstream D-Bus specification names the window parameter `window` instead of the standard `parent_window` for this portal, but they are semantically identical.)*
 //! - **Signals:** `StateChanged(session_handle, state)`
 //!

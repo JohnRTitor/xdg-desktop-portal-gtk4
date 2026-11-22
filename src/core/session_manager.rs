@@ -298,7 +298,7 @@ mod tests {
     async fn test_session_manager_register_unregister() {
         // NOTE: this test returns early without asserting anything when there is
         // no session bus, so it is green but vacuous outside `dbus-run-session`.
-        // `sweep_tests` above covers the counter bookkeeping without a bus.
+        // The `sweep_tests` below cover the counter bookkeeping without a bus.
         let conn_result = Connection::session().await;
         if conn_result.is_err() {
             println!("SKIPPED test_session_manager_register_unregister: no session bus");

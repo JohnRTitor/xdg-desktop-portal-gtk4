@@ -4,7 +4,7 @@ This document provides a comprehensive guide for manually testing the `xdg-deskt
 
 ## Overview
 
-- **Bus Name:** `org.freedesktop.impl.portal.desktop.gtk4` (or `org.freedesktop.impl.portal.desktop.gtk` if standard fallback is used, but this implementation registers the former based on the codebase [`src/core/mod.rs`](./src/core/mod.rs)).
+- **Bus Name:** `org.freedesktop.impl.portal.desktop.gtk4`, registered unconditionally by [`src/core/mod.rs`](./src/core/mod.rs).
 - **Object Path:** `/org/freedesktop/portal/desktop`
 - **Required Environment:** GTK4, D-Bus session bus.
 - **Required Services:** `org.freedesktop.portal.Desktop` (the frontend portal daemon) must be configured to use this backend.
@@ -42,7 +42,7 @@ cargo test
 
 ### D-Bus Integration Tests
 
-Some tests interact directly with the D-Bus daemon to verify correct portal exporting and signal emission. Because these tests require a live session bus and can be sensitive to the environment, they skip themselves when no session bus is reachable, printing a `SKIPPED ...: no session bus` notice. No environment variable is needed to enable them.
+Some tests interact directly with the D-Bus daemon to verify correct portal exporting and signal emission. Because these tests require a live session bus and can be sensitive to the environment, they skip themselves when no session bus is reachable (usually with a `skipping`/`no session bus` message, or silently). No environment variable is needed to enable them.
 
 To guarantee a bus is present, run the suite under a throwaway session bus:
 
@@ -54,12 +54,12 @@ This is what CI does (see [`.github/workflows/ci.yml`](./.github/workflows/ci.ym
 
 ## Debugging
 
-Enable verbose logging to trace requests and observe GTK/Glib errors:
+Enable debug logging to follow requests and observe GTK/Glib errors:
 
 ```bash
-RUST_LOG=trace ./target/debug/xdg-desktop-portal-gtk4 --replace
+RUST_LOG=debug ./target/debug/xdg-desktop-portal-gtk4 --replace
 ```
-- **Why:** Shows trace logs from the Rust backend, including incoming D-Bus requests and errors.
+- **Why:** Shows the per-request debug events from the Rust backend plus errors. There are no `trace!`-level events in this daemon.
 
 ```bash
 G_MESSAGES_DEBUG=all ./target/debug/xdg-desktop-portal-gtk4
@@ -346,6 +346,17 @@ gdbus call \
   ""
 ```
 
+**`QueryEndResponse`**
+Asks the frontend whether the session should end.
+```bash
+gdbus call \
+  --session \
+  --dest org.freedesktop.impl.portal.desktop.gtk4 \
+  --object-path /org/freedesktop/portal/desktop \
+  --method org.freedesktop.impl.portal.Inhibit.QueryEndResponse \
+  "/org/freedesktop/portal/desktop/session/1_1/session1"
+```
+
 ---
 
 ### 8. Lockdown (`org.freedesktop.impl.portal.Lockdown`)
@@ -424,6 +435,9 @@ gdbus call \
   "{}"
 ```
 
+**`Print`**
+Submits a document without showing a dialog. Signature: `(handle, app_id, parent_window, title, fd: h, options) -> (response, results)`. The `fd` argument is a Unix file descriptor, which `gdbus call` cannot send; exercise this method through `xdg-desktop-portal` or a D-Bus client with FD-passing support.
+
 ---
 
 ### 11. Settings (`org.freedesktop.impl.portal.Settings`)
@@ -487,8 +501,6 @@ gdbus call \
 
 ---
 
----
-
 ### 13. Clipboard (`org.freedesktop.impl.portal.Clipboard`)
 
 #### Overview
@@ -533,6 +545,11 @@ gdbus call \
   "/org/freedesktop/portal/desktop/session/1_1/clipboard1" \
   "text/plain"
 ```
+
+**`SelectionWrite` / `SelectionWriteDone`**
+Transfers clipboard content into a caller-provided FD, then commits or aborts it. Both take a Unix FD or a completion flag and are normally driven by `xdg-desktop-portal`; `gdbus call` cannot send the `h` argument of `SelectionWrite`.
+
+Their signatures are `SelectionWrite(session, serial: u, fd: h)` and `SelectionWriteDone(session, serial: u, success: b)`.
 
 #### Signal Monitoring
 ```bash

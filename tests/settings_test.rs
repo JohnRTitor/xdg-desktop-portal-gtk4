@@ -62,9 +62,9 @@ async fn test_settings_read_all_empty_namespaces() -> Result<(), Box<dyn std::er
         .await?;
 
     let res = proxy.read_all(&[]).await?;
-    // It shouldn't crash. It might be empty if schemas are not installed.
-    // Just asserting it successfully returns a HashMap.
-    assert!(res.is_empty() || !res.is_empty());
+    // An empty request returns every populated namespace. Which ones are
+    // populated depends on the host, but an empty map is never sent.
+    assert!(res.values().all(|keys| !keys.is_empty()));
 
     Ok(())
 }
@@ -89,8 +89,9 @@ async fn test_settings_read_all_wildcard_namespaces() -> Result<(), Box<dyn std:
     // Use a wildcard to read all under org.freedesktop.*
     let res = proxy.read_all(&["org.freedesktop.*"]).await?;
 
-    // Depending on the environment, it may or may not return keys, but it shouldn't error.
-    assert!(res.is_empty() || !res.is_empty());
+    // Matching is a prefix match on `org.freedesktop.`; which namespaces are
+    // populated depends on the host, but none outside the prefix may leak in.
+    assert!(res.keys().all(|ns| ns.starts_with("org.freedesktop.")));
 
     Ok(())
 }

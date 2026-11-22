@@ -94,10 +94,6 @@ trait AppChooser {
 /// nothing left to update. A false success instead leaves the frontend waiting on
 /// a dialog that will never receive the new choices, with no indication that
 /// anything went wrong.
-///
-/// This previously returned `Ok(())` unconditionally, and the existing
-/// `tests/app_chooser_test.rs` asserted that silent success as if it were
-/// correct.
 #[tokio::test]
 async fn app_chooser_update_choices_unknown_handle() {
     let Ok(client) = Connection::session().await else {

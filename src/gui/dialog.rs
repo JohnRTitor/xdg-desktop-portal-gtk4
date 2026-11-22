@@ -1,8 +1,9 @@
 use gtk4::{Align, Box, prelude::*};
 
-/// A reusable custom dialog widget to replace the deprecated `MessageDialog`.
-/// GTK4 `AlertDialog` does not support custom child widgets, so this struct builds
-/// a standard `gtk4::Window` configured to look and behave like a dialog.
+/// A reusable custom dialog widget.
+///
+/// This struct builds a standard `gtk4::Window` configured to look and behave like
+/// a dialog while allowing arbitrary child widgets in its content area.
 pub struct CustomDialog {
     pub window: gtk4::Window,
     pub content_area: Box,

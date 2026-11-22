@@ -122,8 +122,8 @@ impl AccountUi {
             #[weak]
             real_name_entry,
             move |_| {
-                // If the user selected an icon, we must convert it to a file:// URI
-                // as required by the portal specification.
+                // AccountsService may supply a plain path; convert it to a
+                // file:// URI as required by the portal specification.
                 let image_uri = if !icon_file.is_empty() {
                     if let Ok(uri) = glib::filename_to_uri(&icon_file, None) {
                         uri.into()

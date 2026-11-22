@@ -290,10 +290,11 @@ fn remove_active_notification(
 
 /// Registers a notification in both maps, returning the shared key.
 ///
-/// The same [`NotifKey`] must be used for the forward map's key and the reverse
-/// map's back-reference; building it twice would reintroduce the duplicate
-/// storage this type exists to remove. Factored out so a test can assert the
-/// sharing rather than having to trust the call site.
+/// The forward map is keyed by the key's two `Arc<str>` fields and the reverse
+/// entry holds an `Arc<NotifKey>` that shares those allocations. Building the
+/// strings twice would reintroduce the duplicate storage this type exists to
+/// remove. Factored out so a test can assert the sharing rather than having to
+/// trust the call site.
 fn register_notification(
     active: &ActiveNotifications,
     reverse: &ReverseMapType,
@@ -407,7 +408,7 @@ fn retire_closed_notification(
 /// This struct holds shared state used to map between the sandboxed application's
 /// portal notification IDs and the host system's actual notification IDs.
 pub struct Notification {
-    /// Maps a [`NotifKey`] to the system notification ID (`u32`).
+    /// Maps `app_id -> portal_id -> ` the system notification ID (`u32`).
     /// This is used so we can replace or remove an existing notification.
     active_notifications: ActiveNotifications,
 

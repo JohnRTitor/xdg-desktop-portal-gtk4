@@ -1,16 +1,15 @@
 //! D-Bus session implementation.
 //!
 //! A Session represents a long-lived interaction between the sandbox and the portal,
-//! typically used when the application needs continuous access to a resource (e.g.,
-//! screen casting, remote desktop).
+//! typically used when the application needs continuous access to a resource.
 
 use {std::sync::Arc, tokio::sync::Notify, zbus::interface};
 
 /// Represents a portal session on D-Bus.
 ///
-/// Sessions are used by stateful portals (like ScreenCast, RemoteDesktop, etc.)
-/// to manage ongoing interactions. The frontend can close the session, and the backend
-/// can also close it.
+/// Sessions are used by stateful portals (here: Inhibit) to manage ongoing
+/// interactions. The frontend can close the session, and the backend can also
+/// close it.
 ///
 /// # Ownership & Lifecycle
 ///

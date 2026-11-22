@@ -33,7 +33,7 @@ Enables sandboxed applications (like Flatpaks and Snaps) to securely interact wi
 
 ### Standard Build (Quick Start)
 
-Build the binary with Cargo and install the integration files using Meson:
+Build the binary with Cargo, then install it together with the integration files using `make`:
 
 ```bash
 cargo build --release
@@ -43,7 +43,7 @@ sudo make install PREFIX=/usr
 ```
 
 > [!NOTE]
-> For a complete list of dependencies, advanced build configurations, and CI details, please see **[BUILD.md](./BUILD.md)**.
+> For build dependencies and installation details, please see **[BUILD.md](./BUILD.md)**.
 
 ### Nix / NixOS
 
@@ -93,7 +93,7 @@ systemctl --user restart xdg-desktop-portal
 
 ## Logging & Debugging
 
-The daemon logs directly to the systemd journal using `tracing-journald`.
+When built with the `systemd` feature and started with stderr connected to the journal, the daemon logs directly to the systemd journal via `tracing-journald`. Otherwise it logs to stderr.
 
 Enable debug logging via environment variables:
 

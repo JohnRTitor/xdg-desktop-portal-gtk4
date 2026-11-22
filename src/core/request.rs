@@ -111,7 +111,7 @@ struct Request {
 impl Request {
     /// Called by the portal frontend to cancel the ongoing request.
     async fn close(&self) {
-        // Notify the `export_request` task that cancellation was requested.
+        // Notify the `run_request` task that cancellation was requested.
         self.notify.notify_one();
     }
 }

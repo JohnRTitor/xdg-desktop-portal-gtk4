@@ -77,9 +77,9 @@
 //! ## Specification Notes
 //!
 //! - **Image URI:** The specification mandates that the `image` field in the result dictionary must
-//!   be a valid `file://` URI. `AccountsService` often returns a raw absolute path (e.g.,
-//!   `/var/lib/AccountsService/icons/user`). The implementation explicitly checks for a leading `/`
-//!   and prepends `file://` to comply with the spec.
+//!   be a valid `file://` URI. `AccountsService` sometimes returns a raw absolute path (e.g.,
+//!   `/var/lib/AccountsService/icons/user`); `dbus.rs` prepends `file://` to such values. The GUI
+//!   path already converts the selected icon with `glib::filename_to_uri`.
 //!
 //! ## Extension Guide
 //!
