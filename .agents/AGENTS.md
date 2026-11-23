@@ -113,6 +113,37 @@ that fails on revert.
 - Use `#[tokio::test]` for async test functions.
 - Gracefully skip integration tests that require a D-Bus session if `Connection::session()` fails.
 
+## Releases
+
+`Cargo.toml`'s `[package] version` is the single source of truth. A release is tagged as `v<version>`; the tag triggers `.github/workflows/release.yml`.
+
+When bumping the version, update **all** of these:
+
+- `Cargo.toml`, single source of truth — bump `[package] version` to the new `X.Y.Z`.
+- `Cargo.lock` — regenerate the root package entry (plain `cargo check` /
+  `cargo build` does this). CI and all packaging recipes build with `--locked`,
+  so a stale lockfile breaks the release.
+- `packaging/archlinux/PKGBUILD` — set `pkgver=X.Y.Z` and reset `pkgrel=1`. The
+  recipe builds from tag `v$pkgver`, so the tag must exist before an external
+  `makepkg` run; the `pkgver()` function derives the version from `git describe`.
+  PKGBUILD has no changelog field — the user-facing notes live elsewhere.
+- `packaging/debian/changelog` — prepend a new
+  `xdg-desktop-portal-gtk4 (X.Y.Z-1) unstable; urgency=<low|medium>` stanza with
+  the user-facing changes and the ` -- <maintainer>  <date>` trailer (`date -R`
+  gives the required RFC 2822 format). `packaging/debian/rules` fails the build
+  if this version does not match `Cargo.toml`.
+- `packaging/fedora/xdg-desktop-portal-gtk4.spec` — bump `Version:` and prepend
+  a matching `* <date> <maintainer> - X.Y.Z-1` entry to `%changelog` with the
+  same user-facing notes. `%prep` fails if `Version:` does not match
+  `Cargo.toml`.
+
+Review the commits from the previous tag, and the proposed tag checkpoint (usually HEAD).
+Write the changes as short, end-user-facing bullets (what changed for people
+running the portal, not implementation details). Keep the distro packaging in
+agreement, and put the same notes in tag message.
+
+Order of operations: bump the files above, commit, then tag.
+
 ## Environment & Tooling
 
 - If `nix` is present in the environment, `nix shell` or `nix run` can be used to get the packages needed during agent session.
