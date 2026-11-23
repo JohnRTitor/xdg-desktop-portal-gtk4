@@ -6,9 +6,6 @@ on:
       - '**.rs'
       - '**Cargo.toml'
       - '**Cargo.lock'
-      # This file lists itself, unlike `lint.yml`: the jobs here run in
-      # containers and against a toolchain this repository chooses, so a change
-      # to what installs that toolchain is itself worth running.
       - '.github/workflows/ci.yml'
   push:
     paths:
@@ -16,9 +13,6 @@ on:
       - '**Cargo.toml'
       - '**Cargo.lock'
       - '.github/workflows/ci.yml'
-  # The `paths` filters above mean that a change touching none of them runs
-  # nothing at all. Dispatch runs the jobs whatever the filter says, and is
-  # also how to re-run something a newer push cancelled.
   workflow_dispatch:
 
 permissions:
@@ -27,15 +21,13 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
 
-# One group per ref, so a newer push to a branch cancels the run it supersedes
-# instead of both running to completion. The prefix is what keeps this from
-# cancelling `lint.yml` or `packaging.yml` outright.
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   test:
+    name: test (${{ matrix.toolchain }})
     runs-on: ubuntu-latest
     # Scoped to this job on purpose: this job installs sccache via
     # `.github/actions/setup-rust`. Setting RUSTC_WRAPPER workflow-wide would
@@ -57,11 +49,12 @@ jobs:
         with:
           tool: nextest
       - name: Test
-        # A D-Bus session bus is required: without one, every D-Bus-dependent
-        # test in this repository silently returns early and reports success.
+        # Tests are run within a dbus session, without one, every D-Bus-dependent
+        # silently reports success (skips)  
         run: dbus-run-session -- cargo nextest run --workspace --locked
 
   matrix-distro:
+    name: test (${{ matrix.distro }})
     strategy:
       fail-fast: false
       matrix:
@@ -85,12 +78,10 @@ jobs:
       - name: Build
         run: cargo build --locked
       - name: Test
-        # See the comment in the `test` job above: without a session bus the
-        # D-Bus tests skip themselves and pass without asserting anything.
         run: dbus-run-session -- cargo test --locked
 
   freebsd:
-    name: FreeBSD
+    name: test (freebsd:15)
     runs-on: ubuntu-latest
     # GitHub-hosted runners only provide Linux, macOS and Windows images. A
     # container will not work either: Docker shares the Linux kernel, so it
@@ -109,7 +100,11 @@ jobs:
             pkg install -y pkgconf gtk4 gdk-pixbuf2 dbus rust
           run: |
             set -eu
+
+            # The Print portal is linux only, so edit it out, else test
+            # portal_file_matches_exported_interfaces fails
+            sed -i '' 's|org\.freedesktop\.impl\.portal\.Print;||' data/gtk4.portal
+
             cargo build --locked
-            # Without a session bus the D-Bus tests skip themselves and pass
-            # without asserting anything (see the `test` job above).
+
             dbus-run-session -- cargo test --locked
