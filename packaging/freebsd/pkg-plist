@@ -1,0 +1,4 @@
+libexec/xdg-desktop-portal-gtk4
+share/applications/xdg-desktop-portal-gtk4.desktop
+share/dbus-1/services/org.freedesktop.impl.portal.desktop.gtk4.service
+share/xdg-desktop-portal/portals/gtk4.portal

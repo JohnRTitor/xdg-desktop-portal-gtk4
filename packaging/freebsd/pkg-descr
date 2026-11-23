@@ -1,0 +1,9 @@
+xdg-desktop-portal-gtk4 is a GTK4 backend implementation for
+xdg-desktop-portal. It provides portal interfaces such as file chooser,
+account, app chooser, notifications, settings and more for sandboxed
+applications.
+
+The Print portal and native journald logging are Linux-only; every other
+portal is available on FreeBSD.
+
+WWW: https://github.com/JohnRTitor/xdg-desktop-portal-gtk4

@@ -269,3 +269,50 @@ jobs:
 
       - name: Run clippy
         run: nix develop --command cargo clippy --all-targets --all-features -- -D warnings
+
+  freebsd-port:
+    name: FreeBSD port
+    runs-on: ubuntu-latest
+    # No FreeBSD runner image exists. bsd.port.mk needs a ports tree, so boot a
+    # FreeBSD VM with QEMU and clone one there, as in the FreeBSD CI job.
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Build the port in FreeBSD
+        uses: vmactions/freebsd-vm@811efaaac0668df8bfb8308c3ec997b5ab50037b # v1.6.0
+        with:
+          release: "15"
+          prepare: |
+            set -eu
+            pkg install -y git
+            git clone --depth 1 https://github.com/freebsd/freebsd-ports.git /usr/ports
+          run: |
+            set -eu
+            version=$(sed -n '/^\[package\]/,/^\[/s/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -n1)
+
+            # Build from this checkout rather than the last release tarball, so
+            # the recipe is checked against the changes in this PR.
+            dist=/tmp/dist/xdg-desktop-portal-gtk4-$version
+            mkdir -p "$dist"
+            tar cf - . | (cd "$dist" && tar xf -)
+            mkdir -p /usr/ports/distfiles
+            tar czf "/usr/ports/distfiles/xdg-desktop-portal-gtk4-$version.tar.gz" \
+              -C /tmp/dist "xdg-desktop-portal-gtk4-$version"
+
+            port=/usr/ports/x11/xdg-desktop-portal-gtk4
+            rm -rf "$port"
+            mkdir -p "$port"
+            cp -R "$GITHUB_WORKSPACE/packaging/freebsd/." "$port/"
+            cd "$port"
+            make makesum
+            make package
+
+            artifacts="$GITHUB_WORKSPACE/artifacts"
+            mkdir -p "$artifacts" /usr/ports/packages
+            find /usr/ports/packages "$port" -name 'xdg-desktop-portal-gtk4-*.pkg' \
+              -type f -exec cp {} "$artifacts/" \;
+      - name: Upload package
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: freebsd-port
+          path: artifacts/*.pkg
+          if-no-files-found: error
