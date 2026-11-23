@@ -47,7 +47,6 @@ Useful when debugging with `ps -L`, `gdb`, or similar. Thread names are chosen b
 - **Never hold a `MutexGuard` across an `.await` point.** Scope the guard inside a separate block if necessary.
 - Group related magic values and repeated string literals into constants.
 - Prefer iterator chains (`.map().filter().collect()`) over manual for-loops allocating into a `Vec`.
-- For formatting, always use: `cargo fmt -- --config imports_granularity=One,unstable_features=true`
 
 ## Memory & allocation discipline
 
@@ -119,10 +118,9 @@ that fails on revert.
 
 When bumping the version, update **all** of these:
 
-- `Cargo.toml`, single source of truth — bump `[package] version` to the new `X.Y.Z`.
+- `Cargo.toml` — bump `[package] version` to the new `X.Y.Z`.
 - `Cargo.lock` — regenerate the root package entry (plain `cargo check` /
-  `cargo build` does this). CI and all packaging recipes build with `--locked`,
-  so a stale lockfile breaks the release.
+  `cargo build` does this).
 - `packaging/archlinux/PKGBUILD` — set `pkgver=X.Y.Z` and reset `pkgrel=1`. The
   recipe builds from tag `v$pkgver`, so the tag must exist before an external
   `makepkg` run; the `pkgver()` function derives the version from `git describe`.

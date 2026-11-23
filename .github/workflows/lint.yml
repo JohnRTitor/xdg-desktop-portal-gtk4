@@ -10,9 +10,6 @@ on:
       - '**.rs'
       - '**Cargo.toml'
       - '**Cargo.lock'
-  # As in `ci.yml`: the path filters leave changes that touch none of them
-  # unchecked. Dispatch runs the jobs whatever the filter says, and is also how
-  # to re-run something a newer push cancelled.
   workflow_dispatch:
 
 permissions:

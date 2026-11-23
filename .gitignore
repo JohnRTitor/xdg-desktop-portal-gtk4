@@ -1,9 +1,10 @@
-.*
+/.*
+
 !.gitignore
 !.github
 !.agents
-!.devcontainer
-!.devcontainer/**
+!.devcontainer*
+!.githooks
 /target
 /build
-result
+result*

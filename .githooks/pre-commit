@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+set -e
+
+if command -v cargo >/dev/null 2>&1; then
+    echo "Running cargo fmt..."
+    cargo fmt --all -- --config imports_granularity=One,unstable_features=true
+else
+    echo "Warning: cargo not found, skipping Rust formatting"
+fi
