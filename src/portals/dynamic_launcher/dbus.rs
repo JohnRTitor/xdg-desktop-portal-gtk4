@@ -5,8 +5,8 @@ use {
         gui::UiProxy,
     },
     zbus::{
-        DeserializeDict, ObjectServer, OwnedObjectPath, OwnedVariant, SerializeDict, Type, Variant,
-        fdo, interface, message::Header,
+        DeserializeDict, ObjectServer, OwnedObjectPath, OwnedVariant, SerializeDict, Structure,
+        Type, Variant, fdo, interface, message::Header,
     },
 };
 
@@ -214,7 +214,7 @@ fn parse_icon(icon_v: &OwnedVariant) -> (Option<String>, Option<Vec<u8>>) {
     // (`Structure::try_from(&Variant)` and `Variant::try_from(&Variant)`) deep
     // copy every field of the icon, which is wasted when we only read one name
     // or the byte payload.
-    let Ok(structure) = <&zbus::Structure>::try_from(&**icon_v) else {
+    let Ok(structure) = <&Structure>::try_from(&**icon_v) else {
         return (None, None);
     };
 
@@ -282,7 +282,7 @@ mod tests {
     use {
         super::*,
         gtk4::glib::MainContext,
-        tokio::sync::mpsc::unbounded_channel,
+        tokio::sync::mpsc,
         zbus::{Connection, Variant},
     };
 
@@ -364,7 +364,7 @@ mod tests {
         // We just create an empty MainContext for the UiProxy so we don't start GTK.
         let proxy = UiProxy {
             context: MainContext::default(),
-            sender: unbounded_channel().0,
+            sender: mpsc::unbounded_channel().0,
         };
         let Ok(conn) = Connection::session().await else {
             return;
@@ -397,8 +397,8 @@ mod tests {
     #[tokio::test]
     async fn test_request_install_token_denied() {
         let proxy = UiProxy {
-            context: gtk4::glib::MainContext::default(),
-            sender: tokio::sync::mpsc::unbounded_channel().0,
+            context: MainContext::default(),
+            sender: mpsc::unbounded_channel().0,
         };
         let Ok(conn) = Connection::session().await else {
             return;
@@ -423,7 +423,7 @@ mod tests {
     async fn test_dynamic_launcher_properties() {
         let proxy = UiProxy {
             context: MainContext::default(),
-            sender: unbounded_channel().0,
+            sender: mpsc::unbounded_channel().0,
         };
         let Ok(conn) = Connection::session().await else {
             return;

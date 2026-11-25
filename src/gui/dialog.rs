@@ -1,18 +1,18 @@
-use gtk4::{Align, Box, prelude::*};
+use gtk4::{Align, Box as GtkBox, Orientation, Window, prelude::*};
 
 /// A reusable custom dialog widget.
 ///
 /// This struct builds a standard `gtk4::Window` configured to look and behave like
 /// a dialog while allowing arbitrary child widgets in its content area.
 pub struct CustomDialog {
-    pub window: gtk4::Window,
-    pub content_area: Box,
-    pub action_area: Box,
+    pub window: Window,
+    pub content_area: GtkBox,
+    pub action_area: GtkBox,
 }
 
 impl CustomDialog {
     pub fn new(title: &str, modal: bool) -> Self {
-        let window = gtk4::Window::builder()
+        let window = Window::builder()
             .title(title)
             .modal(modal)
             .hide_on_close(true)
@@ -22,8 +22,8 @@ impl CustomDialog {
 
         window.add_css_class("dialog");
 
-        let main_box = Box::builder()
-            .orientation(gtk4::Orientation::Vertical)
+        let main_box = GtkBox::builder()
+            .orientation(Orientation::Vertical)
             .spacing(crate::gui::DEFAULT_SPACING)
             .margin_top(crate::gui::DEFAULT_MARGIN)
             .margin_bottom(crate::gui::DEFAULT_MARGIN)
@@ -31,12 +31,12 @@ impl CustomDialog {
             .margin_end(crate::gui::DEFAULT_MARGIN)
             .build();
 
-        let content_area = Box::new(gtk4::Orientation::Vertical, 6);
+        let content_area = GtkBox::new(Orientation::Vertical, 6);
         // Allow the content area (e.g. a ScrolledWindow inside it) to grow
         // and fill available vertical space so buttons never get pushed off-screen.
         content_area.set_vexpand(true);
 
-        let action_area = Box::new(gtk4::Orientation::Horizontal, 6);
+        let action_area = GtkBox::new(Orientation::Horizontal, 6);
         action_area.set_halign(Align::End);
 
         main_box.append(&content_area);

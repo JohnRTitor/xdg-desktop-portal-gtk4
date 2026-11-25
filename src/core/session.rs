@@ -5,6 +5,9 @@
 
 use {std::sync::Arc, tokio::sync::Notify, zbus::interface};
 
+#[cfg(test)]
+use std::mem;
+
 /// Represents a portal session on D-Bus.
 ///
 /// Sessions are used by stateful portals (here: Inhibit) to manage ongoing
@@ -85,7 +88,7 @@ mod tests {
     #[test]
     #[cfg(target_pointer_width = "64")]
     fn id_is_a_boxed_str() {
-        assert_eq!(std::mem::size_of::<Session>(), 24);
+        assert_eq!(mem::size_of::<Session>(), 24);
     }
 
     #[tokio::test]

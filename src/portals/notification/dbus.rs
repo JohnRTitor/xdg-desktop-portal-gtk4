@@ -7,14 +7,23 @@ use {
     smallvec::SmallVec,
     std::{
         collections::HashMap,
-        sync::{Arc, LazyLock, Weak},
+        env,
+        ffi::OsStr,
+        fs::{self, File},
+        io,
+        path::{Path, PathBuf},
+        sync::{Arc, LazyLock, Once, Weak},
+        time::{SystemTime, UNIX_EPOCH},
     },
-    tokio::task::spawn_blocking,
+    tokio::{runtime::Handle, task::spawn_blocking},
     zbus::{
         Connection, DeserializeDict, ObjectServer, OwnedVariant, Type, Variant, interface,
-        object_server::SignalEmitter,
+        object_server::SignalEmitter, proxy::CacheProperties, wire::Array,
     },
 };
+
+#[cfg(test)]
+use std::{hint::black_box, process};
 
 /// Subdirectory of `$XDG_RUNTIME_DIR` that staged notification sounds live in.
 const TEMP_SOUND_SUBDIR: &str = "xdg-desktop-portal-gtk4-sounds";
@@ -47,7 +56,7 @@ static SUPPORTED_OPTIONS: LazyLock<HashMap<String, OwnedVariant>> = LazyLock::ne
 });
 
 pub struct TempSoundFile {
-    pub path: std::path::PathBuf,
+    pub path: PathBuf,
 }
 
 impl Drop for TempSoundFile {
@@ -57,13 +66,13 @@ impl Drop for TempSoundFile {
         // panics in that case, and this daemon builds with `panic = "abort"`, so
         // a stray drop would take down the whole process. Unlinking one file is
         // cheap: do it inline when there is no runtime to hand it to.
-        if tokio::runtime::Handle::try_current().is_ok() {
+        if Handle::try_current().is_ok() {
             let path = self.path.clone();
             spawn_blocking(move || {
-                let _ = std::fs::remove_file(&path);
+                let _ = fs::remove_file(&path);
             });
         } else {
-            let _ = std::fs::remove_file(&self.path);
+            let _ = fs::remove_file(&self.path);
         }
     }
 }
@@ -75,20 +84,20 @@ impl Drop for TempSoundFile {
 /// user (mode `0700`), so it is the only place this daemon may create files on
 /// an unprivileged caller's behalf. `std::env::temp_dir()` is world-writable and
 /// shared with every other process on the machine.
-fn temp_sound_dir() -> Option<std::path::PathBuf> {
-    sound_dir_under(std::env::var_os("XDG_RUNTIME_DIR").as_deref())
+fn temp_sound_dir() -> Option<PathBuf> {
+    sound_dir_under(env::var_os("XDG_RUNTIME_DIR").as_deref())
 }
 
 /// [`temp_sound_dir`] with the runtime directory supplied explicitly.
 ///
 /// Split out so the rule can be tested without mutating process-global
 /// environment state, which is `unsafe` on this Rust edition.
-fn sound_dir_under(runtime_dir: Option<&std::ffi::OsStr>) -> Option<std::path::PathBuf> {
+fn sound_dir_under(runtime_dir: Option<&OsStr>) -> Option<PathBuf> {
     let runtime_dir = runtime_dir?;
     if runtime_dir.is_empty() {
         return None;
     }
-    let mut path = std::path::PathBuf::from(runtime_dir);
+    let mut path = PathBuf::from(runtime_dir);
     path.push(TEMP_SOUND_SUBDIR);
     Some(path)
 }
@@ -102,14 +111,14 @@ fn sound_dir_under(runtime_dir: Option<&std::ffi::OsStr>) -> Option<std::path::P
 /// restrictive umask can still remove bits from the request.
 /// An existing path is accepted: `EEXIST` on a directory is the normal case
 /// after the first sound in a session, and the parent is already private.
-fn ensure_private_dir(dir: &std::path::Path) -> std::io::Result<()> {
+fn ensure_private_dir(dir: &Path) -> io::Result<()> {
     match rustix::fs::mkdir(
         dir,
         rustix::fs::Mode::RUSR | rustix::fs::Mode::WUSR | rustix::fs::Mode::XUSR,
     ) {
         Ok(()) => Ok(()),
         Err(rustix::io::Errno::EXIST) => Ok(()),
-        Err(e) => Err(std::io::Error::from_raw_os_error(e.raw_os_error())),
+        Err(e) => Err(io::Error::from_raw_os_error(e.raw_os_error())),
     }
 }
 
@@ -120,20 +129,20 @@ fn ensure_private_dir(dir: &std::path::Path) -> std::io::Result<()> {
 /// never be tricked into writing through a link planted by another process. The
 /// file is created `0600` because the sound is derived from a sandboxed
 /// caller's data and is passed to the notification daemon.
-async fn write_exclusive(path: &std::path::Path, data: &[u8]) -> std::io::Result<()> {
+async fn write_exclusive(path: &Path, data: &[u8]) -> io::Result<()> {
     use std::io::Write;
 
     let parent = path
         .parent()
-        .map(std::path::Path::to_path_buf)
-        .ok_or(std::io::Error::from(std::io::ErrorKind::InvalidInput))?;
+        .map(Path::to_path_buf)
+        .ok_or(io::Error::from(io::ErrorKind::InvalidInput))?;
     let bytes = data.to_vec();
     let path_buf = path.to_path_buf();
 
     // Both the `open` and the write are syscalls. Keep them off the runtime
     // thread so a stalled filesystem cannot stall the single-threaded D-Bus
     // reactor.
-    tokio::task::spawn_blocking(move || -> std::io::Result<()> {
+    spawn_blocking(move || -> io::Result<()> {
         ensure_private_dir(&parent)?;
 
         let file = rustix::fs::open(
@@ -145,12 +154,12 @@ async fn write_exclusive(path: &std::path::Path, data: &[u8]) -> std::io::Result
                 | rustix::fs::OFlags::NOCTTY,
             rustix::fs::Mode::RUSR | rustix::fs::Mode::WUSR,
         )
-        .map_err(|e| std::io::Error::from_raw_os_error(e.raw_os_error()))?;
+        .map_err(|e| io::Error::from_raw_os_error(e.raw_os_error()))?;
 
-        std::fs::File::from(file).write_all(&bytes)
+        File::from(file).write_all(&bytes)
     })
     .await
-    .map_err(|e| std::io::Error::other(e.to_string()))?
+    .map_err(|e| io::Error::other(e.to_string()))?
 }
 
 #[zbus::proxy(
@@ -428,7 +437,7 @@ pub struct Notification {
     /// drops the `TempSoundFile` (deleting the temporary file).
     reverse_map: ReverseMapType,
 
-    init_once: std::sync::Once,
+    init_once: Once,
     connection: Option<Connection>,
     proxy: Option<Arc<NotificationsProxy<'static>>>,
 }
@@ -448,7 +457,7 @@ impl Notification {
         Self {
             active_notifications: Arc::new(Mutex::new(HashMap::new())),
             reverse_map: Arc::new(Mutex::new(HashMap::new())),
-            init_once: std::sync::Once::new(),
+            init_once: Once::new(),
             connection,
             proxy,
         }
@@ -520,7 +529,7 @@ impl Notification {
                 Variant::Fd(fd) => {
                     use std::{io::Read, os::fd::AsFd};
                     if let Ok(owned_fd) = fd.as_fd().try_clone_to_owned() {
-                        let mut file = std::fs::File::from(owned_fd);
+                        let mut file = File::from(owned_fd);
 
                         // Only ever write below a directory we own, with `0700`, and
                         // create the file with `O_EXCL`.
@@ -539,8 +548,8 @@ impl Notification {
                             return;
                         };
 
-                        let timestamp = std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
+                        let timestamp = SystemTime::now()
+                            .duration_since(UNIX_EPOCH)
                             .unwrap_or_default()
                             .as_micros();
                         path.push(format!(
@@ -606,7 +615,7 @@ impl Notification {
                                 if let Variant::Fd(fd) = payload {
                                     use std::os::fd::AsFd;
                                     if let Ok(owned_fd) = fd.as_fd().try_clone_to_owned() {
-                                        let mut file = std::fs::File::from(owned_fd);
+                                        let mut file = File::from(owned_fd);
                                         let image_data = spawn_blocking(move || {
                                             use {
                                                 gdk_pixbuf::Pixbuf,
@@ -657,7 +666,7 @@ impl Notification {
                                 // `Bytes::from_owned` below then hands that single
                                 // allocation to GLib without a further copy.
                                 let byte_array: Option<Vec<u8>> = (|| {
-                                    let array = <&zbus::wire::Array>::try_from(payload).ok()?;
+                                    let array = <&Array>::try_from(payload).ok()?;
                                     let mut bytes = Vec::with_capacity(array.len());
                                     for byte in array.inner() {
                                         bytes.push(u8::try_from(byte).ok()?);
@@ -802,7 +811,7 @@ impl Notification {
 /// rejects the whole icon. `Array -> Vec<T>` unwraps exactly one level of
 /// `Variant::Variant` per element.
 fn themed_icon_name(payload: &Variant<'_>) -> Option<String> {
-    let array = <&zbus::wire::Array>::try_from(payload).ok()?;
+    let array = <&Array>::try_from(payload).ok()?;
     let mut first: Option<&str> = None;
     for value in array.inner() {
         let value = match value {
@@ -1143,7 +1152,7 @@ async fn application_proxy(
         .destination(app_id.to_owned())
         .path(app_path);
     builder
-        .cache_properties(zbus::proxy::CacheProperties::No)
+        .cache_properties(CacheProperties::No)
         .build()
         .await
         .inspect_err(|e| tracing::error!("Could not build an application proxy: {e}"))
@@ -1175,16 +1184,16 @@ mod tests {
             sync::atomic::{AtomicU64, Ordering},
         };
         static NEXT: AtomicU64 = AtomicU64::new(0);
-        let dir = std::env::temp_dir().join(format!(
+        let dir = env::temp_dir().join(format!(
             "xdp-sound-mode-{}-{}",
-            std::process::id(),
+            process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
-        let _ = std::fs::remove_dir_all(&dir);
+        let _ = fs::remove_dir_all(&dir);
 
         ensure_private_dir(&dir).expect("a fresh directory must be created");
 
-        let mode = std::fs::metadata(&dir).unwrap().permissions().mode();
+        let mode = fs::metadata(&dir).unwrap().permissions().mode();
         assert_eq!(
             mode & 0o077,
             0,
@@ -1195,21 +1204,21 @@ mod tests {
             0,
             "the owner must be able to search the directory"
         );
-        std::fs::write(dir.join("probe"), b"ok").expect("0700 must allow creating files inside");
+        fs::write(dir.join("probe"), b"ok").expect("0700 must allow creating files inside");
 
-        let _ = std::fs::remove_dir_all(&dir);
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn an_empty_runtime_dir_is_treated_as_unset() {
-        assert_eq!(sound_dir_under(Some(std::ffi::OsStr::new(""))), None);
+        assert_eq!(sound_dir_under(Some(OsStr::new(""))), None);
     }
 
     #[test]
     fn the_sound_directory_is_created_under_the_runtime_dir() {
         assert_eq!(
-            sound_dir_under(Some(std::ffi::OsStr::new("/run/user/1000"))),
-            Some(std::path::PathBuf::from("/run/user/1000").join(TEMP_SOUND_SUBDIR))
+            sound_dir_under(Some(OsStr::new("/run/user/1000"))),
+            Some(PathBuf::from("/run/user/1000").join(TEMP_SOUND_SUBDIR))
         );
     }
 
@@ -1217,8 +1226,8 @@ mod tests {
     /// cannot be followed and truncated.
     #[tokio::test]
     async fn write_exclusive_refuses_an_existing_target() {
-        let dir = std::env::temp_dir().join(format!("xdp-sound-test-{}", std::process::id()));
-        let _ = std::fs::create_dir_all(&dir);
+        let dir = env::temp_dir().join(format!("xdp-sound-test-{}", process::id()));
+        let _ = fs::create_dir_all(&dir);
         let target = dir.join("taken.snd");
 
         write_exclusive(&target, b"first")
@@ -1230,16 +1239,16 @@ mod tests {
             .expect_err("an existing target must not be overwritten");
         assert_eq!(
             err.kind(),
-            std::io::ErrorKind::AlreadyExists,
+            io::ErrorKind::AlreadyExists,
             "O_EXCL must surface as EEXIST, got {err:?}"
         );
         assert_eq!(
-            std::fs::read(&target).unwrap(),
+            fs::read(&target).unwrap(),
             b"first",
             "the original contents must survive the refused write"
         );
 
-        let _ = std::fs::remove_dir_all(&dir);
+        let _ = fs::remove_dir_all(&dir);
     }
 
     /// A symlink at the target must not be followed.
@@ -1249,12 +1258,12 @@ mod tests {
     /// portal to write through it.
     #[tokio::test]
     async fn write_exclusive_does_not_follow_a_symlink() {
-        let dir = std::env::temp_dir().join(format!("xdp-sound-link-{}", std::process::id()));
-        let _ = std::fs::create_dir_all(&dir);
+        let dir = env::temp_dir().join(format!("xdp-sound-link-{}", process::id()));
+        let _ = fs::create_dir_all(&dir);
         let victim = dir.join("victim");
-        std::fs::write(&victim, b"intact").unwrap();
+        fs::write(&victim, b"intact").unwrap();
         let link = dir.join("attack.snd");
-        let _ = std::fs::remove_file(&link);
+        let _ = fs::remove_file(&link);
         std::os::unix::fs::symlink(&victim, &link).unwrap();
 
         let result = write_exclusive(&link, b"overwritten").await;
@@ -1264,12 +1273,12 @@ mod tests {
             "O_EXCL must refuse to open through an existing symlink"
         );
         assert_eq!(
-            std::fs::read(&victim).unwrap(),
+            fs::read(&victim).unwrap(),
             b"intact",
             "the symlink target must be untouched"
         );
 
-        let _ = std::fs::remove_dir_all(&dir);
+        let _ = fs::remove_dir_all(&dir);
     }
 
     /// The last `Arc<TempSoundFile>` can be dropped on a thread with no Tokio
@@ -1281,18 +1290,18 @@ mod tests {
         static NEXT: AtomicU64 = AtomicU64::new(0);
 
         assert!(
-            tokio::runtime::Handle::try_current().is_err(),
+            Handle::try_current().is_err(),
             "this regression test must run outside a Tokio runtime"
         );
 
-        let dir = std::env::temp_dir().join(format!(
+        let dir = env::temp_dir().join(format!(
             "xdp-sound-drop-{}-{}",
-            std::process::id(),
+            process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
-        std::fs::create_dir_all(&dir).unwrap();
+        fs::create_dir_all(&dir).unwrap();
         let path = dir.join("sound.snd");
-        std::fs::write(&path, b"x").unwrap();
+        fs::write(&path, b"x").unwrap();
 
         {
             let sound = Arc::new(TempSoundFile { path: path.clone() });
@@ -1304,7 +1313,7 @@ mod tests {
             !path.exists(),
             "TempSoundFile::drop must unlink inline when there is no runtime"
         );
-        let _ = std::fs::remove_dir_all(&dir);
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[tokio::test]
@@ -1318,7 +1327,7 @@ mod tests {
         let scope = crate::alloc_probe::AllocScope::start();
         let options = notification.supported_options();
         let snap = scope.finish();
-        std::hint::black_box(options);
+        black_box(options);
 
         assert_eq!(
             snap.count, 0,
@@ -1485,7 +1494,7 @@ mod notification_map_tests {
 
     fn staged_sound() -> Arc<TempSoundFile> {
         Arc::new(TempSoundFile {
-            path: std::env::temp_dir().join("xdpg-apply-notify-nonexistent.snd"),
+            path: env::temp_dir().join("xdpg-apply-notify-nonexistent.snd"),
         })
     }
 
@@ -1687,10 +1696,10 @@ mod notification_map_tests {
 
     #[tokio::test]
     async fn retiring_releases_the_sound_file_arc() {
-        let dir = std::env::temp_dir().join("xdpg-notif-sound-test");
-        let _ = std::fs::create_dir_all(&dir);
+        let dir = env::temp_dir().join("xdpg-notif-sound-test");
+        let _ = fs::create_dir_all(&dir);
         let path = dir.join("sound.snd");
-        std::fs::write(&path, b"x").unwrap();
+        fs::write(&path, b"x").unwrap();
 
         let (active, reverse) = empty_maps();
         let sound = Arc::new(TempSoundFile { path });
@@ -1717,7 +1726,7 @@ mod notification_map_tests {
             1,
             "the last portal-held reference must be gone, so TempSoundFile::drop runs"
         );
-        let _ = std::fs::remove_dir_all(&dir);
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -2114,7 +2123,7 @@ mod action_list_tests {
     #[test]
     fn a_token_from_a_replaced_notification_is_rejected() {
         let sound = Arc::new(TempSoundFile {
-            path: std::env::temp_dir().join("xdpg-token-pending-sound.snd"),
+            path: env::temp_dir().join("xdpg-token-pending-sound.snd"),
         });
         let old = Arc::new(NotificationTarget {
             key: Arc::new(NotifKey::new("org.example.App", "1")),
@@ -2161,8 +2170,8 @@ mod action_list_tests {
         let scope = crate::alloc_probe::AllocScope::start();
         let (actions, targets) = build_actions(&n);
         let snap = scope.finish();
-        std::hint::black_box(&actions);
-        std::hint::black_box(&targets);
+        black_box(&actions);
+        black_box(&targets);
 
         assert_eq!(actions.len(), 6, "three actions, id and label each");
         assert!(
@@ -2199,8 +2208,8 @@ mod action_list_tests {
         let scope = crate::alloc_probe::AllocScope::start();
         let (actions, targets) = build_actions(&n);
         let snap = scope.finish();
-        std::hint::black_box(&actions);
-        std::hint::black_box(&targets);
+        black_box(&actions);
+        black_box(&targets);
 
         assert!(actions.is_empty());
         assert!(targets.is_empty());

@@ -5,6 +5,9 @@ use {
     zbus::{ObjectServer, OwnedObjectPath, Type, interface},
 };
 
+#[cfg(test)]
+use {std::time::Duration, zbus::Connection};
+
 /// Runs the future to completion or exits early if the request is closed.
 ///
 /// This function sets up a race between the actual portal work (`f`) and the
@@ -150,10 +153,9 @@ mod tests {
         let notify = Arc::new(Notify::new());
         notify.notify_one();
         // Let the notification happen strictly before the listener exists.
-        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        tokio::time::sleep(Duration::from_millis(20)).await;
 
-        let seen =
-            tokio::time::timeout(std::time::Duration::from_millis(500), notify.notified()).await;
+        let seen = tokio::time::timeout(Duration::from_millis(500), notify.notified()).await;
         assert!(
             seen.is_ok(),
             "a notification sent before the listener existed must be latched"
@@ -162,7 +164,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_run_request_completion() {
-        let Ok(conn) = zbus::Connection::session().await else {
+        let Ok(conn) = Connection::session().await else {
             return;
         };
         let server = conn.object_server();
@@ -192,7 +194,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_run_request_cancellation() {
-        let Ok(conn) = zbus::Connection::session().await else {
+        let Ok(conn) = Connection::session().await else {
             return;
         };
         let server = conn.object_server();
@@ -203,7 +205,7 @@ mod tests {
         let handle_clone = handle.clone();
         let conn_clone = conn.clone();
         tokio::spawn(async move {
-            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            tokio::time::sleep(Duration::from_millis(50)).await;
             #[zbus::proxy(interface = "org.freedesktop.impl.portal.Request")]
             trait TestRequest {
                 fn close(&self) -> zbus::Result<()>;
@@ -219,7 +221,7 @@ mod tests {
 
         let response: Response<u32> =
             run_request(server, sm, "test_app", "test_sender", handle, async {
-                tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+                tokio::time::sleep(Duration::from_secs(10)).await;
                 Response::success(42)
             })
             .await;
@@ -234,7 +236,7 @@ mod tests {
     /// its cleanup on `Ok(None)`.
     #[tokio::test]
     async fn duplicate_at_leaves_the_first_interface_serving() {
-        let Ok(conn) = zbus::Connection::session().await else {
+        let Ok(conn) = Connection::session().await else {
             return;
         };
         let server = conn.object_server();
@@ -282,7 +284,7 @@ mod tests {
     /// a successful export would remove the other request's interface.
     #[tokio::test]
     async fn run_request_on_a_duplicate_path_does_not_remove_the_first_interface() {
-        let Ok(conn) = zbus::Connection::session().await else {
+        let Ok(conn) = Connection::session().await else {
             return;
         };
         let server = conn.object_server();

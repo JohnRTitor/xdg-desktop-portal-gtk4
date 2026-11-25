@@ -1,14 +1,21 @@
 use std::os::fd::{AsRawFd, OwnedFd};
 
+#[cfg(test)]
+use {
+    gtk4::Unit,
+    std::{mem, sync::OnceLock},
+    tokio::sync::mpsc::unbounded_channel,
+};
+
 use {
     crate::gui::{PortalDispatcher, UiError, UiProxy},
     gtk4::{
-        PrintUnixDialog, Printer, ResponseType,
+        PageSetup, PrintJob, PrintSettings, PrintUnixDialog, Printer, ResponseType, Window,
         glib::{self, MainContext},
         prelude::{DialogExt, GtkWindowExt, WidgetExt},
     },
     std::{cell::RefCell, collections::HashMap, sync::Arc, time::Duration},
-    tokio::sync::oneshot::Receiver,
+    tokio::sync::oneshot::Receiver as OneshotReceiver,
     zbus::{OwnedVariant, Variant},
 };
 
@@ -21,8 +28,8 @@ const PRINT_TOKEN_TIMEOUT_SECS: u32 = 300;
 pub struct CachedPrintJob {
     pub title: String,
     pub printer: Printer,
-    pub settings: gtk4::PrintSettings,
-    pub page_setup: gtk4::PageSetup,
+    pub settings: PrintSettings,
+    pub page_setup: PageSetup,
     pub source_id: glib::SourceId,
 }
 
@@ -250,20 +257,20 @@ impl PrintUi {
         self,
         send: crate::gui::UiDispatcher<Result<PrintResult, UiError>>,
         context: MainContext,
-        close_on_close: Receiver<()>,
+        close_on_close: OneshotReceiver<()>,
     ) {
-        let dialog = PrintUnixDialog::new(Some(&self.title), None::<&gtk4::Window>);
+        let dialog = PrintUnixDialog::new(Some(&self.title), None::<&Window>);
         dialog.set_modal(true);
 
         // Apply what the caller asked for before the dialog is shown, otherwise
         // the user's confirmation is about settings the application never chose.
         if !self.settings.is_empty() {
             let variant = owned_dict_to_variant(&self.settings);
-            dialog.set_settings(Some(&gtk4::PrintSettings::from_gvariant(&variant)));
+            dialog.set_settings(Some(&PrintSettings::from_gvariant(&variant)));
         }
         if !self.page_setup.is_empty() {
             let variant = owned_dict_to_variant(&self.page_setup);
-            dialog.set_page_setup(&gtk4::PageSetup::from_gvariant(&variant));
+            dialog.set_page_setup(&PageSetup::from_gvariant(&variant));
         }
 
         crate::gui::windowing::external_window::setup_window(
@@ -432,7 +439,7 @@ impl ExecutePrintUi {
             "Submitting print job"
         );
 
-        let print_job = gtk4::PrintJob::new(
+        let print_job = PrintJob::new(
             &cached.title,
             &cached.printer,
             &cached.settings,
@@ -478,7 +485,7 @@ mod tests {
     #[test]
     #[cfg(target_pointer_width = "64")]
     fn execute_print_ui_has_no_tail_padding() {
-        assert_eq!(std::mem::size_of::<ExecutePrintUi>(), 32);
+        assert_eq!(mem::size_of::<ExecutePrintUi>(), 32);
     }
 
     fn jobs_with(token: u32, owner: &str, payload: u32) -> Jobs {
@@ -528,9 +535,9 @@ mod tests {
         use crate::gui::UiProxy;
 
         PRINT_JOBS.with(|jobs| jobs.borrow_mut().clear());
-        let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
+        let (sender, mut receiver) = unbounded_channel();
         let proxy = UiProxy {
-            context: gtk4::glib::MainContext::default(),
+            context: MainContext::default(),
             sender,
         };
 
@@ -631,7 +638,7 @@ mod tests {
     }
 
     fn gtk_ready() -> bool {
-        static INIT: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        static INIT: OnceLock<bool> = OnceLock::new();
         *INIT.get_or_init(|| gtk4::init().is_ok())
     }
 
@@ -811,7 +818,7 @@ mod tests {
 
         // The response path reads real GTK variants, not just VariantDict
         // output: verify MarginTop comes back as a double from GTK's own data.
-        let setup = gtk4::PageSetup::from_gvariant(&variant);
+        let setup = PageSetup::from_gvariant(&variant);
         let from_gtk = variant_to_owned_dict(&setup.to_gvariant());
         assert_eq!(
             f64::try_from(from_gtk["MarginTop"].try_clone().unwrap()).unwrap(),
@@ -819,7 +826,7 @@ mod tests {
             "GTK's own variant must preserve the margin as a double"
         );
         assert!(
-            (setup.top_margin(gtk4::Unit::Mm) - 11.0).abs() < 1e-6,
+            (setup.top_margin(Unit::Mm) - 11.0).abs() < 1e-6,
             "the requested margin must reach GTK instead of being lost"
         );
 
@@ -830,7 +837,7 @@ mod tests {
             ("output-uri".to_string(), string("file:///tmp/print.pdf")),
         ]);
         let settings_variant = owned_dict_to_variant(&settings_dict);
-        let settings = gtk4::PrintSettings::from_gvariant(&settings_variant);
+        let settings = PrintSettings::from_gvariant(&settings_variant);
         let back = variant_to_owned_dict(&settings.to_gvariant());
         assert_eq!(
             String::try_from(back["printer"].try_clone().unwrap()).unwrap(),

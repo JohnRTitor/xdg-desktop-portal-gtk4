@@ -20,7 +20,12 @@ pub fn init() {
 
 #[cfg(all(feature = "systemd", target_os = "linux"))]
 fn stderr_is_journal() -> bool {
-    use std::{env, fs::File, os::linux::fs::MetadataExt};
+    use std::{
+        env,
+        fs::File,
+        io::stderr,
+        os::{fd::AsFd, linux::fs::MetadataExt},
+    };
     let Ok(journal_stream) = env::var("JOURNAL_STREAM") else {
         return false;
     };
@@ -33,8 +38,7 @@ fn stderr_is_journal() -> bool {
     let Ok(ino) = ino.parse::<u64>() else {
         return false;
     };
-    use std::os::fd::AsFd;
-    let Ok(owned_fd) = std::io::stderr().as_fd().try_clone_to_owned() else {
+    let Ok(owned_fd) = stderr().as_fd().try_clone_to_owned() else {
         return false;
     };
     let stderr = File::from(owned_fd);

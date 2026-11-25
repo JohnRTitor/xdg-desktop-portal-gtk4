@@ -6,7 +6,7 @@ use {
     },
     parking_lot::Mutex,
     std::{collections::HashMap, sync::Arc},
-    tokio::sync::mpsc::{Sender, channel},
+    tokio::sync::mpsc,
     zbus::{
         DeserializeDict, ObjectServer, OwnedObjectPath, SerializeDict, Type, fdo, interface,
         message::Header,
@@ -52,7 +52,7 @@ pub struct AppChooser {
     /// A `parking_lot::Mutex` is sufficient here (rather than RwLock or Tokio Mutex)
     /// because insertion and removal only happen during setup and teardown, and
     /// we do not hold the lock across `.await` points.
-    active_dialogs: Arc<Mutex<HashMap<OwnedObjectPath, Sender<Vec<String>>>>>,
+    active_dialogs: Arc<Mutex<HashMap<OwnedObjectPath, mpsc::Sender<Vec<String>>>>>,
     session_manager: crate::core::session_manager::SessionManager,
 }
 
@@ -80,7 +80,7 @@ impl AppChooser {
         // when this method exits, regardless of whether it returned successfully, was cancelled,
         // or panicked. This prevents a memory leak of stale handles.
         struct ActiveDialogGuard {
-            active_dialogs: Arc<Mutex<HashMap<OwnedObjectPath, Sender<Vec<String>>>>>,
+            active_dialogs: Arc<Mutex<HashMap<OwnedObjectPath, mpsc::Sender<Vec<String>>>>>,
             handle: OwnedObjectPath,
         }
 
@@ -91,7 +91,7 @@ impl AppChooser {
             }
         }
 
-        let (update_sender, update_receiver) = channel(CHANNEL_BUFFER_SIZE);
+        let (update_sender, update_receiver) = mpsc::channel(CHANNEL_BUFFER_SIZE);
 
         // The map key and the guard each need an owned handle: clone one for the
         // guard and move the parameter into the map, so no third handle exists.
@@ -236,7 +236,7 @@ mod tests {
             &proxy,
             crate::core::session_manager::SessionManager::new(conn, 10),
         );
-        let (sender, mut receiver) = channel(1);
+        let (sender, mut receiver) = mpsc::channel(1);
 
         let path = OwnedObjectPath::try_from("/test/handle").unwrap();
 

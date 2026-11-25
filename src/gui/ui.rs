@@ -3,7 +3,8 @@ use {
         glib,
         glib::{MainContext, MainLoop},
     },
-    tokio::sync::mpsc::unbounded_channel,
+    std::process,
+    tokio::sync::mpsc,
 };
 
 pub type UiTask = Box<dyn FnOnce() + Send + 'static>;
@@ -32,7 +33,7 @@ impl Ui {
     pub fn new() -> Self {
         let main_loop = MainLoop::new(None, false);
 
-        let (sender, mut receiver) = unbounded_channel::<UiTask>();
+        let (sender, mut receiver) = mpsc::unbounded_channel::<UiTask>();
 
         // spawn_local is crucial here: it attaches the future to the GTK MainContext
         // rather than the Tokio runtime. This ensures that the queued tasks (which
@@ -55,7 +56,7 @@ impl Ui {
     pub fn init_gtk(&self) {
         if let Err(e) = gtk4::init() {
             tracing::error!("Failed to initialize GTK: {}", e);
-            std::process::exit(1);
+            process::exit(1);
         }
         glib::set_prgname(Some("xdg-desktop-portal-gtk4"));
     }
@@ -87,5 +88,5 @@ impl Ui {
 #[derive(Clone)]
 pub struct UiProxy {
     pub context: MainContext,
-    pub sender: tokio::sync::mpsc::UnboundedSender<UiTask>,
+    pub sender: mpsc::UnboundedSender<UiTask>,
 }

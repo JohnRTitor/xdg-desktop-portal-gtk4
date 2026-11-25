@@ -8,7 +8,7 @@ use {
         gui::UiProxy,
     },
     gtk4::{gio, prelude::FileExt},
-    serde::{Deserialize, Deserializer},
+    serde::{Deserialize, Deserializer, de::Error as DeError},
     std::{ffi::CString, path::Path},
     thiserror::Error,
     zbus::{
@@ -16,6 +16,9 @@ use {
         message::Header,
     },
 };
+
+#[cfg(test)]
+use std::{hint::black_box, mem};
 
 /// D-Bus interface wrapper for the FileChooser portal.
 ///
@@ -54,7 +57,7 @@ impl<'de> Deserialize<'de> for FilePath {
     {
         let bytes = <Vec<u8>>::deserialize(deserializer)?;
         let c_string = CString::from_vec_with_nul(bytes)
-            .map_err(|_| serde::de::Error::custom("Bytes are not nul-terminated"))?;
+            .map_err(|_| DeError::custom("Bytes are not nul-terminated"))?;
         // Valid UTF-8 is the common case: `String::from_utf8` reuses the byte
         // buffer with no second allocation. Only pay for the lossy replacement
         // path when the bytes genuinely are not valid UTF-8.
@@ -533,7 +536,7 @@ mod tests {
     #[test]
     #[cfg(target_pointer_width = "64")]
     fn save_files_error_is_one_byte() {
-        assert_eq!(std::mem::size_of::<SaveFilesError>(), 1);
+        assert_eq!(mem::size_of::<SaveFilesError>(), 1);
     }
 
     #[test]
@@ -632,8 +635,8 @@ mod tests {
         .into_owned();
         let lossy_snap = lossy_scope.finish();
 
-        std::hint::black_box(&path);
-        std::hint::black_box(&lossy);
+        black_box(&path);
+        black_box(&lossy);
 
         assert_eq!(path.0, "/home/user/document.txt");
         assert_eq!(path.0, lossy);

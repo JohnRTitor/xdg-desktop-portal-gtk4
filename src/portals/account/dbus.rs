@@ -5,8 +5,8 @@ use {
         gui::UiProxy,
     },
     zbus::{
-        Connection, DeserializeDict, ObjectServer, OwnedObjectPath, SerializeDict, Type, fdo,
-        interface, message::Header,
+        Connection, DeserializeDict, ObjectPath, ObjectServer, OwnedObjectPath, SerializeDict,
+        Type, fdo, interface, message::Header,
     },
 };
 
@@ -150,7 +150,7 @@ async fn fetch_user_data() -> zbus::Result<(String, String, String)> {
 
     // AccountsService exposes user objects at paths like `/org/freedesktop/Accounts/User1000`.
     let path = format!("/org/freedesktop/Accounts/User{}", uid);
-    let obj_path = zbus::ObjectPath::try_from(path)?;
+    let obj_path = ObjectPath::try_from(path)?;
 
     let system_bus = Connection::system().await?;
     let user_proxy = UserProxy::builder(&system_bus)

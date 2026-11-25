@@ -6,8 +6,8 @@ use {
     },
     std::collections::HashMap,
     zbus::{
-        Dict, OwnedObjectPath, OwnedVariant, SerializeDict, Type, Variant, fdo, interface,
-        message::Header,
+        Dict, ObjectServer, OwnedObjectPath, OwnedVariant, SerializeDict, Type, Variant, fdo,
+        interface, message::Header,
     },
 };
 
@@ -192,7 +192,7 @@ impl UsbPortal {
         app_id: String,
         devices: Vec<UsbDeviceData>,
         options: HashMap<String, OwnedVariant>,
-        #[zbus(object_server)] server: &zbus::ObjectServer,
+        #[zbus(object_server)] server: &ObjectServer,
     ) -> Result<Response<UsbResults>, fdo::Error> {
         // Borrow the sender from the message; `run_request` only needs `&str`
         // and never moves it into a spawned task, so no owned String is needed.
@@ -253,7 +253,7 @@ mod tests {
         let mut props = HashMap::new();
         props.insert(
             "name".into(),
-            zbus::OwnedVariant::try_from(Variant::from("Test USB")).unwrap(),
+            OwnedVariant::try_from(Variant::from("Test USB")).unwrap(),
         );
 
         let results = UsbResults {
@@ -271,7 +271,12 @@ mod tests {
 
 #[cfg(test)]
 mod udev_property_tests {
-    use super::*;
+    use {
+        super::*,
+        serde::{Serialize, de::DeserializeOwned},
+        std::iter,
+        zbus::wire::{Endian, serialized::Context, to_bytes},
+    };
 
     fn owned(s: &str) -> OwnedVariant {
         OwnedVariant::try_from(Variant::from(s)).expect("str to OwnedVariant is infallible")
@@ -301,17 +306,17 @@ mod udev_property_tests {
         let source: HashMap<String, OwnedVariant> = outer
             .iter()
             .map(|(k, v)| ((*k).to_owned(), owned(v)))
-            .chain(std::iter::once(("properties".to_owned(), properties)))
+            .chain(iter::once(("properties".to_owned(), properties)))
             .collect();
         wire_round_trip(&source)
     }
 
     fn wire_round_trip<T>(value: &T) -> T
     where
-        T: zbus::Type + serde::Serialize + serde::de::DeserializeOwned,
+        T: Type + Serialize + DeserializeOwned,
     {
-        let ctxt = zbus::wire::serialized::Context::new(zbus::wire::Endian::Little, 0);
-        let encoded = zbus::wire::to_bytes(ctxt, value).expect("serialise");
+        let ctxt = Context::new(Endian::Little, 0);
+        let encoded = to_bytes(ctxt, value).expect("serialise");
         encoded.deserialize().expect("deserialise").0
     }
 

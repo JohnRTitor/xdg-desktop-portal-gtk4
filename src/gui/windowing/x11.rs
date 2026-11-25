@@ -2,6 +2,7 @@ use {
     gdk4_x11::{X11Display, X11Surface},
     gtk4::{
         Widget,
+        gdk::{Surface, Toplevel},
         prelude::{Cast, IsA, NativeExt, SurfaceExt, ToplevelExt, WidgetExt},
     },
 };
@@ -28,10 +29,10 @@ pub fn set_x11_parent(widget: &impl IsA<Widget>, parent_xid: u64) {
         return;
     };
 
-    let Some(toplevel) = surface.downcast_ref::<gtk4::gdk::Toplevel>() else {
+    let Some(toplevel) = surface.downcast_ref::<Toplevel>() else {
         tracing::debug!("Tried to set X11 parent, but surface is not a Toplevel");
         return;
     };
 
-    toplevel.set_transient_for(parent_surface.upcast_ref::<gtk4::gdk::Surface>());
+    toplevel.set_transient_for(parent_surface.upcast_ref::<Surface>());
 }

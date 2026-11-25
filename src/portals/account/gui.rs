@@ -1,13 +1,13 @@
 use {
     crate::gui::{PortalDispatcher, UiError, UiProxy},
     gtk4::{
-        Align, Box, Button, Entry, Image, Label,
+        Align, Box as GtkBox, Button, Entry, Image, Label, Orientation,
         glib::{self, MainContext},
         prelude::{BoxExt, ButtonExt, EditableExt, GtkWindowExt, WidgetExt},
     },
     rust_i18n::t,
     std::path::Path,
-    tokio::sync::oneshot::Receiver,
+    tokio::sync::oneshot::Receiver as OneshotReceiver,
 };
 
 pub struct AccountUi {
@@ -40,7 +40,7 @@ impl AccountUi {
         self,
         send: crate::gui::UiDispatcher<Result<AccountResult, UiError>>,
         context: MainContext,
-        close_on_close: Receiver<()>,
+        close_on_close: OneshotReceiver<()>,
     ) {
         let title = t!("share_information");
         let subtitle = if let Some(reason) = &self.reason {
@@ -67,7 +67,7 @@ impl AccountUi {
         subtitle_lbl.set_halign(Align::Start);
         dialog.content_area.append(&subtitle_lbl);
 
-        let hbox = Box::new(gtk4::Orientation::Horizontal, crate::gui::DEFAULT_SPACING);
+        let hbox = GtkBox::new(Orientation::Horizontal, crate::gui::DEFAULT_SPACING);
         hbox.set_margin_top(crate::gui::ELEMENT_MARGIN);
         dialog.content_area.append(&hbox);
 
@@ -79,7 +79,7 @@ impl AccountUi {
         image.set_pixel_size(64);
         hbox.append(&image);
 
-        let vbox = Box::new(gtk4::Orientation::Vertical, 6);
+        let vbox = GtkBox::new(Orientation::Vertical, 6);
         hbox.append(&vbox);
 
         let real_name_entry = Entry::new();

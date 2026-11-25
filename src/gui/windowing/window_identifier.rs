@@ -26,12 +26,12 @@ impl WindowIdentifier {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use {super::*, std::mem};
 
     #[test]
     #[cfg(target_pointer_width = "64")]
     fn wayland_handle_variant_is_smaller() {
-        assert_eq!(std::mem::size_of::<WindowIdentifier>(), 16);
+        assert_eq!(mem::size_of::<WindowIdentifier>(), 16);
     }
 
     #[test]

@@ -22,9 +22,15 @@
 use {
     crate::gui::UiProxy,
     thiserror::Error,
-    tokio::sync::oneshot::Sender,
-    zbus::{Connection, fdo::RequestNameFlags},
+    tokio::sync::oneshot::Sender as OneshotSender,
+    zbus::{
+        Connection,
+        fdo::{DBusProxy, RequestNameFlags},
+    },
 };
+
+#[cfg(test)]
+use std::mem;
 
 #[cfg(feature = "access")]
 use crate::portals::access::dbus::Access;
@@ -95,7 +101,7 @@ impl Portal {
     pub async fn create(
         proxy: &UiProxy,
         replace: bool,
-        name_lost_tx: Sender<()>,
+        name_lost_tx: OneshotSender<()>,
     ) -> Result<Self, PortalError> {
         let session = Connection::session()
             .await
@@ -162,7 +168,7 @@ impl Portal {
             session_manager.clone()
         ));
 
-        let mut name_lost_iterator = zbus::fdo::DBusProxy::new(&session)
+        let mut name_lost_iterator = DBusProxy::new(&session)
             .await
             .map_err(|e| PortalError::CreateDbusProxy(Box::new(e)))?
             .receive_name_lost()
@@ -206,6 +212,6 @@ mod tests {
     #[test]
     #[cfg(target_pointer_width = "64")]
     fn portal_error_boxes_the_source() {
-        assert_eq!(std::mem::size_of::<PortalError>(), 16);
+        assert_eq!(mem::size_of::<PortalError>(), 16);
     }
 }

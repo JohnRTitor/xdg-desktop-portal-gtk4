@@ -20,14 +20,14 @@ use {
         collections::HashMap,
         os::fd::OwnedFd,
         sync::{
-            Arc,
+            Arc, LazyLock,
             atomic::{AtomicU32, Ordering},
         },
         time::Duration,
     },
     tokio::sync::{
         Notify,
-        oneshot::{Sender, channel},
+        oneshot::{self, Sender as OneshotSender},
     },
     zbus::{
         Connection, Fd, ObjectPath, Variant, fdo, interface, message::Header,
@@ -35,8 +35,11 @@ use {
     },
 };
 
+#[cfg(test)]
+use {parking_lot::MutexGuard, std::error::Error};
+
 struct TransferRequest {
-    fd_sender: Sender<OwnedFd>,
+    fd_sender: OneshotSender<OwnedFd>,
 }
 
 /// Per-session serial counters, so one application cannot predict or collide
@@ -46,8 +49,8 @@ struct TransferRequest {
 /// `SetSelection`, and are removed by [`forget_session`] when the session is
 /// torn down. The key is an `Arc<str>` so teardown hands the same allocation to
 /// the removal path instead of rebuilding it.
-static SERIALS: std::sync::LazyLock<Mutex<HashMap<Arc<str>, Arc<AtomicU32>>>> =
-    std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
+static SERIALS: LazyLock<Mutex<HashMap<Arc<str>, Arc<AtomicU32>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 
 fn next_serial(session: &str) -> u32 {
     let mut counters = SERIALS.lock();
@@ -171,7 +174,7 @@ impl ClipboardPortal {
         let conn_clone = connection.clone();
         let sessions_clone = active_sessions.clone();
 
-        let (tx, rx) = channel();
+        let (tx, rx) = oneshot::channel();
 
         // Run GTK-specific initialization on the main thread and pipe the event stream back to Tokio
         let _ = proxy.sender.send(Box::new(move || {
@@ -399,7 +402,7 @@ impl ClipboardPortal {
         tracing::debug!("SetSelection called for session: {:?}", session_handle);
         let mimes = parse_mime_types(&options);
 
-        let (tx, rx) = channel();
+        let (tx, rx) = oneshot::channel();
         let _ = self.proxy.sender.send(Box::new(move || {
             let res = gtk_backend::claim_selection(mimes);
             let _ = tx.send(res);
@@ -550,7 +553,7 @@ impl ClipboardPortal {
 #[cfg(test)]
 mod tests {
     use {
-        super::*, crate::core::session_manager::SessionManager, gtk4::glib::MainContext,
+        super::*, crate::core::session_manager::SessionManager,
         tokio::sync::mpsc::unbounded_channel,
     };
 
@@ -578,7 +581,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_clipboard_version() -> Result<(), Box<dyn std::error::Error>> {
+    async fn test_clipboard_version() -> Result<(), Box<dyn Error>> {
         let Some(conn) = session_or_skip("test_clipboard_version").await else {
             return Ok(());
         };
@@ -589,7 +592,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_selection_write_invalid_serial() -> Result<(), Box<dyn std::error::Error>> {
+    async fn test_selection_write_invalid_serial() -> Result<(), Box<dyn Error>> {
         let Some(conn) = session_or_skip("test_selection_write_invalid_serial").await else {
             return Ok(());
         };
@@ -629,7 +632,7 @@ mod tests {
     /// given after starting the session."
     #[tokio::test]
     async fn an_unregistered_session_is_refused_by_every_session_method()
-    -> Result<(), Box<dyn std::error::Error>> {
+    -> Result<(), Box<dyn Error>> {
         let Some(conn) =
             session_or_skip("an_unregistered_session_is_refused_by_every_session_method").await
         else {
@@ -663,7 +666,7 @@ mod tests {
     /// The check must not break the ordinary flow: a registered handle still
     /// passes.
     #[tokio::test]
-    async fn a_registered_session_is_accepted() -> Result<(), Box<dyn std::error::Error>> {
+    async fn a_registered_session_is_accepted() -> Result<(), Box<dyn Error>> {
         let Some(conn) = session_or_skip("a_registered_session_is_accepted").await else {
             return Ok(());
         };
@@ -690,7 +693,7 @@ mod serial_tests {
     /// counters a test created, so a failing assertion cannot leak state into
     /// the next test.
     struct SerialTestGuard {
-        _lock: parking_lot::MutexGuard<'static, ()>,
+        _lock: MutexGuard<'static, ()>,
         sessions: Vec<&'static str>,
     }
 

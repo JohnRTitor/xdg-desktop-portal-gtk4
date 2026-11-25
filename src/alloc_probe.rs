@@ -18,6 +18,9 @@ use std::{
     marker::PhantomData,
 };
 
+#[cfg(test)]
+use std::hint::black_box;
+
 /// The allocator used by the crate's unit-test binary.
 ///
 /// Not installed outside `cfg(test)`; see `lib.rs`.
@@ -155,19 +158,19 @@ mod tests {
     #[test]
     fn scope_counts_allocation_and_ignores_outside_work() {
         let before_scope = Vec::<u8>::with_capacity(64);
-        std::hint::black_box(&before_scope);
+        black_box(&before_scope);
 
         let scope = AllocScope::start();
         let inside_scope = Vec::<u8>::with_capacity(4096);
         let snap = scope.finish();
-        std::hint::black_box(&inside_scope);
+        black_box(&inside_scope);
 
         assert_eq!(snap.count, 1, "exactly one allocation for the buffer");
         assert!(snap.bytes >= 4096, "the buffer's bytes must be counted");
 
         // Work after the scope must not be attributed to it.
         let after = Vec::<u8>::with_capacity(8192);
-        std::hint::black_box(&after);
+        black_box(&after);
         let snap = AllocScope::start().finish();
         assert_eq!(
             snap.count, 0,

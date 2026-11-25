@@ -1,9 +1,9 @@
 use {
-    gtk4::{gdk, gio, glib},
-    std::{cell::RefCell, os::fd::OwnedFd},
+    gtk4::{gdk, gio, glib, subclass::prelude::ObjectSubclassIsExt},
+    std::{cell::RefCell, fs::File, future::Future, os::fd::OwnedFd, pin::Pin},
     tokio::sync::{
-        mpsc::Sender as MpscSender,
-        oneshot::{Sender as OneshotSender, channel},
+        mpsc,
+        oneshot::{self, Sender as OneshotSender},
     },
 };
 
@@ -12,7 +12,7 @@ use super::gtk_backend::MimeList;
 mod imp {
     use {super::*, gtk4::gdk::subclass::prelude::*};
 
-    pub type FdRequestSender = MpscSender<(Box<str>, OneshotSender<OwnedFd>)>;
+    pub type FdRequestSender = mpsc::Sender<(Box<str>, OneshotSender<OwnedFd>)>;
 
     #[derive(Default)]
     pub struct PortalContentProvider {
@@ -47,8 +47,7 @@ mod imp {
             mime_type: &str,
             stream: &gio::OutputStream,
             _io_priority: glib::Priority,
-        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), glib::Error>> + 'static>>
-        {
+        ) -> Pin<Box<dyn Future<Output = Result<(), glib::Error>> + 'static>> {
             let mime_type: Box<str> = mime_type.into();
             let out_stream = stream.clone();
 
@@ -63,7 +62,7 @@ mod imp {
                     ));
                 };
 
-                let (fd_tx, fd_rx) = channel();
+                let (fd_tx, fd_rx) = oneshot::channel();
 
                 if tx.send((mime_type, fd_tx)).await.is_err() {
                     return Err(glib::Error::new(
@@ -79,7 +78,7 @@ mod imp {
                     )
                 })?;
 
-                let file = std::fs::File::from(fd);
+                let file = File::from(fd);
                 let in_stream = gio::ReadInputStream::new(file);
 
                 use gio::prelude::*;
@@ -107,7 +106,7 @@ glib::wrapper! {
 impl PortalContentProvider {
     pub fn new(mimes: MimeList, request_tx: imp::FdRequestSender) -> Self {
         let obj: Self = glib::Object::new();
-        let imp = gtk4::subclass::prelude::ObjectSubclassIsExt::imp(&obj);
+        let imp = ObjectSubclassIsExt::imp(&obj);
         *imp.mimes.borrow_mut() = mimes;
         *imp.request_tx.borrow_mut() = Some(request_tx);
         obj

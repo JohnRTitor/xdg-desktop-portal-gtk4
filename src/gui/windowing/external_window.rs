@@ -5,9 +5,10 @@ use {
     gdk4_wayland::WaylandDisplay,
     gdk4_x11::X11Display,
     gtk4::{
-        Widget,
+        Widget, Window, gdk,
         prelude::{Cast, GtkWindowExt, IsA, WidgetExt},
     },
+    std::cell::RefCell,
 };
 
 /// Configures the window to act as a proper dialog for the requesting application.
@@ -18,7 +19,7 @@ use {
 ///
 /// Note: This method must be called **before** the widget is realized if the window
 /// display needs to be changed (e.g., for the XWayland fallback).
-pub fn setup_window<W: IsA<gtk4::Window> + IsA<Widget>>(
+pub fn setup_window<W: IsA<Window> + IsA<Widget>>(
     window: &W,
     parent_handle: &str,
     activation_token: Option<&str>,
@@ -39,7 +40,7 @@ pub fn setup_window<W: IsA<gtk4::Window> + IsA<Widget>>(
         return;
     };
 
-    let Some(default_display) = gtk4::gdk::Display::default() else {
+    let Some(default_display) = gdk::Display::default() else {
         tracing::warn!("No default display found for window setup");
         return;
     };
@@ -67,7 +68,7 @@ pub fn setup_window<W: IsA<gtk4::Window> + IsA<Widget>>(
                 // we open an X11 display explicitly so the dialog runs as an XWayland client,
                 // so the transient-for hint can be set through GDK's X11 backend.
                 thread_local! {
-                    static X11_FALLBACK_DISPLAY: std::cell::RefCell<Option<X11Display>> = const { std::cell::RefCell::new(None) };
+                    static X11_FALLBACK_DISPLAY: RefCell<Option<X11Display>> = const { RefCell::new(None) };
                 }
 
                 X11_FALLBACK_DISPLAY.with(|cache| {

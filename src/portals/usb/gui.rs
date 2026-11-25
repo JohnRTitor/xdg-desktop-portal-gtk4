@@ -2,13 +2,13 @@ use {
     crate::gui::{PortalDispatcher, UiError, UiProxy},
     gtk4::{
         Align, Box as GtkBox, Button, CheckButton, Label, ListBox, ListBoxRow, Orientation,
-        ScrolledWindow,
+        PolicyType, ScrolledWindow, SelectionMode,
         glib::{self, MainContext},
         prelude::*,
     },
     rust_i18n::t,
     std::{collections::HashMap, rc::Rc},
-    tokio::sync::oneshot::Receiver,
+    tokio::sync::oneshot::Receiver as OneshotReceiver,
     zbus::OwnedVariant,
 };
 
@@ -46,7 +46,7 @@ impl UsbUi {
         self,
         send: crate::gui::UiDispatcher<Result<UsbResult, UiError>>,
         context: MainContext,
-        close_on_close: Receiver<()>,
+        close_on_close: OneshotReceiver<()>,
     ) {
         let dialog = crate::gui::dialog::CustomDialog::new(&t!("allow_usb_access"), true);
 
@@ -63,14 +63,14 @@ impl UsbUi {
         dialog.content_area.append(&label);
 
         let scrolled_window = ScrolledWindow::builder()
-            .hscrollbar_policy(gtk4::PolicyType::Never)
-            .vscrollbar_policy(gtk4::PolicyType::Automatic)
+            .hscrollbar_policy(PolicyType::Never)
+            .vscrollbar_policy(PolicyType::Automatic)
             .vexpand(true)
             .build();
         dialog.content_area.append(&scrolled_window);
 
         let list_box = ListBox::new();
-        list_box.set_selection_mode(gtk4::SelectionMode::None);
+        list_box.set_selection_mode(SelectionMode::None);
         scrolled_window.set_child(Some(&list_box));
 
         let checks: Rc<Vec<CheckButton>> =

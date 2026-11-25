@@ -1,16 +1,19 @@
 use {
     crate::gui::{PortalDispatcher, UiError, UiProxy},
     gtk4::{
-        Align, Box as GtkBox, Button, Image, Label, ListBox, ListBoxRow, Orientation,
-        ScrolledWindow,
+        Align, Box as GtkBox, Button, Image, Label, ListBox, ListBoxRow, Orientation, PolicyType,
+        ScrolledWindow, SelectionMode,
         gio::{self, AppInfo},
         glib::{self, GString, MainContext},
         prelude::*,
     },
     rust_i18n::t,
     std::collections::HashSet,
-    tokio::sync::{mpsc::Receiver as MpscReceiver, oneshot::Receiver as OneshotReceiver},
+    tokio::sync::{mpsc, oneshot::Receiver as OneshotReceiver},
 };
+
+#[cfg(test)]
+use std::hint::black_box;
 
 pub struct AppChooserUi {
     pub app_id: String,
@@ -31,7 +34,7 @@ impl AppChooserUi {
     pub async fn run(
         self,
         proxy: &UiProxy,
-        update_receiver: MpscReceiver<Vec<String>>,
+        update_receiver: mpsc::Receiver<Vec<String>>,
     ) -> Result<AppChooserResult, UiError> {
         crate::gui::run_ui_task(
             proxy,
@@ -48,7 +51,7 @@ impl AppChooserUi {
         send: crate::gui::UiDispatcher<Result<AppChooserResult, UiError>>,
         context: MainContext,
         close_on_close: OneshotReceiver<()>,
-        mut update_receiver: MpscReceiver<Vec<String>>,
+        mut update_receiver: mpsc::Receiver<Vec<String>>,
     ) {
         let dialog = crate::gui::dialog::CustomDialog::new(&self.title, true);
 
@@ -69,14 +72,14 @@ impl AppChooserUi {
         dialog.content_area.append(&label);
 
         let scrolled_window = ScrolledWindow::builder()
-            .hscrollbar_policy(gtk4::PolicyType::Never)
-            .vscrollbar_policy(gtk4::PolicyType::Automatic)
+            .hscrollbar_policy(PolicyType::Never)
+            .vscrollbar_policy(PolicyType::Automatic)
             .vexpand(true)
             .build();
         dialog.content_area.append(&scrolled_window);
 
         let list_box = ListBox::new();
-        list_box.set_selection_mode(gtk4::SelectionMode::Single);
+        list_box.set_selection_mode(SelectionMode::Single);
         scrolled_window.set_child(Some(&list_box));
 
         let all_apps = AppInfo::all();
@@ -135,7 +138,7 @@ impl AppChooserUi {
                 let res = if let Some(row) = list_box_clone.selected_row() {
                     let launch_context = gio::AppLaunchContext::new();
                     let token = launch_context
-                        .startup_notify_id(None::<&gio::AppInfo>, &[])
+                        .startup_notify_id(None::<&AppInfo>, &[])
                         .map(|s| s.into());
                     // The contract asks for the desktop file id *without* the
                     // `.desktop` suffix, so callers can use it directly as an
@@ -524,12 +527,12 @@ mod row_tests {
         let copy_scope = crate::alloc_probe::AllocScope::start();
         let copied: String = owned.to_string();
         let copy_snap = copy_scope.finish();
-        std::hint::black_box(&copied);
+        black_box(&copied);
 
         let move_scope = crate::alloc_probe::AllocScope::start();
         let moved: GString = owned;
         let move_snap = move_scope.finish();
-        std::hint::black_box(&moved);
+        black_box(&moved);
 
         assert_eq!(copied, "org.gnome.TextEditor.desktop");
         assert_eq!(
@@ -554,8 +557,8 @@ mod row_tests {
         let id = row.id.as_str();
         let name = row.name.as_str();
         let snap = scope.finish();
-        std::hint::black_box(id);
-        std::hint::black_box(name);
+        black_box(id);
+        black_box(name);
 
         assert_eq!(id, "a.desktop");
         assert_eq!(name, "Alpha");

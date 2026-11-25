@@ -26,17 +26,25 @@ use {
     parking_lot::Mutex,
     std::{
         collections::{HashMap, HashSet},
-        fs,
+        env,
+        ffi::OsStr,
+        fs, io, mem,
         os::unix::fs::PermissionsExt,
         path::{Path, PathBuf},
-        process::Command,
+        process::{Command, Stdio},
+        str::from_utf8,
         sync::{
             Arc, LazyLock,
             atomic::{AtomicBool, Ordering},
         },
-        time::{Duration, UNIX_EPOCH},
+        thread,
+        time::{Duration, Instant, UNIX_EPOCH},
     },
+    tokio::sync::mpsc,
 };
+
+#[cfg(test)]
+use std::{hint::black_box, process, sync::mpsc as syncmpsc};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ThumbnailSize {
@@ -92,11 +100,11 @@ pub fn md5_hex(data: &[u8]) -> String {
 
 /// Get the FreeDesktop thumbnail cache directory for the specified size.
 pub fn get_thumbnail_cache_dir(size: ThumbnailSize) -> Option<PathBuf> {
-    let base = std::env::var_os("XDG_CACHE_HOME")
+    let base = env::var_os("XDG_CACHE_HOME")
         .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".cache")))
+        .or_else(|| env::var_os("HOME").map(|h| PathBuf::from(h).join(".cache")))
         .and_then(|p| fs::create_dir_all(&p).ok().map(|_| p))
-        .unwrap_or_else(std::env::temp_dir);
+        .unwrap_or_else(env::temp_dir);
     let dir = base.join("thumbnails").join(size.dir_name());
     let _ = fs::create_dir_all(&dir);
     // FreeDesktop thumbnail spec mandates 0700 on the cache directories.
@@ -203,7 +211,7 @@ fn is_png_data_metadata_valid(
                     match keyword {
                         b"Thumb::URI" => found_uri = text == expected_uri.as_bytes(),
                         b"Thumb::MTime" => {
-                            if let Ok(s) = std::str::from_utf8(text) {
+                            if let Ok(s) = from_utf8(text) {
                                 let secs = s.split('.').next().and_then(|s| s.parse::<u64>().ok());
                                 found_mtime = secs
                                     .map(|s| s.abs_diff(expected_mtime_secs) <= 1)
@@ -322,7 +330,7 @@ pub fn save_thumbnail_file(
     uri: &str,
     file_path: &Path,
     target_path: &Path,
-) -> std::io::Result<()> {
+) -> io::Result<()> {
     let meta = fs::metadata(file_path)?;
     let mtime = meta
         .modified()?
@@ -338,7 +346,7 @@ pub fn save_thumbnail_file(
 
     let parent = target_path
         .parent()
-        .ok_or_else(|| std::io::Error::other("no target parent directory"))?;
+        .ok_or_else(|| io::Error::other("no target parent directory"))?;
     let _ = fs::create_dir_all(parent);
     let _ = fs::set_permissions(parent, fs::Permissions::from_mode(0o700));
 
@@ -386,11 +394,11 @@ fn is_executable_file(path: &Path) -> bool {
 }
 
 /// Search the given `PATH` entries for an executable named `cmd`.
-fn is_executable_in_path_dirs(cmd: &str, path_var: Option<&std::ffi::OsStr>) -> bool {
+fn is_executable_in_path_dirs(cmd: &str, path_var: Option<&OsStr>) -> bool {
     let Some(path_var) = path_var else {
         return false;
     };
-    std::env::split_paths(path_var).any(|dir| is_executable_file(&dir.join(cmd)))
+    env::split_paths(path_var).any(|dir| is_executable_file(&dir.join(cmd)))
 }
 
 /// Resolve a thumbnailer by absolute path, relative path, or `PATH` lookup.
@@ -399,7 +407,7 @@ fn is_executable_or_in_path(cmd: &str) -> bool {
     if p.is_absolute() || cmd.contains('/') {
         return is_executable_file(p);
     }
-    is_executable_in_path_dirs(cmd, std::env::var_os("PATH").as_deref())
+    is_executable_in_path_dirs(cmd, env::var_os("PATH").as_deref())
 }
 
 /// Sort the MIME index, tie-breaking on spec index (discovery order) so the
@@ -426,14 +434,14 @@ impl ThumbnailerRegistry {
         let mut specs = Vec::new();
         let mut search_dirs = Vec::new();
 
-        if let Some(data_home) = std::env::var_os("XDG_DATA_HOME").map(PathBuf::from) {
+        if let Some(data_home) = env::var_os("XDG_DATA_HOME").map(PathBuf::from) {
             search_dirs.push(data_home.join("thumbnailers"));
-        } else if let Some(home) = std::env::var_os("HOME").map(PathBuf::from) {
+        } else if let Some(home) = env::var_os("HOME").map(PathBuf::from) {
             search_dirs.push(home.join(".local/share/thumbnailers"));
         }
 
-        if let Some(data_dirs) = std::env::var_os("XDG_DATA_DIRS") {
-            for dir in std::env::split_paths(&data_dirs) {
+        if let Some(data_dirs) = env::var_os("XDG_DATA_DIRS") {
+            for dir in env::split_paths(&data_dirs) {
                 search_dirs.push(dir.join("thumbnailers"));
             }
         }
@@ -592,7 +600,7 @@ fn split_command(cmd: &str) -> Vec<String> {
         }
         if ch.is_whitespace() && !in_single && !in_double {
             if !cur.is_empty() {
-                args.push(std::mem::take(&mut cur));
+                args.push(mem::take(&mut cur));
             }
             continue;
         }
@@ -641,14 +649,14 @@ fn execute_thumbnailer_command(
         cmd.arg(substituted);
     }
 
-    cmd.stdout(std::process::Stdio::null());
-    cmd.stderr(std::process::Stdio::null());
+    cmd.stdout(Stdio::null());
+    cmd.stderr(Stdio::null());
 
     let mut child = cmd
         .spawn()
         .map_err(|e| format!("Failed to spawn {program}: {e}"))?;
 
-    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    let deadline = Instant::now() + Duration::from_secs(10);
     loop {
         if cancel.is_cancelled() {
             let _ = child.kill();
@@ -663,12 +671,12 @@ fn execute_thumbnailer_command(
                     Err(format!("{program} exited with status {status}"))
                 };
             }
-            Ok(None) if std::time::Instant::now() >= deadline => {
+            Ok(None) if Instant::now() >= deadline => {
                 let _ = child.kill();
                 let _ = child.wait();
                 return Err(format!("{program} timed out after 10s"));
             }
-            Ok(None) => std::thread::sleep(Duration::from_millis(20)),
+            Ok(None) => thread::sleep(Duration::from_millis(20)),
             Err(e) => return Err(format!("Failed to wait for {program}: {e}")),
         }
     }
@@ -676,15 +684,15 @@ fn execute_thumbnailer_command(
 
 /// Return a unique, private directory to hold intermediate thumbnailer output.
 fn private_runtime_dir() -> Option<PathBuf> {
-    let base = std::env::var_os("XDG_RUNTIME_DIR")
+    let base = env::var_os("XDG_RUNTIME_DIR")
         .map(PathBuf::from)
         .or_else(|| {
-            std::env::var_os("XDG_CACHE_HOME")
+            env::var_os("XDG_CACHE_HOME")
                 .map(PathBuf::from)
-                .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".cache")))
+                .or_else(|| env::var_os("HOME").map(|h| PathBuf::from(h).join(".cache")))
         })
         .and_then(|p| fs::create_dir_all(&p).ok().map(|_| p))
-        .unwrap_or_else(std::env::temp_dir);
+        .unwrap_or_else(env::temp_dir);
     let dir = base.join("xdg-desktop-portal-gtk4");
     fs::create_dir_all(&dir).ok()?;
     let _ = fs::set_permissions(&dir, fs::Permissions::from_mode(0o700));
@@ -1014,8 +1022,8 @@ fn generate_thumbnail_cancellable(
                     file_path.to_str().unwrap_or_default(),
                     &prefix_str,
                 ]);
-                cmd.stdout(std::process::Stdio::null());
-                cmd.stderr(std::process::Stdio::null());
+                cmd.stdout(Stdio::null());
+                cmd.stderr(Stdio::null());
 
                 let produced_png = PathBuf::from(format!("{prefix_str}.png"));
                 let Ok(mut child) = cmd.spawn() else {
@@ -1023,7 +1031,7 @@ fn generate_thumbnail_cancellable(
                     let _ = fs::remove_file(&produced_png);
                     continue;
                 };
-                let deadline = std::time::Instant::now() + Duration::from_secs(10);
+                let deadline = Instant::now() + Duration::from_secs(10);
                 let status = loop {
                     if cancel.is_cancelled() {
                         let _ = child.kill();
@@ -1034,14 +1042,14 @@ fn generate_thumbnail_cancellable(
                     }
                     match child.try_wait() {
                         Ok(Some(status)) => break status,
-                        Ok(None) if std::time::Instant::now() >= deadline => {
+                        Ok(None) if Instant::now() >= deadline => {
                             let _ = child.kill();
                             let _ = child.wait();
                             let _ = fs::remove_file(&produced_png);
                             let _ = fs::remove_file(&prefix);
                             return Err("pdftoppm timed out after 10s".to_string());
                         }
-                        Ok(None) => std::thread::sleep(Duration::from_millis(20)),
+                        Ok(None) => thread::sleep(Duration::from_millis(20)),
                         Err(e) => {
                             let _ = fs::remove_file(&produced_png);
                             let _ = fs::remove_file(&prefix);
@@ -1095,10 +1103,10 @@ fn generate_thumbnail_cancellable(
                     "-s",
                     &size.pixel_size().to_string(),
                 ]);
-                cmd.stdout(std::process::Stdio::null());
-                cmd.stderr(std::process::Stdio::null());
+                cmd.stdout(Stdio::null());
+                cmd.stderr(Stdio::null());
                 if let Ok(mut child) = cmd.spawn() {
-                    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+                    let deadline = Instant::now() + Duration::from_secs(10);
                     let status = loop {
                         // glycin is spawned inline here rather than through
                         // `execute_thumbnailer_command`, so this loop polls
@@ -1110,12 +1118,12 @@ fn generate_thumbnail_cancellable(
                         }
                         match child.try_wait() {
                             Ok(Some(status)) => break Some(status),
-                            Ok(None) if std::time::Instant::now() >= deadline => {
+                            Ok(None) if Instant::now() >= deadline => {
                                 let _ = child.kill();
                                 let _ = child.wait();
                                 break None;
                             }
-                            Ok(None) => std::thread::sleep(Duration::from_millis(20)),
+                            Ok(None) => thread::sleep(Duration::from_millis(20)),
                             Err(_) => break None,
                         }
                     };
@@ -1187,7 +1195,7 @@ fn generate_thumbnail_cancellable(
     if trigger_tumbler_dbus(&uri, mime) {
         for _ in 0..10 {
             check_cancelled(cancel)?;
-            std::thread::sleep(Duration::from_millis(50));
+            thread::sleep(Duration::from_millis(50));
             let generated = valid_generated_thumbnails(
                 target_normal.as_ref(),
                 target_large.as_ref(),
@@ -1424,7 +1432,7 @@ struct ViewWatcher {
     attached_models: Mutex<HashSet<usize>>,
     attached_stacks: Mutex<HashSet<usize>>,
     cancel: ThumbnailCancel,
-    tx: tokio::sync::mpsc::UnboundedSender<(PathBuf, String, GeneratedThumbnails)>,
+    tx: mpsc::UnboundedSender<(PathBuf, String, GeneratedThumbnails)>,
 }
 
 impl ViewWatcher {
@@ -1550,8 +1558,7 @@ pub fn setup_dialog_thumbnailer(
         schedule_trim();
     });
 
-    let (tx, mut rx) =
-        tokio::sync::mpsc::unbounded_channel::<(PathBuf, String, GeneratedThumbnails)>();
+    let (tx, mut rx) = mpsc::unbounded_channel::<(PathBuf, String, GeneratedThumbnails)>();
 
     let dialog_weak = dialog.downgrade();
     let cancel_loop = cancel.clone();
@@ -1663,7 +1670,7 @@ mod tests {
 
     #[test]
     fn executable_lookup_requires_an_executable_file() {
-        let dir = std::env::temp_dir().join(format!("xdp-thumb-exec-{}", std::process::id()));
+        let dir = env::temp_dir().join(format!("xdp-thumb-exec-{}", process::id()));
         let _ = fs::create_dir_all(&dir);
         let plain = dir.join("plain-thumbnailer");
         fs::write(&plain, b"script").unwrap();
@@ -1688,14 +1695,14 @@ mod tests {
     #[cfg(target_pointer_width = "64")]
     fn thumbnail_cancel_is_one_arc_pointer() {
         // Clone-on-write token: a single Arc pointer, so cloning stays cheap.
-        assert_eq!(std::mem::size_of::<ThumbnailCancel>(), 8);
+        assert_eq!(mem::size_of::<ThumbnailCancel>(), 8);
     }
 
     #[test]
     fn thumbnail_size_is_two_bytes() {
         // Fieldless enum with a 256 discriminant already uses u16 as its default
         // representation; repr(u8) is impossible here (256 does not fit).
-        assert_eq!(std::mem::size_of::<ThumbnailSize>(), 2);
+        assert_eq!(mem::size_of::<ThumbnailSize>(), 2);
     }
 
     #[test]
@@ -1754,7 +1761,7 @@ mod tests {
         let scope = crate::alloc_probe::AllocScope::start();
         let out = escape_uri_brackets(plain);
         let snap = scope.finish();
-        std::hint::black_box(&out);
+        black_box(&out);
         assert_eq!(out, "file:///tmp/no_brackets.png");
         assert_eq!(
             snap.count, 0,
@@ -1767,7 +1774,7 @@ mod tests {
         let scope = crate::alloc_probe::AllocScope::start();
         let out = escape_uri_brackets(bracketed);
         let snap = scope.finish();
-        std::hint::black_box(&out);
+        black_box(&out);
         assert_eq!(out, "file:///tmp/a%5B1%5D.png");
         assert!(snap.count >= 2, "encoding must allocate: {snap:?}");
     }
@@ -1795,7 +1802,7 @@ mod tests {
         let optimized = file_to_uri(path);
         let optimized_snap = optimized_scope.finish();
 
-        std::hint::black_box((&baseline, &optimized));
+        black_box((&baseline, &optimized));
         assert_eq!(baseline, optimized);
         assert_eq!(
             baseline_snap.count,
@@ -1849,7 +1856,7 @@ mod tests {
         let scope = crate::alloc_probe::AllocScope::start();
         let crc = png_crc32(data);
         let snap = scope.finish();
-        std::hint::black_box((warm, crc));
+        black_box((warm, crc));
         assert_eq!(snap.count, 0, "table CRC must not allocate: {snap:?}");
     }
 
@@ -1870,7 +1877,7 @@ mod tests {
         let scope = crate::alloc_probe::AllocScope::start();
         let injected = inject_png_metadata(&png, uri, 123_456_789, 4096).unwrap();
         let snap = scope.finish();
-        std::hint::black_box(&injected);
+        black_box(&injected);
 
         assert!(is_png_data_metadata_valid(&injected, uri, 123_456_789));
         assert_eq!(
@@ -1957,7 +1964,7 @@ mod tests {
 
     #[test]
     fn test_generate_thumbnail_image() {
-        let test_dir = std::env::temp_dir().join("portal_test_thumb_dir");
+        let test_dir = env::temp_dir().join("portal_test_thumb_dir");
         let _ = fs::create_dir_all(&test_dir);
         let img_path = test_dir.join("sample.png");
 
@@ -2013,7 +2020,7 @@ mod tests {
 
     #[test]
     fn cancelled_external_thumbnailer_is_not_spawned_or_is_killed() {
-        let test_dir = std::env::temp_dir().join("portal_test_cancelled_external");
+        let test_dir = env::temp_dir().join("portal_test_cancelled_external");
         let _ = fs::create_dir_all(&test_dir);
         let marker = test_dir.join("spawned");
         let _ = fs::remove_file(&marker);
@@ -2039,11 +2046,11 @@ mod tests {
         // Cancellation while the command is running must kill it promptly.
         let cancel = ThumbnailCancel::new();
         let cancel_later = cancel.clone();
-        let canceller = std::thread::spawn(move || {
-            std::thread::sleep(Duration::from_millis(100));
+        let canceller = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(100));
             cancel_later.cancel();
         });
-        let started = std::time::Instant::now();
+        let started = Instant::now();
         let err = execute_thumbnailer_command(
             "sleep 30",
             Path::new("/nonexistent/input.png"),
@@ -2066,7 +2073,7 @@ mod tests {
 
     #[test]
     fn cancelled_queue_does_not_generate_a_thumbnail() {
-        let test_dir = std::env::temp_dir().join("portal_test_cancelled_queue");
+        let test_dir = env::temp_dir().join("portal_test_cancelled_queue");
         let _ = fs::create_dir_all(&test_dir);
         let img_path = test_dir.join("cancelled.png");
         let minimal_png: [u8; 67] = [
@@ -2085,7 +2092,7 @@ mod tests {
         let cancel = ThumbnailCancel::new();
         cancel.cancel();
         let coordinator = ThumbnailCoordinator::new();
-        let (tx, rx) = std::sync::mpsc::channel();
+        let (tx, rx) = syncmpsc::channel();
         coordinator.queue_thumbnail(
             img_path.clone(),
             Some("image/png".into()),
@@ -2095,7 +2102,7 @@ mod tests {
             },
         );
 
-        std::thread::sleep(Duration::from_millis(100));
+        thread::sleep(Duration::from_millis(100));
         assert!(
             rx.try_recv().is_err(),
             "cancelled work must not invoke its completion callback"
@@ -2111,7 +2118,7 @@ mod tests {
 
     #[test]
     fn test_generate_thumbnail_pdf_fixture() {
-        let test_dir = std::env::temp_dir().join("portal_test_pdf_dir");
+        let test_dir = env::temp_dir().join("portal_test_pdf_dir");
         let _ = fs::create_dir_all(&test_dir);
         let pdf_path = test_dir.join("sample.pdf");
 
@@ -2132,7 +2139,7 @@ mod tests {
 
     #[test]
     fn cancelled_temp_cleanup_removes_file_and_returns_cancelled() {
-        let test_dir = std::env::temp_dir().join("portal_test_temp_cleanup");
+        let test_dir = env::temp_dir().join("portal_test_temp_cleanup");
         let _ = fs::create_dir_all(&test_dir);
         let temp = test_dir.join("stale-thumbnailer-output.png");
         fs::write(&temp, b"not really a png").unwrap();
@@ -2156,7 +2163,7 @@ mod tests {
 
     #[test]
     fn generated_thumbnails_keep_both_tiers_distinct() {
-        let test_dir = std::env::temp_dir().join("portal_test_both_tiers");
+        let test_dir = env::temp_dir().join("portal_test_both_tiers");
         let _ = fs::create_dir_all(&test_dir);
         let src = test_dir.join("source.png");
         let minimal_png: [u8; 67] = [

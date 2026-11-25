@@ -17,6 +17,9 @@ use {
     zbus::{Connection, fdo::DBusProxy},
 };
 
+#[cfg(test)]
+use std::mem;
+
 #[derive(Debug, thiserror::Error)]
 pub enum SessionError {
     #[error("Too many sessions for app {app_id}")]
@@ -290,7 +293,7 @@ mod tests {
     #[test]
     #[cfg(target_pointer_width = "64")]
     fn tracked_request_is_compact() {
-        assert_eq!(std::mem::size_of::<TrackedRequest>(), 40);
+        assert_eq!(mem::size_of::<TrackedRequest>(), 40);
     }
 
     #[tokio::test]

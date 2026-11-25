@@ -1,5 +1,10 @@
 use {
-    tokio::sync::oneshot::{Receiver, Sender, channel},
+    std::{
+        env, process,
+        sync::mpsc::{self, Sender as SyncMpscSender},
+        thread,
+    },
+    tokio::sync::oneshot::{self, Receiver as OneshotReceiver, Sender as OneshotSender},
     xdg_desktop_portal_gtk4::{
         core::Portal,
         gui::{Ui, UiProxy},
@@ -11,9 +16,9 @@ use {
 async fn portal_worker(
     proxy: UiProxy,
     replace: bool,
-    tx: std::sync::mpsc::Sender<Result<(), xdg_desktop_portal_gtk4::core::PortalError>>,
-    shutdown_rx: Receiver<()>,
-    name_lost_tx: Sender<()>,
+    tx: SyncMpscSender<Result<(), xdg_desktop_portal_gtk4::core::PortalError>>,
+    shutdown_rx: OneshotReceiver<()>,
+    name_lost_tx: OneshotSender<()>,
 ) {
     let portal = match Portal::create(&proxy, replace, name_lost_tx).await {
         Ok(p) => p,
@@ -40,7 +45,7 @@ fn main() {
     logging::init();
     init_i18n();
 
-    let replace = std::env::args().any(|arg| arg == "--replace");
+    let replace = env::args().any(|arg| arg == "--replace");
 
     // We instantiate the UI state first, which sets up the GTK MainContext and channel receivers.
     // This allows us to pass a thread-safe Proxy to the D-Bus services.
@@ -56,13 +61,13 @@ fn main() {
     // acquisition and object registration on D-Bus succeed *before* we start the
     // GTK main loop. This prevents a race condition where the portal could claim
     // readiness to the desktop environment before it is actually listening.
-    let (tx, rx) = std::sync::mpsc::channel();
+    let (tx, rx) = mpsc::channel();
     let proxy = ui.proxy().clone();
 
-    let (shutdown_tx, shutdown_rx) = channel::<()>();
-    let (name_lost_tx, name_lost_rx) = channel::<()>();
+    let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
+    let (name_lost_tx, name_lost_rx) = oneshot::channel::<()>();
 
-    std::thread::Builder::new()
+    thread::Builder::new()
         .name("tokio-zbus".into())
         .spawn(move || {
             portal_worker(proxy, replace, tx, shutdown_rx, name_lost_tx);
@@ -72,14 +77,14 @@ fn main() {
     match rx.recv() {
         Ok(Err(e)) => {
             tracing::error!("Could not create the portal: {}", e);
-            std::process::exit(1);
+            process::exit(1);
         }
         Err(e) => {
             tracing::error!(
                 "Portal background thread exited unexpectedly before initialization completed: {}",
                 e
             );
-            std::process::exit(1);
+            process::exit(1);
         }
         Ok(Ok(())) => {}
     }

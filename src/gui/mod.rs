@@ -7,7 +7,12 @@
 //! D-Bus request handlers (which run on Tokio background threads) use [`run_ui_task`] to
 //! safely dispatch work to the GTK main loop and await the result.
 
-use tokio::sync::oneshot::{Receiver, Sender, channel};
+use {
+    gtk4::glib::MainContext,
+    std::{cell::RefCell, rc::Rc},
+    tokio::sync::oneshot::{self, Receiver as OneshotReceiver, Sender as OneshotSender},
+};
+
 pub mod dialog;
 pub mod error;
 pub mod ui;
@@ -25,7 +30,7 @@ pub trait PortalDispatcher<T> {
     fn dispatch(&self, data: T) -> Result<(), T>;
 }
 
-pub type UiDispatcher<T> = std::rc::Rc<std::cell::RefCell<Option<Sender<T>>>>;
+pub type UiDispatcher<T> = Rc<RefCell<Option<OneshotSender<T>>>>;
 
 impl<T> PortalDispatcher<T> for UiDispatcher<T> {
     fn dispatch(&self, data: T) -> Result<(), T> {
@@ -41,7 +46,6 @@ impl<T> PortalDispatcher<T> for UiDispatcher<T> {
     }
 }
 
-use gtk4::glib::MainContext;
 pub use {
     error::UiError,
     ui::{Ui, UiProxy},
@@ -57,17 +61,17 @@ pub use {
 /// This function abstracts the cross-thread communication between Tokio and GTK. It:
 /// 1. Takes a closure `f` that will run on the GTK main thread.
 /// 2. Schedules `f` to run on GTK via the `UiProxy` sender channel.
-/// 3. Passes a `Sender` to `f` so it can send the result back to Tokio.
-/// 4. Passes a `Receiver` to `f` so it can be notified if the request is cancelled (`close_on_close`).
+/// 3. Passes an `OneshotSender` to `f` so it can send the result back to Tokio.
+/// 4. Passes an `OneshotReceiver` to `f` so it can be notified if the request is cancelled (`close_on_close`).
 /// 5. Suspends the current Tokio task until GTK replies.
 pub async fn run_ui_task<T, E, F, C>(proxy: &UiProxy, f: F, on_closed: C) -> Result<T, E>
 where
     T: Send + 'static,
     E: Send + 'static,
-    F: FnOnce(UiDispatcher<Result<T, E>>, MainContext, Receiver<()>) + Send + 'static,
+    F: FnOnce(UiDispatcher<Result<T, E>>, MainContext, OneshotReceiver<()>) + Send + 'static,
     C: FnOnce() -> E,
 {
-    let (send, recv) = channel();
+    let (send, recv) = oneshot::channel();
 
     // Cancellation Safety Pattern:
     // We create a oneshot channel here but DO NOT store the `_close_on_close_tx` anywhere.
@@ -76,14 +80,14 @@ where
     // automatically dropped. This cleanly closes the channel, notifying `close_on_close`
     // (which was passed to GTK) that the operation has been aborted, allowing GTK to close
     // the window or clean up.
-    let (_close_on_close_tx, close_on_close) = channel();
+    let (_close_on_close_tx, close_on_close) = oneshot::channel();
 
     let context = proxy.context.clone();
 
     if proxy
         .sender
         .send(Box::new(move || {
-            let send_rc = std::rc::Rc::new(std::cell::RefCell::new(Some(send)));
+            let send_rc = Rc::new(RefCell::new(Some(send)));
             f(send_rc, context, close_on_close)
         }))
         .is_err()

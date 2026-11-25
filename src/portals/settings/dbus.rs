@@ -1,8 +1,8 @@
 use {
     gtk4::gio::{Settings, SettingsSchemaSource},
     parking_lot::RwLock,
-    std::{collections::HashMap, ffi::OsStr, sync::Arc, time::Duration},
-    zbus::{OwnedVariant, Variant, fdo, interface, object_server::SignalEmitter},
+    std::{collections::HashMap, ffi::OsStr, mem, sync::Arc, time::Duration},
+    zbus::{ObjectServer, OwnedVariant, Variant, fdo, interface, object_server::SignalEmitter},
 };
 
 use crate::{
@@ -89,7 +89,7 @@ pub struct SettingsPortal {
 }
 
 impl SettingsPortal {
-    pub fn new(proxy: &UiProxy, server: zbus::ObjectServer) -> Self {
+    pub fn new(proxy: &UiProxy, server: ObjectServer) -> Self {
         let mut agg = SettingsAggregator::new();
         let state = agg.state.clone();
         let sender = proxy.sender.clone();
@@ -126,7 +126,7 @@ impl SettingsPortal {
                         // Prevent the Rust destructor (`g_object_unref`) from running.
                         // The daemon is a long-running process and this Settings object
                         // must outlive the signal callback; leaking it is deliberate.
-                        std::mem::forget(settings);
+                        mem::forget(settings);
                     }
 
                     // Watch INI/config files with GIO file monitors (backed by inotify
@@ -162,7 +162,7 @@ impl SettingsPortal {
                             }
                         });
                         // Keep the monitor alive for the daemon lifetime.
-                        std::mem::forget(monitor);
+                        mem::forget(monitor);
                     }
 
                     // Watch only the parent config directory (non-recursive) so we can
@@ -193,7 +193,7 @@ impl SettingsPortal {
                             }
                         });
                         // Keep the monitor alive for the daemon lifetime.
-                        std::mem::forget(monitor);
+                        mem::forget(monitor);
                     }
                 }));
             }

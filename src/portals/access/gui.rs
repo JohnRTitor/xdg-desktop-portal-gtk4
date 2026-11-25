@@ -6,8 +6,12 @@ use {
         prelude::{BoxExt, ButtonExt, CheckButtonExt, GtkWindowExt, WidgetExt},
     },
     rust_i18n::t,
-    tokio::sync::oneshot::Receiver,
+    std::mem,
+    tokio::sync::oneshot::Receiver as OneshotReceiver,
 };
+
+#[cfg(test)]
+use std::{hint::black_box, iter};
 
 pub struct Choice {
     pub id: String,
@@ -106,7 +110,7 @@ impl AccessUi {
         mut self,
         send: crate::gui::UiDispatcher<Result<AccessResult, UiError>>,
         context: MainContext,
-        close_on_close: Receiver<()>,
+        close_on_close: OneshotReceiver<()>,
     ) {
         // We use our CustomDialog which wraps a standard GtkWindow instead of a GtkDialog.
         // GtkDialog is deprecated in GTK4.
@@ -152,7 +156,7 @@ impl AccessUi {
         // `run_impl` owns `self`, and the choice IDs are needed again inside
         // `'static` GTK signal closures. Taking the list consumes the IDs instead
         // of cloning each one while the originals are still alive.
-        if let Some(choices) = std::mem::take(&mut self.choices) {
+        if let Some(choices) = mem::take(&mut self.choices) {
             for choice in choices {
                 if choice.variants.is_empty() {
                     let button = CheckButton::with_label(&choice.label);
@@ -296,8 +300,8 @@ mod final_choice_tests {
         assert_eq!(
             build_final_choices(
                 true,
-                std::iter::empty::<(&str, bool)>(),
-                std::iter::empty::<(&str, [(&str, bool); 0])>(),
+                iter::empty::<(&str, bool)>(),
+                iter::empty::<(&str, [(&str, bool); 0])>(),
             ),
             Some(Vec::new()),
         );
@@ -308,7 +312,7 @@ mod final_choice_tests {
         let out = build_final_choices(
             true,
             [("a", true), ("b", false)],
-            std::iter::empty::<(&str, [(&str, bool); 0])>(),
+            iter::empty::<(&str, [(&str, bool); 0])>(),
         );
         assert_eq!(
             pairs(out),
@@ -323,7 +327,7 @@ mod final_choice_tests {
     fn the_active_radio_variant_is_reported() {
         let out = build_final_choices(
             true,
-            std::iter::empty::<(&str, bool)>(),
+            iter::empty::<(&str, bool)>(),
             [("m", [("m1", false), ("m2", true), ("m3", false)])],
         );
         assert_eq!(pairs(out), Some(vec![("m".to_owned(), "m2".to_owned())]));
@@ -333,7 +337,7 @@ mod final_choice_tests {
     fn a_radio_group_with_nothing_selected_is_omitted() {
         let out = build_final_choices(
             true,
-            std::iter::empty::<(&str, bool)>(),
+            iter::empty::<(&str, bool)>(),
             [("m", [("m1", false)])],
         );
         assert_eq!(pairs(out), Some(vec![]));
@@ -353,7 +357,7 @@ mod final_choice_tests {
 
     #[test]
     fn an_empty_radio_group_contributes_nothing() {
-        let out = build_final_choices(true, std::iter::empty::<(&str, bool)>(), [("m", [])]);
+        let out = build_final_choices(true, iter::empty::<(&str, bool)>(), [("m", [])]);
         assert_eq!(pairs(out), Some(vec![]));
     }
 }
@@ -375,12 +379,12 @@ mod allocation_tests {
         let clone_scope = crate::alloc_probe::AllocScope::start();
         let cloned = variant.id.clone();
         let clone_snap = clone_scope.finish();
-        std::hint::black_box(&cloned);
+        black_box(&cloned);
 
         let move_scope = crate::alloc_probe::AllocScope::start();
         let moved = variant.id;
         let move_snap = move_scope.finish();
-        std::hint::black_box(&moved);
+        black_box(&moved);
 
         assert_eq!(cloned, "variant-id");
         assert_eq!(moved, "variant-id");

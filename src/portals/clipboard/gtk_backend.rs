@@ -1,10 +1,7 @@
 use {
     gtk4::{gdk, gio, glib, prelude::*},
-    std::{cell::RefCell, os::fd::OwnedFd},
-    tokio::sync::{
-        mpsc::{Receiver, channel},
-        oneshot::Sender as OneshotSender,
-    },
+    std::{cell::RefCell, fs::File, os::fd::OwnedFd},
+    tokio::sync::{mpsc, oneshot::Sender as OneshotSender},
 };
 
 const CHANNEL_BUFFER_SIZE: usize = 5;
@@ -67,9 +64,9 @@ impl GtkClipboardBackend {
     }
 }
 
-pub fn claim_selection(mimes: MimeList) -> Result<Receiver<FdRequest>, ClipboardError> {
+pub fn claim_selection(mimes: MimeList) -> Result<mpsc::Receiver<FdRequest>, ClipboardError> {
     get_backend(|backend| {
-        let (request_tx, request_rx) = channel(10);
+        let (request_tx, request_rx) = mpsc::channel(10);
         let provider =
             crate::portals::clipboard::provider::PortalContentProvider::new(mimes, request_tx);
 
@@ -91,7 +88,7 @@ pub fn read_selection(mime: Box<str>, fd: OwnedFd) -> Result<(), ClipboardError>
                 .await
             {
                 Ok((in_stream, _)) => {
-                    let file = std::fs::File::from(fd);
+                    let file = File::from(fd);
                     let out_stream = gio::WriteOutputStream::new(file);
                     match out_stream
                         .splice_future(

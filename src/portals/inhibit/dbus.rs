@@ -5,16 +5,19 @@ use {
     std::{
         collections::HashMap,
         sync::{
-            Arc,
+            Arc, Once,
             atomic::{AtomicBool, Ordering},
         },
     },
     tokio::sync::Notify,
     zbus::{
-        Connection, DeserializeDict, ObjectServer, OwnedObjectPath, Type, Variant, fdo, interface,
-        message::Header, object_server::SignalEmitter,
+        Connection, DeserializeDict, ObjectPath, ObjectServer, OwnedObjectPath, Type, Variant, fdo,
+        interface, message::Header, object_server::SignalEmitter,
     },
 };
+
+#[cfg(test)]
+use std::hint::black_box;
 
 #[derive(DeserializeDict, Type, Debug, Default)]
 #[zbus(signature = "dict")]
@@ -76,7 +79,7 @@ pub struct Inhibit {
     /// the screensaver state is steady. Before any `ActiveChanged` has arrived
     /// this holds `false`, the natural initial value for a boolean state.
     screensaver_active: Arc<AtomicBool>,
-    init_once: std::sync::Once,
+    init_once: Once,
     session_manager: crate::core::session_manager::SessionManager,
     logind_proxy: Option<Arc<Login1ManagerProxy<'static>>>,
     screensaver_proxy: Option<Arc<ScreenSaverProxy<'static>>>,
@@ -106,7 +109,7 @@ impl Inhibit {
         Self {
             active_monitors: Arc::new(Mutex::new(HashMap::new())),
             screensaver_active: Arc::new(AtomicBool::new(false)),
-            init_once: std::sync::Once::new(),
+            init_once: Once::new(),
             session_manager,
             logind_proxy,
             screensaver_proxy,
@@ -476,7 +479,7 @@ impl Inhibit {
     #[zbus(signal)]
     async fn state_changed(
         ctx: &SignalEmitter<'_>,
-        session_handle: &zbus::ObjectPath<'_>,
+        session_handle: &ObjectPath<'_>,
         state: &HashMap<&str, Variant<'_>>,
     ) -> zbus::Result<()>;
 }
@@ -517,7 +520,7 @@ mod tests {
 
 #[cfg(test)]
 mod inhibit_target_tests {
-    use super::inhibit_targets;
+    use super::{black_box, inhibit_targets};
 
     #[test]
     fn no_flags_asks_logind_for_nothing() {
@@ -578,7 +581,7 @@ mod inhibit_target_tests {
             let scope = crate::alloc_probe::AllocScope::start();
             let what = inhibit_targets(reason);
             let snap = scope.finish();
-            std::hint::black_box(what);
+            black_box(what);
 
             assert_eq!(
                 snap.count, 0,
@@ -686,12 +689,12 @@ mod monitor_tests {
 
         // Warm up so the guard's own bookkeeping and any lazy initialisation of
         // the map are not attributed to the measured region.
-        std::hint::black_box(broadcast_sessions(&monitors));
+        black_box(broadcast_sessions(&monitors));
 
         let scope = crate::alloc_probe::AllocScope::start();
         let sessions = broadcast_sessions(&monitors);
         let snap = scope.finish();
-        std::hint::black_box(&sessions);
+        black_box(&sessions);
 
         assert_eq!(sessions.len(), 64, "every monitor must still be reached");
         assert_eq!(

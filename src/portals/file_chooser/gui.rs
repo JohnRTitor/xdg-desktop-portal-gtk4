@@ -2,7 +2,8 @@ use {
     crate::gui::{PortalDispatcher, UiError, UiProxy},
     gtk4::{
         FileChooserAction, FileChooserDialog, FileFilter, RecentData, RecentManager, ResponseType,
-        gio::{self, File, prelude::ListModelExt},
+        Window,
+        gio::{self, prelude::ListModelExt},
         glib::{self, MainContext},
         prelude::{
             Cast, DialogExt, FileChooserExt, FileChooserExtManual, FileExt, GtkWindowExt,
@@ -10,9 +11,12 @@ use {
         },
     },
     rust_i18n::t,
-    std::{borrow::Cow, cell::Cell, collections::HashMap, rc::Rc, time::Duration},
-    tokio::sync::{mpsc::channel, oneshot::Receiver},
+    std::{borrow::Cow, cell::Cell, collections::HashMap, mem, rc::Rc, time::Duration},
+    tokio::sync::{mpsc, oneshot::Receiver as OneshotReceiver},
 };
+
+#[cfg(test)]
+use std::{hint::black_box, ptr};
 
 #[derive(Debug, Eq, PartialEq, Clone)]
 pub struct Filter {
@@ -127,7 +131,7 @@ impl FileChooserUi {
         mut self,
         send: crate::gui::UiDispatcher<Result<FileChooserResult, UiError>>,
         context: MainContext,
-        close_on_close: Receiver<()>,
+        close_on_close: OneshotReceiver<()>,
     ) {
         let DialogData {
             dialog,
@@ -141,7 +145,7 @@ impl FileChooserUi {
 
         // Channel to coordinate: the response handler signals this when the user
         // closes the dialog, so the spawn_local task knows to start the delayed destroy.
-        let (done_tx, mut done_rx) = channel::<()>(1);
+        let (done_tx, mut done_rx) = mpsc::channel::<()>(1);
 
         let cf = current_filter.clone();
         let handler_id = Rc::new(Cell::new(None));
@@ -266,13 +270,9 @@ impl FileChooserUi {
 
         // GTK copies the title into the widget, so move the caller's String out
         // and lend a borrow rather than cloning the whole buffer.
-        let title = std::mem::take(&mut self.title);
-        let dialog = FileChooserDialog::new(
-            Some(title.as_str()),
-            None::<&gtk4::Window>,
-            action,
-            &buttons,
-        );
+        let title = mem::take(&mut self.title);
+        let dialog =
+            FileChooserDialog::new(Some(title.as_str()), None::<&Window>, action, &buttons);
         dialog.set_select_multiple(self.multiple);
         dialog.set_modal(self.modal);
         dialog.set_default_response(ResponseType::Ok);
@@ -299,14 +299,14 @@ impl FileChooserUi {
             dialog.set_current_name(f);
         }
         if let Some(f) = &self.current_folder {
-            let _ = dialog.set_current_folder(Some(&File::for_path(f)));
+            let _ = dialog.set_current_folder(Some(&gio::File::for_path(f)));
         }
         if let Some(f) = &self.current_filename {
             // `current_file` is a filesystem path in the caller's encoding, not
             // a URI (the spec documents it as `ay`, like `current_folder`).
             // Building a GFile with for_uri produced a relative URI that GTK
             // silently ignored; for_path is what GTK's own chooser expects.
-            let _ = dialog.set_file(&File::for_path(f));
+            let _ = dialog.set_file(&gio::File::for_path(f));
         }
         let mut read_only_id = String::new();
         if action == FileChooserAction::Open {
@@ -403,7 +403,7 @@ mod tests {
     #[test]
     #[cfg(target_pointer_width = "64")]
     fn filter_kind_is_two_words_plus_tag() {
-        assert_eq!(std::mem::size_of::<FilterKind>(), 32);
+        assert_eq!(mem::size_of::<FilterKind>(), 32);
     }
 
     #[test]
@@ -429,7 +429,7 @@ mod tests {
         assert!(matches!(offered, Cow::Borrowed(_)));
         assert_eq!(offered.len(), 2);
         assert_eq!(selected, Some(1));
-        assert!(std::ptr::eq(offered.as_ptr(), filters.as_ptr()));
+        assert!(ptr::eq(offered.as_ptr(), filters.as_ptr()));
     }
 
     #[test]
@@ -514,7 +514,7 @@ mod tests {
         let scope = AllocScope::start();
         let (offered, selected) = effective_filters(Some(&filters), Some(&current));
         let snap = scope.finish();
-        std::hint::black_box(&offered);
+        black_box(&offered);
 
         assert_eq!(selected, Some(1));
         assert_eq!(
@@ -538,7 +538,7 @@ mod tests {
         let scope = AllocScope::start();
         let (offered, _) = effective_filters(None, Some(&current));
         let snap = scope.finish();
-        std::hint::black_box(&offered);
+        black_box(&offered);
 
         assert!(matches!(offered, Cow::Owned(_)));
         assert!(

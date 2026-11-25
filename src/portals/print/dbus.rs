@@ -34,6 +34,9 @@ use {
     },
 };
 
+#[cfg(test)]
+use std::mem;
+
 /// D-Bus interface wrapper for the Print portal.
 ///
 /// This struct holds a proxy to the GTK main loop. The GTK printing implementation
@@ -311,7 +314,7 @@ mod tests {
     #[test]
     #[cfg(target_pointer_width = "64")]
     fn prepare_print_results_size_is_pinned() {
-        assert_eq!(std::mem::size_of::<PreparePrintResults>(), 128);
+        assert_eq!(mem::size_of::<PreparePrintResults>(), 128);
     }
 
     #[test]

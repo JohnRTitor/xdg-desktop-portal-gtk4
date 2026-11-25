@@ -1,12 +1,12 @@
 use {
     crate::gui::{PortalDispatcher, UiError, UiProxy},
     gtk4::{
-        Align, Box, Button, Entry, Image, Label, gio,
+        Align, Box as GtkBox, Button, Entry, Image, Label, Orientation, gio,
         glib::{self, MainContext},
         prelude::{BoxExt, ButtonExt, EditableExt, GtkWindowExt, WidgetExt},
     },
     rust_i18n::t,
-    tokio::sync::oneshot::Receiver,
+    tokio::sync::oneshot::Receiver as OneshotReceiver,
 };
 
 pub struct DynamicLauncherUi {
@@ -40,7 +40,7 @@ impl DynamicLauncherUi {
         mut self,
         send: crate::gui::UiDispatcher<Result<DynamicLauncherResult, UiError>>,
         context: MainContext,
-        close_on_close: Receiver<()>,
+        close_on_close: OneshotReceiver<()>,
     ) {
         // launcher_type 1 is an application launcher, 2 a web application. The
         // dialog said "web application" unconditionally, even for a plain
@@ -71,7 +71,7 @@ impl DynamicLauncherUi {
         subtitle_lbl.set_halign(Align::Start);
         dialog.content_area.append(&subtitle_lbl);
 
-        let hbox = Box::new(gtk4::Orientation::Horizontal, crate::gui::DEFAULT_SPACING);
+        let hbox = GtkBox::new(Orientation::Horizontal, crate::gui::DEFAULT_SPACING);
         hbox.set_margin_top(crate::gui::ELEMENT_MARGIN);
         dialog.content_area.append(&hbox);
 
@@ -89,7 +89,7 @@ impl DynamicLauncherUi {
         image.set_pixel_size(64);
         hbox.append(&image);
 
-        let vbox = Box::new(gtk4::Orientation::Vertical, crate::gui::SMALL_MARGIN);
+        let vbox = GtkBox::new(Orientation::Vertical, crate::gui::SMALL_MARGIN);
         hbox.append(&vbox);
 
         let name_label = Label::new(Some(&t!("name")));
