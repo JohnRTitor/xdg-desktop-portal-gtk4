@@ -1,3 +1,21 @@
+xdg-desktop-portal-gtk4 (1.7.0-1) unstable; urgency=low
+
+  * Dialogs now follow theme changes to ~/.config/gtk-4.0/gtk.css while the
+    portal is running, so switching themes repaints open dialogs without
+    restarting the service.
+  * The portal now builds and runs on FreeBSD; printing remains Linux-only.
+  * File chooser: large thumbnails now use the real large preview instead of an
+    upscaled small one, and cancelled thumbnail jobs no longer leave temporary
+    files behind.
+  * Notifications: a failed replacement no longer breaks existing actions,
+    tokens from replaced notifications cannot trigger the wrong action, and
+    mailto addresses with special characters are handled correctly.
+  * Lower memory use and fewer copies during portal requests and thumbnail
+    generation.
+  * Updated Bulgarian translation.
+
+  -- xdg-desktop-portal-gtk4 packagers <JohnRTitor@users.noreply.github.com>  Wed, 25 Nov 2026 18:21:14 +0530
+
 xdg-desktop-portal-gtk4 (1.6.7-1) unstable; urgency=low
 
   * Print: support single-call printing without a prior PreparePrint, with correct file-descriptor handling so jobs read the data and report the real result.

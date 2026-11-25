@@ -4,7 +4,7 @@
 # Keep Version in step with Cargo.toml's [package] version.
 
 Name:           xdg-desktop-portal-gtk4
-Version:        1.6.7
+Version:        1.7.0
 Release:        1%{?dist}
 Summary:        GTK4 backend implementation of xdg-desktop-portal
 
@@ -69,6 +69,21 @@ make install DESTDIR=%{buildroot} PREFIX=%{_prefix} LIBEXECDIR=%{_libexecdir} \
 %{_datadir}/xdg-desktop-portal/portals/gtk4.portal
 
 %changelog
+* Wed Nov 25 2026 xdg-desktop-portal-gtk4 packagers <JohnRTitor@users.noreply.github.com> - 1.7.0-1
+- Dialogs now follow theme changes to ~/.config/gtk-4.0/gtk.css while the
+  portal is running, so switching themes repaints open dialogs without
+  restarting the service.
+- The portal now builds and runs on FreeBSD; printing remains Linux-only.
+- File chooser: large thumbnails now use the real large preview instead of an
+  upscaled small one, and cancelled thumbnail jobs no longer leave temporary
+  files behind.
+- Notifications: a failed replacement no longer breaks existing actions,
+  tokens from replaced notifications cannot trigger the wrong action, and
+  mailto addresses with special characters are handled correctly.
+- Lower memory use and fewer copies during portal requests and thumbnail
+  generation.
+- Updated Bulgarian translation.
+
 * Sun Nov 22 2026 xdg-desktop-portal-gtk4 packagers <JohnRTitor@users.noreply.github.com> - 1.6.7-1
 - Print: support single-call printing without a prior PreparePrint, with correct file-descriptor handling so jobs read the data and report the real result.
 - Print: honor caller-provided page setup and margin values instead of silently ignoring them.
