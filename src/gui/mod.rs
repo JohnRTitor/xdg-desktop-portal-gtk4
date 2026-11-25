@@ -15,6 +15,7 @@ use {
 
 pub mod dialog;
 pub mod error;
+pub mod theme;
 pub mod ui;
 pub mod windowing;
 
