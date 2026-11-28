@@ -60,7 +60,13 @@ impl Print {
 
 #[derive(DeserializeDict, Type, Debug, Default)]
 #[zbus(signature = "dict")]
-#[allow(dead_code)]
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "This DeserializeDict type mirrors the spec-defined PreparePrint options keys; `modal` and `accept_label` are deserialized for wire-contract fidelity but never read outside unit tests."
+    )
+)]
 struct PreparePrintOptions {
     modal: Option<bool>,
     accept_label: Option<String>,
@@ -81,7 +87,10 @@ struct PreparePrintResults {
 
 #[derive(DeserializeDict, Type, Debug, Default)]
 #[zbus(signature = "dict")]
-#[allow(dead_code)]
+#[expect(
+    dead_code,
+    reason = "This DeserializeDict type mirrors the spec-defined Print options keys; some keys are deserialized for wire-contract fidelity but never read by this backend."
+)]
 struct PrintOptions {
     modal: Option<bool>,
     token: Option<u32>,

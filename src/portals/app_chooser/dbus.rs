@@ -15,9 +15,18 @@ use {
 
 #[derive(DeserializeDict, Type, Debug)]
 #[zbus(signature = "dict")]
-#[allow(dead_code)]
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "This DeserializeDict type mirrors the spec-defined ChooseApplication options keys; some keys are deserialized for wire-contract fidelity but never read outside unit tests."
+    )
+)]
 pub struct ChooseApplicationOptions {
-    #[allow(dead_code)]
+    #[expect(
+        dead_code,
+        reason = "Spec-defined `last_choice` key in the ChooseApplication options dict; retained for wire-contract fidelity even though this backend does not use it."
+    )]
     last_choice: Option<String>,
     modal: Option<bool>,
     content_type: Option<String>,

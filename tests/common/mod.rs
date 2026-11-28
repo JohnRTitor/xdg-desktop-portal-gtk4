@@ -26,7 +26,10 @@ macro_rules! try_dbus_session {
 /// This is fine for settings tests that only exercise Read/ReadAll,
 /// and for UI tests where we just want to ensure the D-Bus method
 /// deserialization succeeds before the UI phase.
-#[allow(dead_code)]
+#[allow(
+    dead_code,
+    reason = "Each integration test crate compiles this module separately: dummy_proxy is unused in some crates and used in others, so a lint expectation cannot be fulfilled in every compilation unit."
+)]
 pub fn dummy_proxy() -> UiProxy {
     let (sender, _receiver) = unbounded_channel();
     UiProxy {

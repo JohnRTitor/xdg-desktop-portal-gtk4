@@ -33,13 +33,22 @@ impl DynamicLauncher {
 
 #[derive(DeserializeDict, Type, Debug, Default)]
 #[zbus(signature = "dict")]
-#[allow(dead_code)]
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "This DeserializeDict type mirrors the spec-defined PrepareInstall options keys; some keys are deserialized for wire-contract fidelity but never read outside unit tests."
+    )
+)]
 struct PrepareInstallOptions {
     modal: Option<bool>,
     launcher_type: Option<u32>,
     target: Option<String>,
     editable_name: Option<bool>,
-    #[allow(dead_code)]
+    #[expect(
+        dead_code,
+        reason = "Spec-defined `editable_icon` key in the PrepareInstall options dict; retained for wire-contract fidelity even though the UI does not implement icon editing."
+    )]
     editable_icon: Option<bool>,
     pub activation_token: Option<String>,
 }
