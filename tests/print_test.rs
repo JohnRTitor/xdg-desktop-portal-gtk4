@@ -1,5 +1,8 @@
 #![cfg(all(feature = "print", target_os = "linux"))] // GTK's Unix print API is Linux-only
-#![allow(clippy::too_many_arguments)] // proxy macro generates 8-arg client methods
+#![expect(
+    clippy::too_many_arguments,
+    reason = "zbus's #[proxy] generates a client method for PreparePrint (o, s, s, s, a{sv}, a{sv}, a{sv}) in https://github.com/flatpak/xdg-desktop-portal/tree/main/data/org.freedesktop.impl.portal.Print.xml; its seven wire in-args plus &self exceed clippy's 7-argument limit."
+)]
 
 mod common;
 use {

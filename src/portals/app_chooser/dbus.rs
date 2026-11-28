@@ -136,7 +136,10 @@ impl AppChooser {
 /// or handle a specific content type.
 #[interface(name = "org.freedesktop.impl.portal.AppChooser")]
 impl AppChooser {
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "ChooseApplication in https://github.com/flatpak/xdg-desktop-portal/tree/main/data/org.freedesktop.impl.portal.AppChooser.xml fixes five wire in-args (o, s, s, as, a{sv}); the handler also takes #[zbus(header)] and #[zbus(object_server)] arguments, so this Rust function exceeds clippy's 7-argument limit."
+    )]
     #[zbus(name = "ChooseApplication")]
     #[tracing::instrument(skip_all, fields(app_id = %app_id, handle = %handle.as_str()))]
     async fn choose_application(

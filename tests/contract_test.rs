@@ -12,7 +12,6 @@ use {
 
 // ---------------------------------------------------------------- clipboard --
 
-#[allow(clippy::too_many_arguments)]
 #[zbus::proxy(
     interface = "org.freedesktop.impl.portal.Clipboard",
     default_path = "/org/freedesktop/portal/desktop"

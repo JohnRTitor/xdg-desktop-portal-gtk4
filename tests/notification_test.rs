@@ -132,7 +132,10 @@ struct FakeServer {
 
 #[interface(name = "org.freedesktop.Notifications")]
 impl FakeServer {
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Notify in https://specifications.freedesktop.org/notification-spec/latest/protocol.html fixes eight wire in-args (s, u, s, s, s, as, a{sv}, i); with &self this test server's handler has nine Rust parameters, above clippy's 7-argument limit."
+    )]
     fn notify(
         &self,
         app_name: String,

@@ -1,5 +1,3 @@
-#![allow(clippy::too_many_arguments)]
-
 use {
     futures_util::stream::StreamExt,
     gtk4::gio::Cancellable,
@@ -167,8 +165,11 @@ async fn write_exclusive(path: &Path, data: &[u8]) -> io::Result<()> {
     default_service = "org.freedesktop.Notifications",
     default_path = "/org/freedesktop/Notifications"
 )]
-#[allow(clippy::too_many_arguments)]
 trait Notifications {
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "zbus's #[proxy] generates a client method for Notify (s, u, s, s, s, as, a{sv}, i) from https://specifications.freedesktop.org/notification-spec/latest/protocol.html; its eight wire in-args plus &self exceed clippy's 7-argument limit."
+    )]
     fn notify(
         &self,
         app_name: &str,
@@ -309,6 +310,10 @@ fn remove_active_notification(
 /// strings twice would reintroduce the duplicate storage this type exists to
 /// remove. Factored out so a test can assert the sharing rather than having to
 /// trust the call site.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "register_notification takes the raw fields needed to build one NotifKey and share its Arc<str> allocations between both routing maps; its eight parameters exceed clippy's 7-argument limit."
+)]
 fn register_notification(
     active: &ActiveNotifications,
     reverse: &ReverseMapType,
@@ -347,6 +352,10 @@ fn register_notification(
 /// [`register_notification`] overwrites the old reverse entry itself, retiring
 /// the old sound file; removing the old entry as well would delete the one we
 /// just registered. Only a genuinely different ID needs an explicit removal.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "apply_notify_result takes the state handed to register_notification plus replaces_id and the Notify result; routing both success paths through that one key-sharing helper needs nine parameters, above clippy's 7-argument limit."
+)]
 fn apply_notify_result<E>(
     active: &ActiveNotifications,
     reverse: &ReverseMapType,

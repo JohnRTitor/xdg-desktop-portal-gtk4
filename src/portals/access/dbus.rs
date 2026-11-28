@@ -123,7 +123,10 @@ impl Access {
 /// such as accessing the camera, microphone, or location.
 #[interface(name = "org.freedesktop.impl.portal.Access")]
 impl Access {
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "AccessDialog in https://github.com/flatpak/xdg-desktop-portal/tree/main/data/org.freedesktop.impl.portal.Access.xml fixes seven wire in-args (o, s, s, s, s, s, a{sv}); the handler also takes #[zbus(header)] and #[zbus(object_server)] arguments, so this Rust function exceeds clippy's 7-argument limit."
+    )]
     #[tracing::instrument(skip_all, fields(app_id = %app_id, handle = %handle.as_str()))]
     async fn access_dialog(
         &self,

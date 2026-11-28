@@ -237,7 +237,10 @@ impl Print {
 /// setup); `Print` then presents the dialog itself and prints with the resulting job.
 #[interface(name = "org.freedesktop.impl.portal.Print")]
 impl Print {
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "PreparePrint in https://github.com/flatpak/xdg-desktop-portal/tree/main/data/org.freedesktop.impl.portal.Print.xml fixes seven wire in-args (o, s, s, s, a{sv}, a{sv}, a{sv}); the handler also takes #[zbus(header)] and #[zbus(object_server)] arguments, so this Rust function exceeds clippy's 7-argument limit."
+    )]
     #[tracing::instrument(skip_all, fields(app_id = %app_id, handle = %handle.as_str()))]
     async fn prepare_print(
         &self,
@@ -273,7 +276,10 @@ impl Print {
         .await)
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Print in https://github.com/flatpak/xdg-desktop-portal/tree/main/data/org.freedesktop.impl.portal.Print.xml fixes six wire in-args (o, s, s, s, h, a{sv}); the handler also takes #[zbus(header)] and #[zbus(object_server)] arguments, so this Rust function exceeds clippy's 7-argument limit."
+    )]
     #[tracing::instrument(skip_all, fields(app_id = %app_id, handle = %handle.as_str()))]
     async fn print(
         &self,

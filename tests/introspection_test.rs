@@ -32,7 +32,10 @@ const IMPL_PREFIX: &str = "org.freedesktop.impl.portal.";
 /// methods, `u` for `Inhibit.CreateMonitor` / `DynamicLauncher.RequestInstallToken`,
 /// `h` for the clipboard fd methods, `v` / `a{sa{sv}}` for Settings, and absent
 /// where the contract declares no return.
-#[allow(clippy::type_complexity)]
+#[expect(
+    clippy::type_complexity,
+    reason = "This nested tuple type transcribes the XML contract tables in https://github.com/flatpak/xdg-desktop-portal/tree/main/data/ (interface -> methods -> ordered in/out argument types, plus properties); structs would obscure that mapping."
+)]
 const EXPECTED: &[(&str, &[(&str, &[&str])], &[&str])] = &[
     (
         "Access",

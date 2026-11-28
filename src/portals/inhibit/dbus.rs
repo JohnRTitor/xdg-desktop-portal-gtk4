@@ -190,7 +190,10 @@ const fn inhibit_targets(reason: u32) -> &'static str {
 /// to monitor these states.
 #[interface(name = "org.freedesktop.impl.portal.Inhibit")]
 impl Inhibit {
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Inhibit in https://github.com/flatpak/xdg-desktop-portal/tree/main/data/org.freedesktop.impl.portal.Inhibit.xml fixes five wire in-args (o, s, s, u, a{sv}); the handler also takes #[zbus(header)] and #[zbus(object_server)] arguments, so this Rust function exceeds clippy's 7-argument limit."
+    )]
     #[tracing::instrument(skip_all, fields(app_id = %app_id, handle = %handle.as_str()))]
     async fn inhibit(
         &self,

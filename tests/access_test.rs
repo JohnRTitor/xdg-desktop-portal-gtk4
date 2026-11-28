@@ -1,4 +1,7 @@
-#![allow(clippy::too_many_arguments)] // proxy macro generates 8-arg client methods
+#![expect(
+    clippy::too_many_arguments,
+    reason = "zbus's #[proxy] generates a client method for AccessDialog (o, s, s, s, s, s, a{sv}) in https://github.com/flatpak/xdg-desktop-portal/tree/main/data/org.freedesktop.impl.portal.Access.xml; its seven wire in-args plus &self exceed clippy's 7-argument limit."
+)]
 
 mod common;
 use {

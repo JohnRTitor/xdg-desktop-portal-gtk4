@@ -182,7 +182,10 @@ impl UsbPortal {
 /// and the user selects which ones the app can access.
 #[interface(name = "org.freedesktop.impl.portal.Usb")]
 impl UsbPortal {
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "AcquireDevices in https://github.com/flatpak/xdg-desktop-portal/tree/main/data/org.freedesktop.impl.portal.Usb.xml fixes five wire in-args (o, s, s, a(sa{sv}a{sv}), a{sv}); the handler also takes #[zbus(header)] and #[zbus(object_server)] arguments, so this Rust function exceeds clippy's 7-argument limit."
+    )]
     #[zbus(name = "AcquireDevices")]
     async fn acquire_devices(
         &self,
